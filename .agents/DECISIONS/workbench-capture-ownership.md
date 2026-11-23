@@ -41,5 +41,6 @@ A capture belongs to the app run that started it. The Workbench only tracks capt
 ## Evidence
 
 - Dev-host journeys: `apps/capture-workbench-e2e/src/capture-lifecycle.dev-host.spec.ts`
+- Real engines on localhost: stage `08-capture-lifecycle` of `capture-workbench-e2e:smoke-real-engines-execution` (`apps/capture-workbench-e2e/src/real-engines-capture-lifecycle.ts`): one at a time, a reload and a Cancel of real captures
 - Capture service spec: `apps/capture-workbench/src/app/services/desktop-capture.service.spec.ts`
 - Host library rules: `apps/capture-workbench-desktop/src-tauri/src/library.rs` (cargo tests `awaiting_confirmation_stores_raw_and_completed_evidence_in_one_write`, `different_second_ocr_evidence_fails_closed`, and `linked_document_with_capture_id_can_be_deleted`)

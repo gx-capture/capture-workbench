@@ -20,11 +20,17 @@
  *   2. Installing the structuring model.
  *   3. Starting and restarting with persistent verification records.
  * Execution
+ *   0. Removing what an earlier run left stored waiting or in progress (a failed
+ *      stage 8 leaves such rows, and a waiting one would start at the app's load
+ *      and run beside this run's captures): cancelled, then deleted in History,
+ *      as a user does.
  *   1. Checking catalog readiness, the installed speech pack and the active model.
  *   2. PDF and image OCR to `/history/:id/content`, verifying normalized text
- *      anchors, rendered source, `library_get` provenance (and exact OCR device
- *      when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` is set), and
- *      `/settings/diagnostics`.
+ *      anchors, rendered source, the stored checkpoint (`awaiting_confirmation`
+ *      at stage `awaiting_structuring`, no capture link, raw text, completed OCR
+ *      evidence with the engine's provenance), `library_get` provenance (and
+ *      exact OCR device when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` is set),
+ *      and `/settings/diagnostics`.
  *   3. Structuring model selection on `/settings/diagnostics`, audio transcription
  *      with speaker diarization and structuring on `/asr`, verifying the speech
  *      provenance of the installed pack (`tea-asr-1.1` on `cuda` by default with the NVIDIA
@@ -45,6 +51,15 @@
  *   7. Stopping and restarting the launcher once more on the same `--app-data`
  *      directory, verifying the PDF document still opens and all deleted
  *      document IDs remain absent from `library_list` and `library_get`.
+ *   8. The capture lifecycle with real captures (real-engines-capture-lifecycle.ts):
+ *      the recording and the PDF dropped together run one at a time; a reload
+ *      while the recording's speech worker is at work leaves it 已中斷 with 重新開始 and
+ *      deletes its capture once, and the worker ends; 重新開始, then Cancel while it works shows
+ *      取消中 until the runtime's delete answers, the page sends no other command
+ *      for that capture, it is stored cancelled and the waiting PDF (imported
+ *      once more) starts; 重新開始 captures it to its end. At its end, also when
+ *      it failed, it cancels what still runs or waits of its documents and
+ *      deletes them all in History, so the app data keeps none of them.
  *
  * Explicit per-stage timeout placeholders (to be measured by the first real run):
  * Installation
@@ -52,6 +67,7 @@
  *   - 02-install-structuring-model: 40 minutes (measured 21.7)
  *   - 03-installed-first-start-and-restart: 10 minutes
  * Execution
+ *   - 00-remove-unfinished-documents: 10 minutes
  *   - 01-check-installed-catalog: 10 minutes
  *   - 02-ocr-pdf-and-image:       10 minutes
  *   - 03-asr-and-structuring:     35 minutes
@@ -60,6 +76,7 @@
  *   - 05-restart-persistence:      5 minutes
  *   - 06-delete-documents:         2 minutes
  *   - 07-restart-after-deletion:   5 minutes
+ *   - 08-capture-lifecycle:       45 minutes (measured 2.0-2.5 with the cuda pack)
  *
  * Environment variables are validated before starting the host.
  *   Required media & expectations for execution:
@@ -92,6 +109,14 @@
  *   - `ocrDevice`: true when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` was set and matched
  *   - `progressivePartial`: true when the live and final oracle comparisons passed
  *   - `deletion`: true when all UI deletions and the post-restart absence check passed
+ *   - `captureLifecycle`: true when stage 8 passed; `captureLifecycle` in the
+ *     evidence holds its counts, statuses and delete durations, which criterion
+ *     counted the speech worker as at work, and the documents it removed
+ * `unfinishedDocumentsRemoved` counts what stage 0 found, cancelled and deleted.
+ * `captureWindows` gives each capture's time span (no names), so samples taken
+ * beside the journey (`capture-workbench-desktop:check-real-engine-devices`
+ * with `--observe capture-workbench-dev-host.exe --observe-app-data <app data>`)
+ * can be read per capture and per engine worker.
  *
  * The runtime runs as the product runs it. The host starts it with the product's
  * launch policy (`launch_policy.rs`, `constants/launch.rs`), which clears the

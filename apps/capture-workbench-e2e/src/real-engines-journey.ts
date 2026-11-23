@@ -28,6 +28,13 @@ import {
   type LiveCaptureState,
 } from './real-engines-checkpoint.ts';
 import { MODEL_INSTALL_TIMEOUT_MS } from './real-engines-stage-limits.ts';
+import {
+  checkCaptureLifecycle,
+  removeUnfinishedDocuments,
+  type CaptureLifecycleEvidence,
+  type RemovedDocuments,
+} from './real-engines-capture-lifecycle.ts';
+import type { CaptureWindow } from './real-engines-lifecycle-observation.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const upstreamUrl = 'http://localhost:4200';
@@ -60,6 +67,11 @@ const PROGRESSIVE_COMPLETION_ALLOWANCE_MS = 10 * 60_000;
 const EDIT_EXPORT_STAGE_TIMEOUT_MS = 3 * 60_000; // measured by the first real run
 const DELETE_STAGE_TIMEOUT_MS = 2 * 60_000;
 const RESTART_STAGE_TIMEOUT_MS = 5 * 60_000; // measured by the first real run
+// Two document captures, two recording starts and one recording to its end:
+// 2.0 to 2.5 minutes with the cuda pack; the cpu pack transcribes far slower.
+const CAPTURE_LIFECYCLE_STAGE_TIMEOUT_MS = 45 * 60_000;
+// Cancelling what an earlier run left running and deleting each leftover in History.
+const UNFINISHED_REMOVAL_STAGE_TIMEOUT_MS = 10 * 60_000;
 const CANCEL_CLICK_TIMEOUT_MS = 10_000;
 const ACTION_TIMEOUT_MS = 15_000;
 // The application itself waits three minutes (DESKTOP_RUNTIME_READY_TIMEOUT_MS):
@@ -159,18 +171,36 @@ interface RawSegmentRecord {
   readonly speaker?: string | null;
 }
 
-interface DesktopLibrarySummaryRecord {
+export interface DesktopLibrarySummaryRecord {
   readonly documentId: string;
   readonly fileName: string;
+  readonly mediaType: string;
   readonly captureId?: string | null;
   readonly status: string;
+  readonly stage?: string;
+  readonly hasRaw?: boolean;
   readonly errorCode?: string;
   readonly errorMessage?: string;
   readonly pageCount?: number;
   readonly durationMs?: number;
 }
 
-interface DesktopLibraryDetailRecord extends DesktopLibrarySummaryRecord {
+/** The fields of the stored OCR evidence the journeys read. */
+interface OcrEvidenceRecord {
+  readonly captureId: string;
+  readonly status: string;
+  readonly pageCount: number;
+  readonly provenance: {
+    readonly status: string;
+    readonly engine: string | null;
+    readonly model: string | null;
+    readonly modelDigest: string | null;
+    readonly device: string | null;
+  };
+}
+
+export interface DesktopLibraryDetailRecord extends DesktopLibrarySummaryRecord {
+  readonly ocrEvidence?: OcrEvidenceRecord | null;
   readonly edits?: {
     readonly ocrPages?: Readonly<Record<string, string>>;
     readonly transcriptLines?: Readonly<Record<string, string>>;
@@ -202,9 +232,10 @@ interface SmokeProven {
   ocrDevice: boolean;
   deletion: boolean;
   progressivePartial: boolean;
+  captureLifecycle: boolean;
 }
 
-interface ProvenanceSummary {
+export interface ProvenanceSummary {
   readonly engine: string;
   readonly model: string;
   readonly device: string | null;
@@ -260,6 +291,12 @@ interface SmokeEvidence {
     readonly remainingDocumentCount: number;
     readonly deletedIdsAbsent: boolean;
   };
+  /** What stage 00 found stored waiting or in progress from an earlier run, and removed. */
+  unfinishedDocumentsRemoved?: RemovedDocuments & { readonly found: number };
+  /** What stage 08-capture-lifecycle observed (real-engines-capture-lifecycle.ts). */
+  captureLifecycle?: CaptureLifecycleEvidence;
+  /** Every capture of the run with its time span, to read the device samples by capture. */
+  readonly captureWindows: readonly CaptureWindow[];
 }
 
 function readEnvFirst(names: readonly string[]): string | undefined {
@@ -605,21 +642,64 @@ async function invokeHost<T>(
 
 /**
  * A document stops at the recognition checkpoint: the host starts documents
- * with host structuring and the product does not structure them. A document
- * record with a structured result means that changed, and this check with it.
+ * with host structuring and the product does not structure them. The
+ * attempt's one terminal write stores it awaiting confirmation at stage
+ * `awaiting_structuring`, without the capture link (the capture belongs to the
+ * app run, docs/domain/host.md), with the raw text and the completed OCR
+ * evidence of the engine that recognised it. A document record with a
+ * structured result means that changed, and this check with it.
  */
-function assertDocumentCheckpoint(
-  detail: { readonly status?: unknown; readonly result?: unknown },
-  label: string,
-): void {
-  assert.ok(
-    detail.status === 'awaiting_confirmation' || detail.status === 'awaiting_structuring',
-    `${label} record must rest at the recognition checkpoint, not ${String(detail.status)}.`,
-  );
+function assertDocumentCheckpoint(detail: DesktopLibraryDetailRecord, label: string): void {
+  assert.equal(detail.status, 'awaiting_confirmation', `${label} record must rest at the recognition checkpoint.`);
+  assert.equal(detail.stage, 'awaiting_structuring', `${label} record must keep the checkpoint's stage.`);
+  assert.equal(detail.captureId ?? null, null, `${label} record must not keep a capture link.`);
+  assert.equal(detail.hasRaw, true, `${label} record must hold its raw text.`);
   assert.ok(
     detail.result === null || detail.result === undefined,
     `${label} record must not carry a structured result.`,
   );
+  const evidence = detail.ocrEvidence;
+  assert.ok(evidence, `${label} record must hold its OCR evidence.`);
+  assert.equal(evidence.status, 'completed', `${label} OCR evidence must be completed.`);
+  assert.ok(evidence.captureId.length > 0, `${label} OCR evidence must name its capture.`);
+  const extraction = detail.raw?.extractionEngine;
+  assert.ok(extraction, `${label} record must include extractionEngine provenance.`);
+  assert.equal(evidence.provenance.status, 'resolved', `${label} OCR evidence provenance must be resolved.`);
+  assert.deepEqual(
+    [evidence.provenance.engine, evidence.provenance.model, evidence.provenance.modelDigest, evidence.provenance.device],
+    [extraction.engine, extraction.model, extraction.digest, extraction.device ?? null],
+    `${label} OCR evidence provenance must be the engine's that recognised the raw text.`,
+  );
+}
+
+/**
+ * A recording is captured to its end: stored completed without the capture
+ * link, with its raw segments and a result whose recognition provenance is
+ * the installed speech pack's and whose structuring provenance is Ollama's.
+ */
+function assertRecordingResult(
+  detail: DesktopLibraryDetailRecord,
+  expectation: RealTextExpectation,
+  expectedSpeech: { readonly model: string; readonly device: string },
+): { readonly extraction: EngineProvenance; readonly structuring: EngineProvenance } {
+  assert.equal(detail.status, 'completed');
+  assert.equal(detail.captureId ?? null, null, 'Recording record must not keep a capture link.');
+  assert.equal(detail.hasRaw, true, 'Recording record must hold its raw text.');
+  assertAudioAgainstExpectation(detail, expectation);
+
+  const extraction = detail.result?.extractionEngine ?? detail.raw?.extractionEngine;
+  assert.ok(extraction, 'Audio record must include extractionEngine provenance.');
+  assert.equal(extraction.engine, 'speech-recognition');
+  assert.equal(extraction.model, expectedSpeech.model);
+  assert.equal(extraction.device, expectedSpeech.device);
+  assert.match(extraction.digest, SHA256_DIGEST_PATTERN);
+
+  const structuring = detail.result?.structuringEngine;
+  assert.ok(structuring, 'Audio record must include structuringEngine provenance.');
+  assert.equal(structuring.engine, 'ollama');
+  assert.ok(structuring.model.trim().length > 0, 'Structuring model must be recorded.');
+  assert.match(structuring.digest, SHA256_DIGEST_PATTERN);
+  return { extraction, structuring };
 }
 
 /** Page loads that ended in the error state before the Workbench was ready (issue #425). */
@@ -736,6 +816,10 @@ function assertOcrExtractionProvenance(
 async function queueFileAndAwaitCompletion(
   page: Page,
   options: {
+    /** Names the capture in the evidence's capture windows, never the file. */
+    readonly label: string;
+    /** Takes when the capture was queued and when its row showed it done, for the device samples. */
+    readonly recordWindow: (window: CaptureWindow) => void;
     readonly filePath: string;
     readonly chooseButtonTestId: 'ocr-choose-files' | 'asr-choose-files';
     readonly queueRowTestId: 'ocr-queue-row' | 'asr-queue-row';
@@ -743,6 +827,7 @@ async function queueFileAndAwaitCompletion(
     readonly whileRunning?: (documentId: string, row: Locator) => Promise<void>;
   },
 ): Promise<string> {
+  const queuedAt = new Date().toISOString();
   const beforeList = await invokeHost<readonly DesktopLibrarySummaryRecord[]>(
     page,
     'library_list',
@@ -802,6 +887,13 @@ async function queueFileAndAwaitCompletion(
       { timeout: options.timeoutMs, intervals: [1_000] },
     )
     .toBe('done');
+  options.recordWindow({
+    label: options.label,
+    engine: options.queueRowTestId === 'ocr-queue-row' ? 'text-recognition' : 'speech-recognition',
+    startedAt: queuedAt,
+    endedAt: new Date().toISOString(),
+    outcome: 'done',
+  });
 
   return newDocId;
 }
@@ -809,6 +901,7 @@ async function queueFileAndAwaitCompletion(
 async function checkProgressiveRecording(
   page: Page,
   media: ProgressiveAudioMedia,
+  recordWindow: (window: CaptureWindow) => void,
 ): Promise<{
   readonly documentId: string;
   readonly checkpoint: NonNullable<SmokeEvidence['provenance']['progressiveAudio']>;
@@ -817,6 +910,8 @@ async function checkProgressiveRecording(
   const expected = oracle.firstCheckpoint;
   let checkpoint: SmokeEvidence['provenance']['progressiveAudio'];
   const documentId = await queueFileAndAwaitCompletion(page, {
+    label: 'progressive-recording',
+    recordWindow,
     filePath: media.audioPath,
     chooseButtonTestId: 'asr-choose-files',
     queueRowTestId: 'asr-queue-row',
@@ -1172,6 +1267,11 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
   });
 
   const stages: StageRecord[] = [];
+  /** Each capture of this run with its time span, for the device samples taken beside it. */
+  const captureWindows: CaptureWindow[] = [];
+  const recordWindow = (window: CaptureWindow): void => {
+    captureWindows.push(window);
+  };
   const proven: SmokeProven = {
     installation: false,
     cancelAndRetry: false,
@@ -1179,6 +1279,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
     ocrDevice: false,
     deletion: false,
     progressivePartial: false,
+    captureLifecycle: false,
   };
   const evidence: SmokeEvidence = {
     evidenceKind: 'real-engines-localhost-v1',
@@ -1190,6 +1291,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
     stages,
     proven,
     provenance: {},
+    captureWindows,
   };
 
   let activeLauncher: StartedDevHostLauncher | undefined;
@@ -1364,6 +1466,19 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       return;
     }
     assert.ok(media);
+    // -------------------------------------------------------------------------
+    // Stage 0: What an earlier run left waiting or in progress is removed as a
+    // user would remove it, before it can run beside this run's captures
+    // -------------------------------------------------------------------------
+    await runStage(stages, '00-remove-unfinished-documents', UNFINISHED_REMOVAL_STAGE_TIMEOUT_MS, async () => {
+      evidence.unfinishedDocumentsRemoved = await removeUnfinishedDocuments(page, {
+        baseUrl: launcher.baseUrl,
+        waitForRuntimeReady,
+      });
+      const { found, cancelled, deleted } = evidence.unfinishedDocumentsRemoved;
+      logStage('00-remove-unfinished-documents', `${found} found, ${cancelled} cancelled, ${deleted} deleted`);
+    });
+
     await runStage(stages, '01-check-installed-catalog', 2 * RESTART_STAGE_TIMEOUT_MS, async () => {
       await page.goto(`${launcher.baseUrl}/settings/engines`);
       await waitForRuntimeReady(page);
@@ -1387,6 +1502,8 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
 
       // PDF OCR
       pdfDocId = await queueFileAndAwaitCompletion(page, {
+        label: 'pdf',
+        recordWindow,
         filePath: media.pdfPath,
         chooseButtonTestId: 'ocr-choose-files',
         queueRowTestId: 'ocr-queue-row',
@@ -1454,6 +1571,8 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       await expect(page.getByTestId('ocr-choose-files')).toBeEnabled();
 
       imageDocId = await queueFileAndAwaitCompletion(page, {
+        label: 'image',
+        recordWindow,
         filePath: media.imagePath,
         chooseButtonTestId: 'ocr-choose-files',
         queueRowTestId: 'ocr-queue-row',
@@ -1536,6 +1655,8 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       }
 
       audioDocId = await queueFileAndAwaitCompletion(page, {
+        label: 'recording',
+        recordWindow,
         filePath: media.audioPath,
         chooseButtonTestId: 'asr-choose-files',
         queueRowTestId: 'asr-queue-row',
@@ -1569,22 +1690,9 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       const audioDetail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
         request: { documentId: audioDocId },
       });
-      assert.equal(audioDetail.status, 'completed');
-      assertAudioAgainstExpectation(audioDetail, media.audioExpectation);
-
-      const audioExtraction =
-        audioDetail.result?.extractionEngine ?? audioDetail.raw?.extractionEngine;
-      assert.ok(audioExtraction, 'Audio record must include extractionEngine provenance.');
-      assert.equal(audioExtraction.engine, 'speech-recognition');
-      assert.equal(audioExtraction.model, expectedSpeech.model);
-      assert.equal(audioExtraction.device, expectedSpeech.device);
-      assert.match(audioExtraction.digest, SHA256_DIGEST_PATTERN);
-
-      const audioStructuring = audioDetail.result?.structuringEngine;
-      assert.ok(audioStructuring, 'Audio record must include structuringEngine provenance.');
-      assert.equal(audioStructuring.engine, 'ollama');
-      assert.ok(audioStructuring.model.trim().length > 0, 'Structuring model must be recorded.');
-      assert.match(audioStructuring.digest, SHA256_DIGEST_PATTERN);
+      const { extraction: audioExtraction, structuring: audioStructuring } = assertRecordingResult(
+        audioDetail, media.audioExpectation, expectedSpeech,
+      );
       const structuringDevice = audioStructuring.device ?? null;
       assert.ok([null, 'cuda', 'rocm', 'vulkan', 'cpu'].includes(structuringDevice));
       const nvidia = spawnSync('nvidia-smi', ['--list-gpus'], {
@@ -1635,7 +1743,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
         await page.getByTestId('asr-language-select').selectOption('zh');
         // Speaker identification requires a whole-recording pass.
         await page.getByTestId('asr-identify-speakers').uncheck();
-        const result = await checkProgressiveRecording(page, progressive);
+        const result = await checkProgressiveRecording(page, progressive, recordWindow);
         progressiveDocId = result.documentId;
         evidence.provenance.progressiveAudio = result.checkpoint;
         proven.progressivePartial = true;
@@ -1934,6 +2042,33 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
         remainingDocumentCount: remainingRunIds.length,
         deletedIdsAbsent: true,
       };
+    });
+
+    // -------------------------------------------------------------------------
+    // Stage 8: One capture at a time, a reload and a Cancel of real captures
+    // -------------------------------------------------------------------------
+    await runStage(stages, '08-capture-lifecycle', CAPTURE_LIFECYCLE_STAGE_TIMEOUT_MS, async () => {
+      evidence.captureLifecycle = await checkCaptureLifecycle(page, {
+        baseUrl: launcher.baseUrl,
+        appDataDir: config.appDataDir,
+        speechOnGpu: expectedSpeech.device === 'cuda',
+        pdfPath: media.pdfPath,
+        audioPath: media.audioPath,
+        documentTimeoutMs: OCR_STAGE_TIMEOUT_MS,
+        recordingTimeoutMs: ASR_STAGE_TIMEOUT_MS,
+        waitForRuntimeReady,
+        log: (event) => logStage('08-capture-lifecycle', event),
+        recordWindow,
+        checkStoredDocument: (detail, label) => {
+          assertDocumentCheckpoint(detail, label);
+          return assertOcrExtractionProvenance(detail, label, media.expectedOcrDevice);
+        },
+        checkStoredRecording: (detail) => {
+          const { extraction, structuring } = assertRecordingResult(detail, media.audioExpectation, expectedSpeech);
+          return { extraction: toProvenanceSummary(extraction), structuring: toProvenanceSummary(structuring) };
+        },
+      });
+      proven.captureLifecycle = true;
     });
 
     evidence.passed = true;
