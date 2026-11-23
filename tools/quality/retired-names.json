@@ -415,7 +415,7 @@
   {
     "name": "speakerUnitNeeded",
     "match": "word",
-    "replacement": "speakerRequirementNeeded",
+    "replacement": "asrInstallSpeakers (the recording page offers the speaker identification install)",
     "allowed": []
   },
   {
@@ -1808,7 +1808,7 @@
   {
     "name": "runtime_cancel_streaming_capture",
     "match": "word",
-    "replacement": "runtime_cancel_capture",
+    "replacement": "runtime_delete_capture (Cancel is a runtime delete)",
     "allowed": []
   },
   {
@@ -1939,6 +1939,288 @@
     "name": "hasActiveCapture",
     "match": "word",
     "replacement": "isDocumentClaimed",
+    "allowed": []
+  },
+  {
+    "name": "reattach$",
+    "match": "word",
+    "replacement": "no replacement: a capture belongs to the app run that started it; a stored link is never followed",
+    "allowed": []
+  },
+  {
+    "name": "restartLost$",
+    "match": "word",
+    "replacement": "startAgain$",
+    "allowed": []
+  },
+  {
+    "name": "recoverCapture$",
+    "match": "word",
+    "replacement": "no replacement: nothing follows a capture another app run started",
+    "allowed": []
+  },
+  {
+    "name": "cancelDocument$",
+    "match": "word",
+    "replacement": "cancel$",
+    "allowed": []
+  },
+  {
+    "name": "retryRuntimeCleanup$",
+    "match": "word",
+    "replacement": "no replacement: the runtime delete after the terminal write is not tracked",
+    "allowed": []
+  },
+  {
+    "name": "cleanupAfterCommit$",
+    "match": "word",
+    "replacement": "no replacement: the runtime delete after the terminal write is not tracked",
+    "allowed": []
+  },
+  {
+    "name": "persistLifecycleFailure$",
+    "match": "word",
+    "replacement": "no replacement: one terminal write per attempt",
+    "allowed": []
+  },
+  {
+    "name": "unrecordedFailures$",
+    "match": "word",
+    "replacement": "hasUnstoredOutcome",
+    "allowed": []
+  },
+  {
+    "name": "unappliedCancels",
+    "match": "word",
+    "replacement": "no replacement: a cancel lives only as long as the decision or attempt it was given to",
+    "allowed": []
+  },
+  {
+    "name": "forgetDeletedDocument",
+    "match": "word",
+    "replacement": "no replacement: a cancel is not kept beyond its decision or attempt",
+    "allowed": []
+  },
+  {
+    "name": "FAILED_DECISION_PAUSE_MS",
+    "match": "word",
+    "replacement": "no replacement: a failure ends the attempt and nothing is tried again by itself",
+    "allowed": []
+  },
+  {
+    "name": "isDecisionPaused",
+    "match": "word",
+    "replacement": "hasUnstoredOutcome",
+    "allowed": []
+  },
+  {
+    "name": "failedDecisions",
+    "match": "word",
+    "replacement": "no replacement: nothing is tried again by itself",
+    "allowed": []
+  },
+  {
+    "name": "holdsTerminalData",
+    "match": "word",
+    "replacement": "committedTerminalStatus (earlier versions’ rows only)",
+    "allowed": []
+  },
+  {
+    "name": "isCaptureLost",
+    "match": "word",
+    "replacement": "isInterrupted",
+    "allowed": []
+  },
+  {
+    "name": "canCaptureAgain",
+    "match": "word",
+    "replacement": "canStartAgain",
+    "allowed": []
+  },
+  {
+    "name": "reattachRunning",
+    "match": "word",
+    "replacement": "no replacement: the queues start only waiting rows without a link",
+    "allowed": []
+  },
+  {
+    "name": "attemptedReattachments",
+    "match": "word",
+    "replacement": "no replacement: the queues start only waiting rows without a link",
+    "allowed": []
+  },
+  {
+    "name": "reloadDocumentState",
+    "match": "word",
+    "replacement": "applyDocumentState",
+    "allowed": []
+  },
+  {
+    "name": "retry$",
+    "match": "word",
+    "replacement": "startAgain$ (Start again stores the row waiting; the admission starts it)",
+    "allowed": []
+  },
+  {
+    "name": "terminalStage",
+    "match": "word",
+    "replacement": "no replacement: a terminal write names its own stage",
+    "allowed": []
+  },
+  {
+    "name": "startDocument$",
+    "match": "word",
+    "replacement": "admitWaiting$ (the one admission of the capture service)",
+    "allowed": []
+  },
+  {
+    "name": "startWaiting",
+    "match": "word",
+    "replacement": "admitWaiting$ (the queue stores no longer start captures)",
+    "allowed": []
+  },
+  {
+    "name": "startingIds",
+    "match": "word",
+    "replacement": "no replacement: only the admission starts a capture",
+    "allowed": []
+  },
+  {
+    "name": "pendingStart",
+    "match": "word",
+    "replacement": "no replacement: only the admission starts a capture",
+    "allowed": []
+  },
+  {
+    "name": "awaitingTurn",
+    "match": "word",
+    "replacement": "no replacement: a dropped batch stores waiting rows; the admission gives the turns",
+    "allowed": []
+  },
+  {
+    "name": "batchClaims",
+    "match": "word",
+    "replacement": "no replacement: a dropped batch stores waiting rows; the admission gives the turns",
+    "allowed": []
+  },
+  {
+    "name": "continueImported$",
+    "match": "word",
+    "replacement": "addSelections$ (imports waiting rows) and admitWaiting$",
+    "allowed": []
+  },
+  {
+    "name": "recordingInProgress",
+    "match": "word",
+    "replacement": "no replacement: one capture at a time for recordings and documents together",
+    "allowed": []
+  },
+  {
+    "name": "hasUnstoredOutcome",
+    "match": "word",
+    "replacement": "unstoredOutcomes (a readonly signal)",
+    "allowed": []
+  },
+  {
+    "name": "captureRetry",
+    "match": "word",
+    "replacement": "captureRestart (one Start again for every row that can be captured again)",
+    "allowed": []
+  },
+  {
+    "name": "captureRetryNamed",
+    "match": "word",
+    "replacement": "captureRestartNamed",
+    "allowed": []
+  },
+  {
+    "name": "asr-row-retry",
+    "match": "substring",
+    "replacement": "asr-row-restart (one Start again)",
+    "allowed": []
+  },
+  {
+    "name": "ocr-row-retry",
+    "match": "substring",
+    "replacement": "ocr-row-restart (one Start again)",
+    "allowed": []
+  },
+  {
+    "name": "ocrInterruptedHint",
+    "match": "word",
+    "replacement": "no replacement: an interrupted row has one cause-free text (captureInterrupted)",
+    "allowed": []
+  },
+  {
+    "name": "asrStatusText",
+    "match": "word",
+    "replacement": "captureRowState (the same row state in both queues, History and the result view)",
+    "allowed": []
+  },
+  {
+    "name": "ocrStatusText",
+    "match": "word",
+    "replacement": "captureRowState (the same row state in both queues, History and the result view)",
+    "allowed": []
+  },
+  {
+    "name": "isDocumentBeingDeleted",
+    "match": "word",
+    "replacement": "isDocumentClaimed (History offers Delete for every row this run is not working on)",
+    "allowed": []
+  },
+  {
+    "name": "runtime_cancel_capture",
+    "match": "word",
+    "replacement": "runtime_delete_capture (Cancel is a runtime delete)",
+    "allowed": []
+  },
+  {
+    "name": "recordingNotFound",
+    "match": "word",
+    "replacement": "captureNotFound (the simulated runtime's not-found answer for recordings and documents)",
+    "allowed": []
+  },
+  {
+    "name": "CAPTURE_DEV_HOST_TEMP_ROOT",
+    "match": "word",
+    "replacement": "tools/test-temp-root.ts, which capture-workbench-e2e:e2e-dev-host preloads",
+    "allowed": []
+  },
+  {
+    "name": "speakerRequirementNeeded",
+    "match": "word",
+    "replacement": "asrInstallSpeakers (the recording page offers the speaker identification install)",
+    "allowed": []
+  },
+  {
+    "name": "cancelBeforeDelete",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "waitBeforeDelete",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "asrPanelHint",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "asrSpeakersOptionalTitle",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "resultStatusText",
+    "match": "word",
+    "replacement": "resultRowState (the result view takes its status and its reason from one row state)",
     "allowed": []
   }
 ]
