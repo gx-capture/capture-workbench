@@ -241,7 +241,7 @@ test('cleanup failure report names process image, pid and wait duration', () => 
   );
 });
 
-const counterObservation = (instances: readonly { identity: string; values: readonly (number | undefined)[] }[]) => {
+const counterObservation = (instances: readonly { identity: string; values: readonly (number | string | undefined)[] }[]) => {
   const rows = ['cpu,2026-11-20T00:00:00.000Z,0,0,0,True'];
   for (let index = 0; index < 5; index += 1) {
     const time = new Date(Date.UTC(2026, 10, 20, 0, 0, 2 + index * 2)).toISOString();
@@ -256,8 +256,8 @@ const counterObservation = (instances: readonly { identity: string; values: read
 
 test('late unsigned wrapped counters count only the few seconds observed', () => {
   const seconds = counterObservation([{ identity: '27156:639307296010000000', values: [
-    18446744071665208880, 18446744071678173805, 18446744071697336103,
-    18446744071717395543, 18446744071717395543,
+    '18446744071665208880', '18446744071678173805', '18446744071697336103',
+    '18446744071717395543', '18446744071717395543',
   ] }]);
   assert.ok(seconds > 5.2 && seconds < 5.3, String(seconds));
 });
