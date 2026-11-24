@@ -567,7 +567,9 @@ impl FixtureState {
                 resource_id: capture_id,
             },
         );
-        Response::json(202, record.wire(held))
+        // The creation names the capture it issued, so the request log can
+        // tell which capture a successful create made.
+        Response::json(202, record.wire(held)).for_capture(&record.capture_id)
     }
 
     /// The capture a request under `/v2/captures/{captureId}` is about, when

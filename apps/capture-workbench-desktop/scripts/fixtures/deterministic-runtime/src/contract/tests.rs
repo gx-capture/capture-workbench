@@ -522,8 +522,15 @@ fn only_an_authorized_request_for_an_issued_capture_names_it_for_the_request_log
     const HOST: &str = "127.0.0.1:4310";
     let state = fixture();
     let id = upload(&state, "pdf", "application/pdf", PDF);
-    let created = exchange(&state, start_request(&id, "host"), 202);
+    // The creation itself names the capture it issued; a refused one names none.
+    let creation = state.route(start_request(&id, "host"));
+    assert_eq!(creation.status, 202);
+    let created = creation.body.clone().unwrap();
     let capture_id = created["captureId"].as_str().unwrap();
+    assert_eq!(creation.capture_id(), Some(capture_id));
+    let refused = state.route(start_request("no-such-ingestion", "host"));
+    assert_eq!(refused.status, 404);
+    assert_eq!(refused.capture_id(), None);
     let policy = crate::http::LocalRequestPolicy::new(TOKEN, HOST);
     let request = |path: &str, token: &str| {
         let mut request = json_request("GET", path, None, Value::Null);

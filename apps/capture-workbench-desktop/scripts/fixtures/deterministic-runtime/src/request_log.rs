@@ -133,7 +133,7 @@ fn entry(method: &str, path: &str, response: &Response) -> Value {
         "status": response.status,
     });
     // Only a capture the fixture issued, named by the route that resolved it
-    // for an authorized request; never an id read from the path.
+    // or created it for an authorized request; never an id read from the path.
     if let Some(capture_id) = response.capture_id() {
         value["captureId"] = capture_id.into();
     }
