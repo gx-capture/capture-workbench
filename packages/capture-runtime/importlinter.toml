@@ -27,6 +27,7 @@ forbidden_modules = [
   "capture_runtime.release",
   "capture_runtime.artifact_parts",
   "capture_runtime.worker_contracts",
+  "capture_runtime.diagnostic_log",
   "capture_runtime.worker_process",
   "capture_runtime.worker_stage_policy",
   "capture_runtime.worker_probe",
@@ -134,6 +135,7 @@ source_modules = [
 ]
 forbidden_modules = [
   "capture_runtime.worker_contracts",
+  "capture_runtime.diagnostic_log",
   "capture_runtime.worker_process",
   "capture_runtime.worker_stage_policy",
   "capture_runtime.worker_probe",
@@ -881,6 +883,7 @@ source_modules = [
   "capture_runtime.release",
   "capture_runtime.artifact_parts",
   "capture_runtime.worker_contracts",
+  "capture_runtime.diagnostic_log",
   "capture_runtime.worker_process",
   "capture_runtime.worker_stage_policy",
   "capture_runtime.worker_probe",

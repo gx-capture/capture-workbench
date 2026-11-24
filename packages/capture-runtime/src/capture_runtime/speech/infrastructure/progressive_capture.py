@@ -591,6 +591,10 @@ class _SessionWorker:
     ) -> None:
         """Start one capture's session; a warm worker serves one after another."""
 
+        # Same buffer `_drain_stderr` parses when the pipe closes, so a warm
+        # worker does not report the previous capture's stages.
+        if self._stderr_tail is not None:
+            self._stderr_tail.clear()
         await self._send(
             encode_control(
                 SessionFrameType.START,
@@ -783,9 +787,14 @@ class _SessionWorker:
     async def failure_diagnostics(
         self, failure_class: WorkerFailureClass
     ) -> WorkerFailureDiagnostics:
-        stages = await self._worker_stage_sequence()
-        if not stages and self._stderr_tail:
-            stages = _stderr_stages(self._stderr_tail)
+        # Callers that already collected stages leave them in the tail. Wait for
+        # the drain only when the worker exited before answering.
+        if failure_class == "exit-before-response":
+            stages = await self._worker_stage_sequence()
+            if not stages and self._stderr_tail:
+                stages = _stderr_stages(self._stderr_tail)
+        else:
+            stages = _stderr_stages(self._stderr_tail) if self._stderr_tail else ()
         if failure_class == "exit-before-response" and self.process.returncode is None:
             # Pipe EOF may arrive before the subprocess transport reports exit.
             with suppress(TimeoutError):
@@ -798,8 +807,16 @@ class _SessionWorker:
 
     async def _worker_stage_sequence(self) -> tuple[str, ...]:
         if not self._stderr_task.done():
-            with suppress(asyncio.TimeoutError, asyncio.CancelledError):
+            try:
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=0.2)
+            except TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                # The capture task's own cancellation must propagate. shield()
+                # leaves the stderr task running in that case; a cancelled
+                # stderr task is the only CancelledError that stops here.
+                if not self._stderr_task.cancelled():
+                    raise
         if not self._stderr_task.done() or self._stderr_task.cancelled():
             return ()
         with suppress(Exception):
@@ -907,4 +924,4 @@ def _json_object(payload: bytes) -> dict[str, Any]:
     return value
 
 
-__all__ = ["ProgressiveCaptureProcessor"]
+__all__ = ["ProgressiveCaptureProcessor", "ProgressiveWorkerFailure"]

@@ -769,6 +769,278 @@ def test_progressive_worker_exit_records_diagnostics(
     assert "fixture-secret-token" not in log
 
 
+def _session_frame(frame_type: SessionFrameType, payload: bytes = b"") -> bytes:
+    return struct.pack(">BI", ord(frame_type.value), len(payload)) + payload
+
+
+def _sealed_segment_frame() -> bytes:
+    segment = RawCaptureSegment(
+        segment_id="segment-1",
+        order=0,
+        locator=TimeLocator(start_ms=0, end_ms=1_000),
+        text="hello",
+    )
+    engine = CaptureEngine(
+        engine="speech-recognition",
+        model="tea-asr-1.1-mini",
+        digest=f"sha256:{'b' * 64}",
+        device="cpu",
+    )
+    payload = json.dumps(
+        {
+            "partialRevision": 1,
+            "coveredUntilMs": 1_000,
+            "segments": [segment.model_dump(mode="json", by_alias=True)],
+            "extractionEngine": engine.model_dump(mode="json", by_alias=True),
+        }
+    ).encode()
+    return _session_frame(SessionFrameType.SEALED_SEGMENT, payload)
+
+
+def test_cancelling_during_failure_diagnostics_propagates_and_records_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Cancelling the capture while diagnostics waits on stderr must propagate.
+    # That bounded wait used to swallow it and record a worker failure.
+    class Decoder:
+        duration_ms = 1_000
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id: str):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode: int | None = None
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] == SessionFrameType.FINISH.value.encode():
+                self.stdout.feed_eof()
+
+        async def drain(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+        def kill(self) -> None:
+            self.returncode = 1
+
+        async def wait(self) -> int:
+            if self.returncode is None:
+                self.returncode = 1
+            return self.returncode
+
+    async def spawn(*_args: object, **_kwargs: object) -> Process:
+        return Process()
+
+    real_wait_for = asyncio.wait_for
+    armed = True
+
+    async def wait_for(fut: object, timeout: float | None = None) -> object:
+        nonlocal armed
+        if armed and timeout == 0.2:
+            # The stderr drain is the first bounded wait on this path.
+            armed = False
+            running = asyncio.current_task()
+            assert running is not None
+            running.cancel()
+        return await real_wait_for(fut, timeout)
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        try:
+            operation = service.start_capture_use_case.execute(
+                StartCapture(
+                    client_request_id="cancel-during-diagnostics",
+                    ingestion_id=ingestion_id,
+                    structuring_mode=StructuringMode.HOST,
+                )
+            )
+            await service._tasks[operation.capture_id]
+            failed = service.get_capture(operation.capture_id)
+            assert failed.error is not None
+            assert failed.error.code == "capture_interrupted"
+            assert armed is False
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert " worker-failure " not in log
+
+
+def test_a_warm_workers_second_failure_reports_only_its_own_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Decoder:
+        duration_ms = 1_000
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id: str):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode: int | None = None
+            self.finishes = 0
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] != SessionFrameType.FINISH.value.encode():
+                return
+            self.finishes += 1
+            if self.finishes == 1:
+                self.stderr.feed_data(b"capture-worker-stage:speech-model-load-cpu-start\n")
+                self.stdout.feed_data(_sealed_segment_frame())
+                self.stdout.feed_data(_session_frame(SessionFrameType.COMPLETED))
+                return
+            self.stderr.feed_data(b"capture-worker-stage:speech-output-empty\n")
+            self.stderr.feed_eof()
+            self.stdout.feed_eof()
+
+        async def drain(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+        def kill(self) -> None:
+            self.returncode = 1
+
+        async def wait(self) -> int:
+            if self.returncode is None:
+                self.returncode = 1
+            return self.returncode
+
+    spawned: list[Process] = []
+
+    async def spawn(*_args: object, **_kwargs: object) -> Process:
+        spawned.append(Process())
+        return spawned[-1]
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        try:
+            first = service.start_capture_use_case.execute(
+                StartCapture(
+                    client_request_id="warm-worker-first",
+                    ingestion_id=ingestion_id,
+                    structuring_mode=StructuringMode.HOST,
+                )
+            )
+            await service._tasks[first.capture_id]
+            assert processor._warm is not None
+            tail = processor._warm.worker._stderr_tail
+            assert tail is not None
+            for _ in range(50):
+                if b"speech-model-load-cpu-start" in tail:
+                    break
+                await asyncio.sleep(0)
+            assert b"speech-model-load-cpu-start" in tail
+
+            second = service.start_capture_use_case.execute(
+                StartCapture(
+                    client_request_id="warm-worker-second",
+                    ingestion_id=ingestion_id,
+                    structuring_mode=StructuringMode.HOST,
+                )
+            )
+            await service._tasks[second.capture_id]
+            failed = service.get_capture(second.capture_id)
+            assert failed.error is not None
+            assert failed.status.value == "failed"
+            assert len(spawned) == 1
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" worker-failure ") == 1
+    assert "stages=speech-output-empty " in log
+    assert "speech-model-load-cpu-start" not in log
+
+
 def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> None:
     # A warm OCR worker holds DirectML sessions in GPU memory that speech needs.
     async def scenario() -> None:
