@@ -12,6 +12,7 @@ import uvicorn
 from capture_runtime._frozen_extraction_residue import start_stale_extraction_sweep
 from capture_runtime.app import create_app
 from capture_runtime.config import RuntimeSettings
+from capture_runtime.diagnostic_log import configure_diagnostic_log
 from capture_runtime.provisioning.infrastructure._engine_installation_residue import (
     remove_retired_ocr_installation,
 )
@@ -60,14 +61,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         remove_retired_ocr_installation(settings.app_data_dir)
         remove_inactive_model_unit_versions(settings.app_data_dir)
         start_stale_extraction_sweep()
-        uvicorn.run(
-            create_app(settings),
-            host=settings.host,
-            port=settings.port,
-            log_level="info",
-            access_log=False,
-            proxy_headers=False,
-        )
+        diagnostic_handler = configure_diagnostic_log(settings.app_data_dir)
+        try:
+            uvicorn.run(
+                create_app(settings),
+                host=settings.host,
+                port=settings.port,
+                log_level="info",
+                access_log=False,
+                proxy_headers=False,
+            )
+        finally:
+            if diagnostic_handler is not None:
+                diagnostic_handler.close()
 
 
 if __name__ == "__main__":

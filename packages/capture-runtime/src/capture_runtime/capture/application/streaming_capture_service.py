@@ -43,6 +43,11 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
     StreamingTransitionError,
 )
 from capture_runtime.clock import Clock
+from capture_runtime.constants import (
+    DIARIZATION_REQUIREMENT_ID,
+    SPEECH_RECOGNITION_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
+)
 from capture_runtime.contracts import (
     CaptureDocument,
     CaptureEventType,
@@ -60,6 +65,7 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.contracts import StartCapture as StartCaptureRequest
+from capture_runtime.diagnostic_log import capture_elapsed_ms, record_worker_failure
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
@@ -92,10 +98,24 @@ from capture_runtime.structuring.infrastructure.structuring import (
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
 )
-from capture_runtime.worker_process import complete_worker_cleanup
-from capture_runtime.worker_stage_policy import sanitize_worker_stage
+from capture_runtime.worker_process import (
+    WorkerExecutionError,
+    WorkerFailureClass,
+    complete_worker_cleanup,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+_PROGRESSIVE_WORKER_FAILURE_CLASSES: dict[str, WorkerFailureClass] = {
+    "progressive_stall": "timeout",
+    "progressive_worker_event_invalid": "protocol",
+    "progressive_worker_exit": "exit-before-response",
+    "progressive_worker_finish_failed": "worker",
+    "progressive_worker_frame_read_failed": "protocol",
+    "progressive_worker_input_failed": "worker",
+    "progressive_worker_start_failed": "worker",
+    "session_failed": "worker",
+}
 
 MAX_EVENT_SEGMENTS = 1_000
 # Advertised in the readiness capabilities: the event stream sends a heartbeat
@@ -594,6 +614,9 @@ class StreamingCaptureService:
                     "The capture was interrupted.",
                 )
         except CaptureProcessingError as error:
+            failure_class = _PROGRESSIVE_WORKER_FAILURE_CLASSES.get(error.code)
+            if failure_class is not None and not cancellation.is_set():
+                self._record_progressive_worker_failure(operation, error, failure_class)
             self._fail(
                 capture_id,
                 error.code,
@@ -602,6 +625,9 @@ class StreamingCaptureService:
                 retryable=error.retryable,
             )
         except OcrExtractionFailure as error:
+            worker_error = _find_ocr_worker_failure(error)
+            if worker_error is not None and not cancellation.is_set():
+                self._record_ocr_worker_failure(operation, worker_error, error.failure.code)
             self._publish_ocr_failure_evidence(operation, error)
             self._fail(
                 capture_id,
@@ -621,18 +647,20 @@ class StreamingCaptureService:
             )
         except RecordingWorkerFailure as error:
             diagnostics = error.diagnostics
-            # Allowlisted names only: never paths, source text or tokens.
-            _LOGGER.warning(
-                "Recording worker failed: code=%s class=%s cause=%s stages=%s",
-                error.code,
-                diagnostics.failure_class,
-                type(error.__cause__).__name__,
-                ">".join(
-                    stage
-                    for stage in diagnostics.stage_sequence
-                    if sanitize_worker_stage(stage) is not None
-                ),
-            )
+            if not cancellation.is_set():
+                record_worker_failure(
+                    requirement=(
+                        DIARIZATION_REQUIREMENT_ID
+                        if error.code == "speaker_identification_worker_failed"
+                        else SPEECH_RECOGNITION_REQUIREMENT_ID
+                    ),
+                    code=error.code,
+                    failure_class=diagnostics.failure_class,
+                    exit_code=diagnostics.exit_code,
+                    cause=error.__cause__,
+                    stages=diagnostics.stage_sequence,
+                    elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
+                )
             self._fail(
                 capture_id,
                 error.code,
@@ -709,6 +737,8 @@ class StreamingCaptureService:
                 stage="structuring" if raw_written else "extraction",
             )
         except Exception as error:
+            if isinstance(error, OcrWorkerFailure) and not cancellation.is_set():
+                self._record_ocr_worker_failure(operation, error, "extraction_failed")
             _LOGGER.warning(
                 "Capture %s failed: class=%s",
                 "structuring" if raw_written else "extraction",
@@ -914,6 +944,38 @@ class StreamingCaptureService:
         if proof is None:
             return
         self._execution_evidence_sink.record(capture_id, source_role, proof)
+
+    def _record_progressive_worker_failure(
+        self,
+        operation: CaptureOperation,
+        error: CaptureProcessingError,
+        failure_class: WorkerFailureClass,
+    ) -> None:
+        cause = error.__cause__
+        diagnostics = cause.diagnostics if isinstance(cause, WorkerExecutionError) else None
+        record_worker_failure(
+            requirement=SPEECH_RECOGNITION_REQUIREMENT_ID,
+            code=error.code,
+            failure_class=diagnostics.failure_class if diagnostics else failure_class,
+            exit_code=diagnostics.exit_code if diagnostics else None,
+            cause=cause or error,
+            stages=diagnostics.stage_sequence if diagnostics else (),
+            elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
+        )
+
+    def _record_ocr_worker_failure(
+        self, operation: CaptureOperation, error: OcrWorkerFailure, code: str
+    ) -> None:
+        diagnostics = error._diagnostics
+        record_worker_failure(
+            requirement=TEXT_RECOGNITION_REQUIREMENT_ID,
+            code=code,
+            failure_class=diagnostics.failure_class,
+            exit_code=diagnostics.exit_code,
+            cause=error.__cause__,
+            stages=diagnostics.stage_sequence,
+            elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
+        )
 
     def _publish_ocr_failure_evidence(
         self,

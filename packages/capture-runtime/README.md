@@ -185,6 +185,14 @@ process's lock asynchronously, so a quick restart retries), startup leaves exist
 to stderr (without the directory path), and exits with code `10`
 (`EXIT_APP_DATA_IN_USE`).
 
+The sidecar writes UTF-8 diagnostics to
+`<app_data_dir>/logs/runtime-diagnostics.log`. It rotates at 1 MiB and keeps up
+to three backups alongside the active file. Lines carry a UTC timestamp and
+allowlisted fields for runtime startup, terminal capture outcomes, and worker
+failures. Elapsed milliseconds are measured from capture creation to the
+failure or terminal transition. Tokens, IDs of individual captures and sources,
+file names, paths, URLs, and source content are excluded.
+
 ## Speaker diarization worker
 
 `capture-engine-diarization` is a separately packaged worker that answers "who

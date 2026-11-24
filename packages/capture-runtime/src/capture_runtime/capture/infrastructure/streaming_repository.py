@@ -63,6 +63,7 @@ from capture_runtime.contracts import (
     RawCapture,
     StartCapture,
 )
+from capture_runtime.diagnostic_log import capture_elapsed_ms, record_capture_ended
 from capture_runtime.storage.common import (
     project_stored_capture,
     project_stored_capture_kind,
@@ -773,13 +774,7 @@ class StreamingRepository:
     def _complete_capture_locked(
         self, record: _CaptureRecord, *, now: datetime
     ) -> CaptureOperation:
-        previous = record.operation
-        record.operation = _complete_capture(record.operation, now=now)
-        try:
-            self._persist_capture(record)
-        except OSError:
-            record.operation = previous
-            raise
+        self._persist_terminal_capture(record, _complete_capture(record.operation, now=now))
         event = operation_domain(record.operation).completed_event(now)
         try:
             self.append_event(
@@ -804,14 +799,7 @@ class StreamingRepository:
         if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
             return record.operation
         now = self._clock.now()
-        previous = record.operation
-        record.operation = _fail_capture(record.operation, failure, now=now)
-        try:
-            self._persist_capture(record)
-        except OSError:
-            # Memory must match disk: a failure that was not saved did not happen.
-            record.operation = previous
-            raise
+        self._persist_terminal_capture(record, _fail_capture(record.operation, failure, now=now))
         try:
             self.append_event(
                 record.operation.capture_id,
@@ -906,13 +894,7 @@ class StreamingRepository:
             if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 return record.operation
             now = self._clock.now()
-            previous = record.operation
-            record.operation = _cancel_capture(record.operation, now=now)
-            try:
-                self._persist_capture(record)
-            except OSError:
-                record.operation = previous
-                raise
+            self._persist_terminal_capture(record, _cancel_capture(record.operation, now=now))
             try:
                 self.append_event(
                     capture_id,
@@ -1060,6 +1042,25 @@ class StreamingRepository:
 
     def _persist_capture(self, record: _CaptureRecord) -> None:
         self._persistence.persist_capture(record)
+
+    def _persist_terminal_capture(
+        self, record: _CaptureRecord, operation: CaptureOperation
+    ) -> None:
+        previous = record.operation
+        record.operation = operation
+        try:
+            self._persist_capture(record)
+        except OSError:
+            record.operation = previous
+            raise
+        failure = operation.error if operation.status is CaptureStatus.FAILED else None
+        record_capture_ended(
+            kind=operation.kind,
+            outcome=operation.status,
+            code=failure.code if failure else None,
+            stage=failure.stage if failure else None,
+            elapsed_ms=capture_elapsed_ms(operation.created_at, operation.updated_at),
+        )
 
     def _load_ingestions(self) -> list[Path]:
         records, invalid_directories = self._persistence.load_ingestions(

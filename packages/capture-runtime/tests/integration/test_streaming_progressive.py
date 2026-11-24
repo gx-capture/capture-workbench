@@ -31,6 +31,7 @@ from capture_runtime.contracts import (
     StructuringMode,
     TimeLocator,
 )
+from capture_runtime.diagnostic_log import configure_diagnostic_log
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
@@ -652,7 +653,15 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
         assert CaptureEventType.COMPLETED in event_types
         await service.shutdown()
 
-    asyncio.run(scenario())
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" capture-ended ") == 1
+    assert "capture-ended kind=recording outcome=completed code=none stage=none elapsedMs=0" in log
 
 
 def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> None:

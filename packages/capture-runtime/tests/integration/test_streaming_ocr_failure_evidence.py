@@ -31,6 +31,7 @@ from capture_runtime.contracts import (
     StartCapture,
     StructuringMode,
 )
+from capture_runtime.diagnostic_log import configure_diagnostic_log
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
 )
@@ -178,7 +179,16 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
         ]
         await service.shutdown()
 
-    asyncio.run(scenario())
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" worker-failure ") == 1
+    assert "worker-failure requirement=text-recognition code=ocr_worker_failed" in log
+    assert "capture-ended kind=pdf outcome=failed code=ocr_worker_failed" in log
 
 
 def test_real_worker_process_client_extractor_service_failure_chain_records_evidence(

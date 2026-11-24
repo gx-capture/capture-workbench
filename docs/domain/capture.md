@@ -26,6 +26,8 @@
 
 ## 聚合與不變條件
 
+Runtime 在 App 資料目錄下的 `logs/runtime-diagnostics.log` 寫入 UTF-8 診斷紀錄。單檔以 1 MiB 為輪替門檻，保留目前檔案及最多三份備份。每行記錄 UTC 時間與允許的欄位，涵蓋 runtime 啟動、worker 失敗與擷取終態。耗時自擷取建立起算，至失敗或進入終態為止，以毫秒計。紀錄不包含權杖、個別擷取或來源的 ID、檔名、路徑、網址或來源內容。
+
 `Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交與拉取結構化前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。唯一的回頭轉換是 `structuring` 回到 `awaiting_structuring`（`release_structuring`）：runtime 結構化供應者無法接受工作、回傳的結果通不過驗證，或這次呼叫以其他錯誤結束時，作業回到呼叫前的等待狀態，同一 `POST /v2/captures/{id}/structure` 可以重試，作業不會被記成失敗。取消不走這條回頭轉換，作業停在 `cancelled`。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。
 
 當機後的修復只在 runtime 取得 App 資料目錄的獨佔鎖之後、於啟動時進行，請求不會執行這些修復。刪除採保守原則：暫時無法讀取（鎖定、權限或 I/O 錯誤）不是可刪除的證明；只要有任何擷取無法載入，就不刪除任何損毀的 ingestion 目錄。只有無法解析或遺失 metadata 且沒有擷取引用的 ingestion 目錄（以正規化 UUID 比對，忽略大小寫），以及位於 runtime app data 暫存目錄內的 worker 暫存檔（`capture-worker-source-`、`capture-workbench-speech-`、`capture-progressive-window-`）及語音工作階段暫存目錄（`capture-speech-session-` 開頭的目錄及其內容）會在啟動時移除；外部共用暫存目錄不動。`open` 的 ingestion 若來源比已接受的位移長，截回該位移；來源不見或比已接受的位移短，記為 `failed` 並立即到期：仍在等候輸入的擷取以 `ingestion_source_unavailable` 失敗並寫下終止的失敗事件，緊接著的到期清理就移除該 ingestion 目錄。引用它的擷取若不在等候輸入、也還沒進入終態（例如 `extracting`），或工作仍在執行，就仍保護它，來源留著。啟動時把 ingestion 或擷取記為失敗的 metadata 若寫不進磁碟，記憶體還原為寫入前的狀態，與磁碟一致；解析路徑或讀取來源發生 I/O 錯誤時同樣不改動。這些延後處理的 ingestion 在這個行程內不被任何到期清理刪除，只記一則不含路徑與內容的警告，下次啟動再試。

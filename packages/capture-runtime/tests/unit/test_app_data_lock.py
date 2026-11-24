@@ -212,6 +212,8 @@ def test_main_holds_lock_across_sweep_and_server_run_and_releases_on_exit(
     def fake_uvicorn_run(*_args: object, **_kwargs: object) -> None:
         with pytest.raises(AppDataInUseError):
             AppDataDirectoryLock.acquire(app_data_dir)
+        log = app_data_dir / "logs" / "runtime-diagnostics.log"
+        assert " runtime-start version=" in log.read_text(encoding="utf-8")
         events.append("run")
 
     monkeypatch.setattr(runtime_main, "start_stale_extraction_sweep", fake_sweep)

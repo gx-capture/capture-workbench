@@ -16,6 +16,8 @@ from capture_runtime.capture.infrastructure.source_sniffing import sniff_source
 from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import OperationFailure, StartCapture, StructuringMode
+from capture_runtime.diagnostic_log import configure_diagnostic_log
+from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineResolutionTimeoutError,
     ExtractionRuntimeUnavailableError,
@@ -111,24 +113,54 @@ def _run_capture(tmp_path: Path, error: BaseException) -> OperationFailure:
     ],
 )
 def test_a_worker_failure_fails_the_capture_without_retry_and_logs_only_safe_names(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, code: str, stage: str
+    tmp_path: Path, code: str, stage: str
 ) -> None:
     worker_error = _worker_error(stage)
     failure = RecordingWorkerFailure(code, worker_error.diagnostics)  # type: ignore[arg-type]
     failure.__cause__ = worker_error
-    with caplog.at_level(logging.WARNING):
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
         error = _run_capture(tmp_path, failure)
+    finally:
+        handler.close()
 
     assert (error.code, error.retryable, error.stage) == (code, False, "extraction")
     # The failure object carries no stage record or worker class.
     assert set(error.model_dump()) == {"code", "message", "stage", "retryable"}
     assert stage not in error.message
-    assert code in caplog.text
-    assert "WorkerExecutionError" in caplog.text
-    assert "class=worker" in caplog.text
-    assert stage in caplog.text
-    assert _PRIVATE_PATH not in caplog.text
-    assert "private-user" not in caplog.text
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    requirement = (
+        "speaker-diarization"
+        if code == "speaker_identification_worker_failed"
+        else "speech-recognition"
+    )
+    assert (
+        f"worker-failure requirement={requirement} code={code} class=worker exit=none "
+        f"cause=WorkerExecutionError stages={stage} elapsedMs=0"
+    ) in log
+    assert log.count(" capture-ended ") == 1
+    assert f"capture-ended kind=recording outcome=failed code={code} stage=extraction" in log
+    assert _PRIVATE_PATH not in log
+    assert "private-user" not in log
+
+
+def test_progressive_worker_exit_records_diagnostics(tmp_path: Path) -> None:
+    failure = CaptureProcessingError("Worker stopped.", code="progressive_worker_exit")
+    failure.__cause__ = _worker_error("speech-model-load-cpu-failed-unknown")
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        error = _persisted_failure(tmp_path, failure)
+    finally:
+        handler.close()
+    assert error.code == "progressive_worker_exit"
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert (
+        "worker-failure requirement=speech-recognition code=progressive_worker_exit "
+        "class=worker exit=none cause=WorkerExecutionError "
+        "stages=speech-model-load-cpu-failed-unknown elapsedMs=0"
+    ) in log
 
 
 def test_an_unexpected_extraction_error_is_extraction_failed_and_logs_its_class(
@@ -146,8 +178,6 @@ def test_an_unexpected_extraction_error_is_extraction_failed_and_logs_its_class(
 
 
 def test_silent_buffered_extraction_is_extraction_no_text_without_retry(tmp_path: Path) -> None:
-    from capture_runtime.processing_error import CaptureProcessingError
-
     with pytest.raises(CaptureProcessingError) as caught:
         asyncio.run(_silent_extraction(tmp_path))
     assert (caught.value.code, caught.value.retryable, caught.value.stage) == (
