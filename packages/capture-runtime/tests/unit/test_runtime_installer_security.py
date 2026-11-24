@@ -483,15 +483,17 @@ def test_direct_model_catalog_rejects_case_colliding_paths() -> None:
         )
 
 
+@pytest.mark.parametrize("downloader", [HttpArtifactDownloader, HttpModelFileDownloader])
 @pytest.mark.parametrize(
     "retry_delays",
-    [(), (-1,), (31,), (0, 0, 0, 0, 0, 0)],
+    [(-1,), (31,), (True,), (0,) * 9],
 )
-def test_direct_model_retry_schedule_is_bounded(
+def test_download_retry_schedule_is_bounded(
+    downloader: type[HttpArtifactDownloader] | type[HttpModelFileDownloader],
     retry_delays: tuple[float, ...],
 ) -> None:
     with pytest.raises(ValueError, match="retry schedule"):
-        HttpModelFileDownloader(retry_delays=retry_delays)
+        downloader(retry_delays=retry_delays)
 
 
 def test_direct_model_download_validates_allowlisted_signed_redirect_before_streaming(

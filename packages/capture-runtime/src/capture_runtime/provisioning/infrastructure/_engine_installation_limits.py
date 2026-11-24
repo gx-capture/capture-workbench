@@ -24,6 +24,10 @@ DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 # host supports them; release CDNs throttle each connection.
 PARALLEL_DOWNLOAD_MIN_BYTES = 16 * 1024 * 1024
 PARALLEL_DOWNLOAD_SEGMENTS = 4
+# Waits before each retry of a download after a network failure. Together
+# they cover a network switch (a minute). An attempt that received new bytes
+# starts the schedule again.
+DOWNLOAD_RETRY_DELAYS = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
 MAX_DIRECT_MODEL_REDIRECTS = 5
 DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = 60.0
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')
