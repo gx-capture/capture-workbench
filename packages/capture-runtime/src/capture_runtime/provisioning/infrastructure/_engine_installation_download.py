@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -25,6 +25,7 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
 
 from ._engine_installation_errors import EngineInstallationError
 from ._engine_installation_limits import (
+    DOWNLOAD_RETRY_DELAYS,
     PARALLEL_DOWNLOAD_MIN_BYTES,
     PARALLEL_DOWNLOAD_SEGMENTS,
 )
@@ -257,6 +258,95 @@ _DIRECT_MODEL = _Wording(
     incomplete="direct model file byte count does not match catalog",
     checksum="direct model file checksum does not match catalog",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _RetryWording:
+    """Why one download kind stopped retrying; the installer classifies errors by this text."""
+
+    exhausted: str
+    refused: str
+
+
+_ARTIFACT_RETRIES = _RetryWording(
+    exhausted="engine artifact download exhausted bounded retries",
+    refused="engine artifact source returned a non-retryable response",
+)
+_DIRECT_MODEL_RETRIES = _RetryWording(
+    exhausted="direct model download exhausted bounded retries",
+    refused="direct model source returned a non-retryable response",
+)
+_MAX_DOWNLOAD_RETRIES = 8
+_MAX_DOWNLOAD_RETRY_DELAY_SECONDS = 30
+# A response the source may answer differently on the next request.
+_RETRYABLE_STATUS_CODES = frozenset({408, 429})
+
+
+def _bounded_retry_delays(delays: tuple[float, ...]) -> tuple[float, ...]:
+    if len(delays) > _MAX_DOWNLOAD_RETRIES or any(
+        isinstance(delay, bool)
+        or not isinstance(delay, (int, float))
+        or delay < 0
+        or delay > _MAX_DOWNLOAD_RETRY_DELAY_SECONDS
+        for delay in delays
+    ):
+        raise ValueError("download retry schedule must be bounded")
+    return delays
+
+
+def _retryable_status(status_code: int) -> bool:
+    return status_code >= 500 or status_code in _RETRYABLE_STATUS_CODES
+
+
+async def _pause(delay: float, cancel_event: asyncio.Event) -> None:
+    """Wait before the next attempt; a cancel ends the wait at once."""
+
+    if delay:
+        with suppress(TimeoutError):
+            await asyncio.wait_for(cancel_event.wait(), delay)
+    if cancel_event.is_set():
+        raise asyncio.CancelledError
+
+
+async def _retry_network_failures(
+    attempt: Callable[[], Awaitable[None]],
+    *,
+    delays: tuple[float, ...],
+    progress: _GrowingProgress,
+    cancel_event: asyncio.Event,
+    wording: _RetryWording,
+) -> None:
+    """Repeat the attempt after a network failure, waiting as the schedule says.
+
+    Each attempt resumes from the partial the last one left. An attempt that
+    received bytes beyond every earlier one starts the schedule again, so only
+    consecutive attempts without progress use it up. Integrity and file
+    failures end the download at once.
+    """
+
+    waits = iter(delays)
+    highest = progress.highest
+    while True:
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        failure: Exception
+        try:
+            await attempt()
+            return
+        except httpx.HTTPStatusError as error:
+            if not _retryable_status(error.response.status_code):
+                raise EngineInstallationError(wording.refused) from error
+            failure = error
+        except (httpx.TransportError, ConnectionError) as error:
+            failure = error
+        if progress.highest > highest:
+            highest = progress.highest
+            waits = iter(delays)
+        delay = next(waits, None)
+        if delay is None:
+            raise EngineInstallationError(wording.exhausted) from failure
+        await _pause(delay, cancel_event)
+
 
 # Opens one GET with the given extra headers (a Range when resuming).
 type _Opener = Callable[[dict[str, str]], AbstractAsyncContextManager[httpx.Response]]
@@ -717,18 +807,17 @@ def _exact_content_range(response: httpx.Response, start: int, end: int, total: 
     return content_range == f"bytes {start}-{end}/{total}"
 
 
-def _monotonic(progress: Callable[[int], None]) -> Callable[[int], None]:
+class _GrowingProgress:
     """Report only growth, so a restarted region never moves progress back."""
 
-    seen = 0
+    def __init__(self, progress: Callable[[int], None]) -> None:
+        self._progress = progress
+        self.highest = 0
 
-    def report(copied: int) -> None:
-        nonlocal seen
-        if copied > seen:
-            seen = copied
-            progress(copied)
-
-    return report
+    def __call__(self, copied: int) -> None:
+        if copied > self.highest:
+            self.highest = copied
+            self._progress(copied)
 
 
 def _plain_get(client: httpx.AsyncClient, url: str) -> _Opener:
@@ -782,7 +871,16 @@ async def _receive(
     with _open_part(plan, part.offset + segment.start + segment.received) as writer:
         try:
             # Unbuffered, so every byte the network delivered reaches the partial.
-            async for chunk in response.aiter_bytes():
+            chunks = response.aiter_bytes()
+            while True:
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    break
+                except OSError as error:
+                    # Windows can surface a connection abort while reading the
+                    # body as a bare OSError. It is a read failure, not file IO.
+                    raise httpx.ReadError(str(error)) from error
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
                 if segment.received + len(chunk) > segment.length:
@@ -999,12 +1097,14 @@ class HttpArtifactDownloader:
         *,
         parallel_min_bytes: int = PARALLEL_DOWNLOAD_MIN_BYTES,
         parallel_segments: int = PARALLEL_DOWNLOAD_SEGMENTS,
+        retry_delays: tuple[float, ...] = DOWNLOAD_RETRY_DELAYS,
     ) -> None:
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(timeout=120, follow_redirects=True)
         )
         self._parallel_min_bytes = parallel_min_bytes
         self._parallel_segments = parallel_segments
+        self._retry_delays = _bounded_retry_delays(retry_delays)
 
     async def download(
         self,
@@ -1014,16 +1114,40 @@ class HttpArtifactDownloader:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        """Keep `<destination>.part` until the catalog byte count and SHA-256 match."""
+        """Keep `<destination>.part` until the catalog byte count and SHA-256 match.
 
+        A network failure is retried from the partial on the bounded schedule.
+        """
+
+        report = _GrowingProgress(progress)
+        await _retry_network_failures(
+            lambda: self._download_once(
+                descriptor,
+                destination,
+                cancel_event=cancel_event,
+                progress=report,
+            ),
+            delays=self._retry_delays,
+            progress=report,
+            cancel_event=cancel_event,
+            wording=_ARTIFACT_RETRIES,
+        )
+
+    async def _download_once(
+        self,
+        descriptor: EngineArtifactDescriptor,
+        destination: Path,
+        *,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> None:
         plan = _Plan.open(
             destination,
             sha256=descriptor.sha256,
             size=descriptor.bytes,
             parts=descriptor.parts,
         )
-        report = _monotonic(progress)
-        report(plan.received_total())
+        progress(plan.received_total())
         try:
             streamed = False
             if not plan.fully_present():
@@ -1033,7 +1157,7 @@ class HttpArtifactDownloader:
                         descriptor,
                         plan,
                         cancel_event=cancel_event,
-                        progress=report,
+                        progress=progress,
                     )
             if not streamed:
                 await _file_operation(
@@ -1333,20 +1457,12 @@ class HttpModelFileDownloader:
         self,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         *,
-        retry_delays: tuple[float, ...] = (0, 1, 2),
+        retry_delays: tuple[float, ...] = DOWNLOAD_RETRY_DELAYS,
     ) -> None:
-        if not 1 <= len(retry_delays) <= 5 or any(
-            isinstance(delay, bool)
-            or not isinstance(delay, (int, float))
-            or delay < 0
-            or delay > 30
-            for delay in retry_delays
-        ):
-            raise ValueError("direct model retry schedule must be bounded")
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(timeout=120, follow_redirects=False)
         )
-        self._retry_delays = retry_delays
+        self._retry_delays = _bounded_retry_delays(retry_delays)
 
     async def download(
         self,
@@ -1360,16 +1476,9 @@ class HttpModelFileDownloader:
 
         if descriptor.bytes > _facade_max_single_model_file_bytes():
             raise EngineInstallationError("direct model file exceeds the 4 GiB single-file limit")
-        report = _monotonic(progress)
-        last_error: BaseException | None = None
-        for delay in self._retry_delays:
-            last_error = None
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            if delay:
-                await asyncio.sleep(delay)
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
+        report = _GrowingProgress(progress)
+
+        async def attempt() -> None:
             try:
                 await self._download_once(
                     descriptor,
@@ -1377,29 +1486,17 @@ class HttpModelFileDownloader:
                     cancel_event=cancel_event,
                     progress=report,
                 )
-                return
-            except httpx.HTTPStatusError as error:
-                last_error = error
-                if error.response.status_code < 500 and error.response.status_code not in {
-                    408,
-                    429,
-                }:
-                    raise EngineInstallationError(
-                        "direct model source returned a non-retryable response"
-                    ) from error
             except httpx.InvalidURL as error:
                 raise EngineInstallationError(
                     "direct model redirect Location is invalid"
                 ) from error
-            except httpx.TransportError as error:
-                last_error = error
-            except OSError as error:
-                # Windows HTTP/file IO can surface a connection abort as a bare
-                # OSError. Treat it like the other bounded transport failures;
-                # integrity checks still run after a complete retry succeeds.
-                last_error = error
-        raise EngineInstallationError("direct model download exhausted bounded retries") from (
-            last_error
+
+        await _retry_network_failures(
+            attempt,
+            delays=self._retry_delays,
+            progress=report,
+            cancel_event=cancel_event,
+            wording=_DIRECT_MODEL_RETRIES,
         )
 
     async def _download_once(

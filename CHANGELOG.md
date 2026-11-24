@@ -21,6 +21,27 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Engine downloads ride out a short network interruption
+
+Worker archives and direct model files now retry a network failure (a refused
+or dropped connection, a read timeout, or a 5xx, 408 or 429 response) on the
+same schedule: waits of 1, 2, 4, 8, 15 and 30 seconds, about a minute in all,
+enough for a Wi-Fi or network switch. Each retry resumes from the partial
+file. An attempt that received new bytes starts the schedule again, so a slow
+but moving download is not cut off. Before, a model file gave up after about
+3 seconds and a worker archive did not retry at all.
+
+- A worker archive that runs out of retries, or whose source answers another
+  4xx, now fails with `installation_failed` instead of
+  `installation_unexpected`. A model file still fails with
+  `direct_model_retries_exhausted`.
+- Checksum, byte-count and file errors still end the download at once. A file
+  error during a model download (a full disk, say) now reports
+  `installation_io_failed` at once instead of being retried as a network
+  failure.
+- No contract change. A failure code of its own for network failures is left
+  to a contract-changing release.
+
 ## 0.11.0
 
 Capture now calls OCR text recognition and uses `recording` for audio and

@@ -7,7 +7,7 @@ import hashlib
 import json
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import BinaryIO
 
@@ -168,10 +168,19 @@ def _run(downloader, descriptor, destination: Path, **kwargs: object) -> None:
 
 
 def _artifact_downloader(handler, **kwargs: object) -> HttpArtifactDownloader:
+    # One attempt per call unless a test asks for retries, so each call here is
+    # one attempt and the next call resumes from what it left.
+    kwargs.setdefault("retry_delays", ())
     return HttpArtifactDownloader(
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         **kwargs,  # type: ignore[arg-type]
     )
+
+
+def _interrupted() -> AbstractContextManager[pytest.ExceptionInfo[EngineInstallationError]]:
+    """An attempt ended by the network, with no retry left."""
+
+    return pytest.raises(EngineInstallationError, match="exhausted bounded retries")
 
 
 def test_a_ranged_download_resumes_each_segment_from_its_first_missing_byte(
@@ -207,7 +216,7 @@ def test_a_ranged_download_resumes_each_segment_from_its_first_missing_byte(
         )
 
     downloader = _artifact_downloader(handler, parallel_min_bytes=1, parallel_segments=2)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     interrupt = False
     resumed = len(ranges)
@@ -244,7 +253,7 @@ def test_a_stream_download_resumes_with_an_open_range(tmp_path: Path) -> None:
         )
 
     downloader = _artifact_downloader(handler)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     _run(downloader, descriptor, destination)
 
@@ -276,7 +285,7 @@ def test_a_stream_resume_restarts_when_the_server_ignores_range(tmp_path: Path) 
         )
 
     downloader = _artifact_downloader(handler)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     _run(downloader, descriptor, destination)
 
@@ -305,7 +314,7 @@ def test_a_stream_resume_restarts_when_the_server_answers_another_range(tmp_path
         return httpx.Response(200, content=payload, request=request)
 
     downloader = _artifact_downloader(handler)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     _run(downloader, descriptor, destination)
 
@@ -445,7 +454,7 @@ def test_a_resumed_download_with_a_bad_checksum_removes_the_partial(tmp_path: Pa
         )
 
     downloader = _artifact_downloader(handler)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     with pytest.raises(EngineInstallationError, match="checksum"):
         _run(downloader, descriptor, destination)
@@ -505,7 +514,7 @@ def test_progress_does_not_decrease_across_a_resume(tmp_path: Path) -> None:
         )
 
     downloader = _artifact_downloader(handler)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination, progress=reported.append)
     _run(downloader, descriptor, destination, progress=reported.append)
 
@@ -600,7 +609,7 @@ def test_a_finished_part_is_not_downloaded_again(tmp_path: Path) -> None:
         )
 
     downloader = _artifact_downloader(handler)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     started = len(requested)
     _run(downloader, descriptor, destination)
@@ -839,7 +848,7 @@ def test_a_failed_range_cancelling_a_sibling_mid_flush_keeps_the_sibling_bytes(
 
         _hold_partial_flushes(monkeypatch, hold)
         downloader = _artifact_downloader(handler, parallel_min_bytes=1, parallel_segments=2)
-        with pytest.raises(httpx.ReadError):
+        with _interrupted():
             await asyncio.wait_for(
                 downloader.download(
                     descriptor,
@@ -921,7 +930,7 @@ def test_stale_progress_redownloads_unrecorded_bytes(tmp_path, monkeypatch):
             raise httpx.ReadError("interrupted")
 
     _downloader = _artifact_downloader(lambda request: httpx.Response(200, stream=Interrupted()))
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(_downloader, _artifact(payload), destination)
     partial, sidecar = _partial(destination)
     assert partial.read_bytes() == payload[:10]
@@ -1007,7 +1016,7 @@ def test_stale_ranged_progress_overwrites_unrecorded_preallocated_bytes(tmp_path
 
     monkeypatch.setattr(download_module, "_atomic_write", write)
     downloader = _artifact_downloader(handler, parallel_min_bytes=1, parallel_segments=2)
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(downloader, descriptor, destination)
     partial, sidecar = _partial(destination)
     assert partial.stat().st_size == len(payload)
@@ -1053,7 +1062,7 @@ def test_rewind_invalidates_stale_progress_or_fails_before_rewriting(
     first = _artifact_downloader(
         lambda request: httpx.Response(200, stream=_Interrupt(payload[:5]))
     )
-    with pytest.raises(httpx.ReadError):
+    with _interrupted():
         _run(first, descriptor, destination)
     partial, sidecar = _partial(destination)
     old_progress = sidecar.read_bytes()
@@ -1081,7 +1090,7 @@ def test_rewind_invalidates_stale_progress_or_fails_before_rewriting(
         assert sidecar.read_bytes() == old_progress
         assert partial.read_bytes() == payload[:5]
     else:
-        with pytest.raises(httpx.ReadError):
+        with _interrupted():
             _run(downloader, descriptor, destination)
         assert not sidecar.exists()
         assert partial.read_bytes() == payload[:3]
