@@ -248,7 +248,7 @@ export function verifyRuntimeReleaseDirectory(
       }
     }
   }
-  if (!workers.some((worker) => worker.requirementId === 'windowsml-ocr')) {
+  if (!workers.some((worker) => worker.requirementId === 'text-recognition')) {
     throw new Error('Runtime engine catalog does not publish an OCR worker.');
   }
   return {
@@ -556,12 +556,12 @@ export interface PracticalOcrEvidence {
   readonly runtime: {
     readonly contractSetSha256: string;
     readonly workerExecutableSha256: string;
-    readonly computeMode: 'gpu-dml' | 'cpu-fallback';
+    readonly computeMode: 'gpu' | 'cpu-fallback';
   };
   readonly ocr: {
-    readonly engine: 'windowsml-ocr';
+    readonly engine: 'text-recognition';
     readonly model: string;
-    readonly device: 'windowsml-dml' | 'cpu';
+    readonly device: 'directml' | 'cpu';
     readonly segmentCount: number;
     readonly characterCount: number;
   };

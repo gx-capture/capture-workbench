@@ -41,13 +41,13 @@ are ephemeral and are deleted after the host has copied the data it needs.
 
    | Unit | What it does |
    | --- | --- |
-   | `windowsml-ocr` | OCR for PDFs and images (PP-OCRv6 models on DirectML or the CPU) |
+   | `text-recognition` | OCR for PDFs and images (PP-OCRv6 models on DirectML or the CPU) |
    | `speech-recognition` | ASR: the CUDA pack (TEA-ASR 1.1 on an NVIDIA GPU) or, on a machine without the NVIDIA driver, the CPU pack (TEA-ASR 1.1 mini) |
    | `speaker-diarization` (optional) | Who spoke when, with NVIDIA Nemotron-3-Diarization on the CPU |
    | `vertical-japanese-reader` (optional) | NDLOCR-Lite models for vertical Japanese pages; without it the regular OCR reads every page |
 
    A result can name an optional unit that would have helped
-   (`suggestedUnits`), so the host can offer it.
+   (`suggestedRequirementIds`), so the host can offer it.
 5. Structuring can be owned by the runtime's isolated Ollama process or by the
    host's provider. The runtime validates the resulting `CaptureDocument`,
    including schema, ordering, and raw provenance, before reporting completion.
@@ -210,7 +210,7 @@ corepack pnpm dev:deterministic
 ```
 
 The deterministic lane is for repeatable development and diagnostics. It does
-not prove that WindowsML, TEA-ASR, Ollama, or a packaged release is working.
+not prove that text recognition, TEA-ASR, Ollama, or a packaged release is working.
 
 To run the runtime directly for backend development, set a private
 `CAPTURE_API_TOKEN` with at least 32 characters and start the runtime target:
@@ -238,6 +238,17 @@ corepack pnpm nx run capture-workbench-ui:clean-consumer-smoke
 corepack pnpm nx run capture-workbench-desktop:test-scripts
 corepack pnpm nx run capture-workbench-e2e:e2e
 ```
+
+The browser journeys run only through their Nx targets:
+`capture-workbench-e2e:e2e` (simulated desktop backend) and
+`capture-workbench-e2e:e2e-dev-host` (dev host with the deterministic fixture
+runtime). Both build what they need and preload `tools/test-temp-root.ts`, so
+a run leaves nothing in the shared temp directory. A direct `playwright test`
+is not supported: the dev-host config refuses it, and the simulated one then
+runs in the shared temp directory, where the Workbench dev server's Nx leaves
+a socket directory behind. When the run's private temp path is too long for an
+Nx socket, the run stops and asks for `NX_SOCKET_DIR` set to a short
+directory; a configured `NX_SOCKET_DIR` is always used.
 
 ### Localhost preview
 

@@ -40,10 +40,10 @@ describe('what the runtime sends for speakers', () => {
   ])('rejects invalid engine timings in a provider %j', async (timings) => {
     const session = {
       protocolVersion: '2', sessionId: 'session', captureId: 'capture',
-      rawSourceSha256: 'a'.repeat(64), contractSetSha256: 'b'.repeat(64),
+      sourceSha256: 'a'.repeat(64), contractSetSha256: 'b'.repeat(64),
       providerCapability: {
         provider: { engine: 'host', model: 'test', digest: `sha256:${'a'.repeat(64)}`, ...timings },
-        capability: 'capture-structuring', schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+        schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
       },
       schemaDialect: 'https://json-schema.org/draft/2020-12/schema', batchCount: 1,
       nextBatchIndex: 0, sessionDigest: 'c'.repeat(64), status: 'open',
@@ -144,7 +144,7 @@ describe('what the runtime sends for speakers', () => {
     expect(document.durationMs).toBeNull();
 
     const recording = await decode<CaptureOperation>(
-      'audioCaptureOperation',
+      'recordingCaptureOperation',
       'CaptureOperation',
     );
     expect([recording.coveredUntilMs, recording.durationMs]).toEqual([

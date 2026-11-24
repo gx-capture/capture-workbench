@@ -1,0 +1,66 @@
+{
+  "algorithm": "capture-workbench-ocr-fixtures-v1",
+  "files": [
+    {
+      "bytes": 1087,
+      "kind": "license",
+      "mediaType": "text/plain",
+      "path": "licenses/LICENSE.txt",
+      "sha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b"
+    },
+    {
+      "bytes": 304,
+      "kind": "notice",
+      "mediaType": "text/plain",
+      "path": "licenses/NOTICE.txt",
+      "sha256": "e8d7eab24c7f7ee0f93daf8945f649933e024071473d6506d8af6656a4ad2b2d"
+    },
+    {
+      "bytes": 5346,
+      "kind": "derived",
+      "mediaType": "application/json",
+      "path": "model/pipeline.json",
+      "sha256": "c3a409ecfd46b9ab7fd74b29909d2f410f057a77509dd427da1ed8b4f779de23"
+    },
+    {
+      "bytes": 2157,
+      "expectedDevice": "directml",
+      "expectedEngine": "text-recognition",
+      "expectedModel": "pp-ocrv6-medium",
+      "expectedText": "CAPTURE OCR FIXTURE",
+      "kind": "ocr-fixture",
+      "licensePath": "licenses/LICENSE.txt",
+      "mediaType": "image/png",
+      "noticePath": "licenses/NOTICE.txt",
+      "path": "fixtures/ocr-reference.png",
+      "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82"
+    },
+    {
+      "bytes": 2421,
+      "imageOnly": true,
+      "kind": "scanned-pdf-fixture",
+      "licensePath": "licenses/LICENSE.txt",
+      "mediaType": "application/pdf",
+      "noticePath": "licenses/NOTICE.txt",
+      "pageCount": 1,
+      "path": "fixtures/ocr-scanned.pdf",
+      "sha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30"
+    }
+  ],
+  "fixedUpstreamRevisions": {
+    "ndlocrLite": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+    "paddleocrDetection": "61323801669c338b7891481ec7bac61ce31b576a",
+    "paddleocrDictionary": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+    "paddleocrRecognition": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
+  },
+  "generator": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
+  "licensePath": "licenses/LICENSE.txt",
+  "noticePath": "licenses/NOTICE.txt",
+  "releaseVersion": "0.11.0",
+  "sourceRepositories": {
+    "ndlocrLite": "ndl-lab/ndlocr-lite",
+    "paddleocrDetection": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
+    "paddleocrRecognition": "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
+  },
+  "stage": "text-recognition"
+}

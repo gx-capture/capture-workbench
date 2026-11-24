@@ -17,17 +17,21 @@ from typing import Literal, Protocol
 from capture_runtime.constants import API_VERSION, RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureFailureV2,
-    CaptureOcrProjectionV3,
+    CaptureOcrProjection,
     CaptureSource,
-    OcrBoxV3,
-    OcrPageProjectionV3,
+    OcrBox,
+    OcrPageProjection,
     OcrPageStatus,
-    OcrPointV3,
+    OcrPoint,
     OcrProjectionStatus,
+    OcrProvenance,
     OcrProvenanceUnavailableReason,
-    OcrProvenanceV3,
-    OcrRasterV3,
+    OcrRaster,
+    OperationFailure,
+)
+from capture_runtime.ocr.infrastructure.image_normalization import (
+    oriented_image_dimensions,
+    png_raster_dimensions,
 )
 from capture_runtime.ocr.infrastructure.ocr_profile import load_profile_spec
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
@@ -80,6 +84,25 @@ class OcrPageManifest:
             raise OcrProjectionError("OCR manifest raster scale must be positive")
 
 
+def image_page_manifest(content: bytes, raster_png: bytes) -> OcrPageManifest:
+    """The one-page manifest of an image source whose OCR raster is ``raster_png``.
+
+    The OCR worker rejects a run whose raster differs from its manifest, so the runtime
+    and the release model check both build the manifest here from the normalized raster.
+    """
+
+    raster_width, raster_height = png_raster_dimensions(raster_png)
+    if raster_width is None or raster_height is None:
+        raise ValueError("OCR raster metadata is unavailable for image input.")
+    source_width, source_height = oriented_image_dimensions(content)
+    return OcrPageManifest(
+        page=1,
+        raster_width=raster_width,
+        raster_height=raster_height,
+        raster_scale=min(raster_width / source_width, raster_height / source_height),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class OcrBoxInput:
     """One normalized OCR region before it crosses the wire contract."""
@@ -102,8 +125,8 @@ class OcrPageInput:
     region_confidences: tuple[float, ...] = ()
     confidence: float | None = None
     status: OcrPageStatus | None = None
-    provenance: OcrProvenanceV3 | None = None
-    failure: CaptureFailureV2 | None = None
+    provenance: OcrProvenance | None = None
+    failure: OperationFailure | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +134,7 @@ class OcrEngineRun:
     """The small result port shared by synchronous and remote OCR adapters."""
 
     pages: tuple[OcrPageInput, ...]
-    provenance: OcrProvenanceV3 | CaptureEngine
+    provenance: OcrProvenance | CaptureEngine
     warnings: tuple[str, ...] = ()
 
 
@@ -136,7 +159,7 @@ class OcrEngineRequest:
 
     manifest: tuple[OcrPageManifest, ...]
     is_cancelled: Callable[[], bool]
-    observe: Callable[[OcrPageManifest, object, OcrProvenanceV3], OcrPageInput]
+    observe: Callable[[OcrPageManifest, object, OcrProvenance], OcrPageInput]
     fail_page: Callable[[OcrPageManifest], None]
 
 
@@ -152,7 +175,7 @@ class OcrEngineFailure(RuntimeError):
         *,
         kind: Literal["timeout", "protocol", "worker", "unavailable"],
         completed_pages: Iterable[OcrPageInput] = (),
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
+        provenance: OcrProvenance | CaptureEngine | None = None,
     ) -> None:
         self.kind = kind
         self.completed_pages = tuple(completed_pages)
@@ -166,8 +189,8 @@ class OcrExtractionFailure(RuntimeError):
     def __init__(
         self,
         *,
-        failure: CaptureFailureV2,
-        projection: CaptureOcrProjectionV3,
+        failure: OperationFailure,
+        projection: CaptureOcrProjection,
     ) -> None:
         self.failure = failure
         self.projection = projection
@@ -178,11 +201,11 @@ class OcrExtractionFailure(RuntimeError):
 class OcrTerminalOutcome:
     """One OCR terminal failure and its page-complete projection."""
 
-    failure: CaptureFailureV2
-    projection: CaptureOcrProjectionV3
+    failure: OperationFailure
+    projection: CaptureOcrProjection
 
 
-type OcrTerminalResult = CaptureOcrProjectionV3 | OcrTerminalOutcome
+type OcrTerminalResult = CaptureOcrProjection | OcrTerminalOutcome
 
 
 def _coerce_polygon(
@@ -245,20 +268,20 @@ class OcrPipeline:
     def __init__(
         self,
         *,
-        contract_sha256: str | None = None,
-        default_provenance: OcrProvenanceV3 | None = None,
+        contract_set_sha256: str | None = None,
+        default_provenance: OcrProvenance | None = None,
     ) -> None:
         self._builder = _OcrProjectionBuilder(
-            contract_sha256=contract_sha256,
+            contract_set_sha256=contract_set_sha256,
             default_provenance=default_provenance,
         )
 
     @property
-    def contract_sha256(self) -> str:
-        return self._builder.contract_sha256
+    def contract_set_sha256(self) -> str:
+        return self._builder.contract_set_sha256
 
     @property
-    def default_provenance(self) -> OcrProvenanceV3:
+    def default_provenance(self) -> OcrProvenance:
         return self._builder.default_provenance
 
     def extract(
@@ -316,14 +339,14 @@ class OcrPipeline:
         expected_manifest = self._validate_request(request)
         expected_pages = tuple(self._manifest_input(item) for item in expected_manifest)
         observed_pages: list[OcrPageInput] = []
-        observed_provenance: OcrProvenanceV3 | None = None
+        observed_provenance: OcrProvenance | None = None
         header_emitted = False
         failed_pages: set[int] = set()
 
         def observe(
             expected: OcrPageManifest,
             observation: object,
-            provenance: OcrProvenanceV3,
+            provenance: OcrProvenance,
         ) -> OcrPageInput:
             nonlocal observed_provenance, header_emitted
             position = len(observed_pages)
@@ -332,7 +355,7 @@ class OcrPipeline:
                 or expected.page != expected_manifest[position].page
             ):
                 raise OcrProjectionError("OCR page results must be complete and ordered")
-            if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+            if not provenance.is_resolved or provenance.engine != "text-recognition":
                 raise OcrProjectionError("OCR engine provenance is incompatible")
             if observed_provenance is None:
                 observed_provenance = provenance
@@ -364,7 +387,7 @@ class OcrPipeline:
             if request.progress is None or not header_emitted or expected.page in failed_pages:
                 return
             failed_pages.add(expected.page)
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_page_failed",
                 message="OCR page processing failed.",
                 stage="extraction",
@@ -414,7 +437,7 @@ class OcrPipeline:
             if not isinstance(run, OcrEngineRun):
                 raise OcrProjectionError("OCR engine returned an invalid run")
             provenance = self._builder.coerce_provenance(run.provenance)
-            if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+            if not provenance.is_resolved or provenance.engine != "text-recognition":
                 raise OcrProjectionError("OCR engine provenance is incompatible")
             pages = tuple(
                 replace(page, provenance=page.provenance or provenance) for page in run.pages
@@ -434,7 +457,7 @@ class OcrPipeline:
             completed_pages = (
                 tuple(run.pages) if isinstance(run, OcrEngineRun) else tuple(observed_pages)
             )
-            failed_provenance: OcrProvenanceV3 | None = None
+            failed_provenance: OcrProvenance | None = None
             if isinstance(run, OcrEngineRun):
                 try:
                     failed_provenance = self._builder.coerce_provenance(run.provenance)
@@ -466,7 +489,7 @@ class OcrPipeline:
         *,
         use_manifest_raster: bool = False,
         raster_scale_override: float | None = None,
-        provenance_override: OcrProvenanceV3 | None = None,
+        provenance_override: OcrProvenance | None = None,
     ) -> OcrPageInput:
         """Normalize either a local engine result or a validated worker page."""
 
@@ -545,7 +568,7 @@ class OcrPipeline:
                     raise OcrProjectionError("OCR engine page status is invalid") from error
             failure = getattr(observation, "failure", None)
             observation_provenance = getattr(observation, "provenance", None)
-            if not isinstance(observation_provenance, OcrProvenanceV3):
+            if not isinstance(observation_provenance, OcrProvenance):
                 if any(hasattr(observation, name) for name in ("model", "digest", "device")):
                     observation_provenance = self._builder.observation_provenance(observation)
                 elif provenance_override is not None:
@@ -591,7 +614,7 @@ class OcrPipeline:
         )
         return candidate
 
-    def observation_provenance(self, observation: object) -> OcrProvenanceV3:
+    def observation_provenance(self, observation: object) -> OcrProvenance:
         return self._builder.observation_provenance(observation)
 
     def serialize_manifest(self, manifest: Sequence[OcrPageManifest]) -> list[dict[str, object]]:
@@ -605,7 +628,7 @@ class OcrPipeline:
 
         return [self._serialize_page(page) for page in pages]
 
-    def _segments(self, projection: CaptureOcrProjectionV3) -> list[dict[str, object]]:
+    def _segments(self, projection: CaptureOcrProjection) -> list[dict[str, object]]:
         """Derive the worker segment envelope from canonical page projections."""
 
         return [
@@ -673,7 +696,7 @@ class OcrPipeline:
     @staticmethod
     def _failed_page(
         expected: OcrPageManifest,
-        failure: CaptureFailureV2,
+        failure: OperationFailure,
     ) -> OcrPageInput:
         return OcrPageInput(
             page=expected.page,
@@ -768,11 +791,11 @@ class OcrPipeline:
         capture_id: str,
         source: CaptureSource | None,
         pages: Iterable[OcrPageInput],
-        provenance: OcrProvenanceV3 | CaptureEngine | None,
+        provenance: OcrProvenance | CaptureEngine | None,
         warnings: Sequence[str] = (),
         created_at: datetime,
-        failure: CaptureFailureV2 | None = None,
-    ) -> CaptureOcrProjectionV3:
+        failure: OperationFailure | None = None,
+    ) -> CaptureOcrProjection:
         return self._builder.build(
             capture_id=capture_id,
             source=source,
@@ -788,12 +811,12 @@ class OcrPipeline:
         *,
         capture_id: str,
         source: CaptureSource | None,
-        failure: CaptureFailureV2,
+        failure: OperationFailure,
         created_at: datetime,
         pages: Iterable[OcrPageInput] = (),
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
+        provenance: OcrProvenance | CaptureEngine | None = None,
         warnings: Sequence[str] = (),
-    ) -> CaptureOcrProjectionV3:
+    ) -> CaptureOcrProjection:
         return self._builder.failed(
             capture_id=capture_id,
             source=source,
@@ -811,14 +834,14 @@ class _OcrProjectionBuilder:
     def __init__(
         self,
         *,
-        contract_sha256: str | None = None,
-        default_provenance: OcrProvenanceV3 | None = None,
+        contract_set_sha256: str | None = None,
+        default_provenance: OcrProvenance | None = None,
     ) -> None:
-        self.contract_sha256 = contract_sha256 or self._packaged_contract_sha256()
+        self.contract_set_sha256 = contract_set_sha256 or self._packaged_contract_set_sha256()
         self.default_provenance = default_provenance or self._fallback_provenance()
 
     @staticmethod
-    def _packaged_contract_sha256() -> str:
+    def _packaged_contract_set_sha256() -> str:
         try:
             value = (
                 (Path(__file__).resolve().parents[2] / "assets" / "contract-set.sha256")
@@ -834,24 +857,24 @@ class _OcrProjectionBuilder:
     @staticmethod
     def _fallback_provenance(
         reason: OcrProvenanceUnavailableReason = OcrProvenanceUnavailableReason.MODEL_UNAVAILABLE,
-    ) -> OcrProvenanceV3:
+    ) -> OcrProvenance:
         profile_id, profile_spec_sha256 = _default_profile_identity()
-        return OcrProvenanceV3(
+        return OcrProvenance(
             status="unavailable",
             profile_id=profile_id,
             profile_spec_sha256=profile_spec_sha256,
             reason=reason,
         )
 
-    def coerce_provenance(self, value: OcrProvenanceV3 | CaptureEngine | None) -> OcrProvenanceV3:
-        if isinstance(value, OcrProvenanceV3):
+    def coerce_provenance(self, value: OcrProvenance | CaptureEngine | None) -> OcrProvenance:
+        if isinstance(value, OcrProvenance):
             return value
         if isinstance(value, CaptureEngine):
             if not value.device:
                 raise OcrProjectionError("OCR engine device identity is unavailable")
-            return OcrProvenanceV3(
+            return OcrProvenance(
                 status="resolved",
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model=value.model,
                 model_digest=value.digest,
                 device=value.device,
@@ -860,7 +883,7 @@ class _OcrProjectionBuilder:
             )
         return self.default_provenance
 
-    def observation_provenance(self, observation: object) -> OcrProvenanceV3:
+    def observation_provenance(self, observation: object) -> OcrProvenance:
         model = getattr(observation, "model", None)
         digest = getattr(observation, "digest", None)
         device = getattr(observation, "device", None)
@@ -880,9 +903,9 @@ class _OcrProjectionBuilder:
                 getattr(observation, "profile_spec_sha256", None)
                 or self.default_provenance.profile_spec_sha256
             )
-            return OcrProvenanceV3(
+            return OcrProvenance(
                 status="resolved",
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model=model,
                 model_digest=digest,
                 device=device,
@@ -898,11 +921,11 @@ class _OcrProjectionBuilder:
         capture_id: str,
         source: CaptureSource | None,
         pages: Iterable[OcrPageInput],
-        provenance: OcrProvenanceV3 | CaptureEngine | None,
+        provenance: OcrProvenance | CaptureEngine | None,
         warnings: Sequence[str] = (),
         created_at: datetime,
-        failure: CaptureFailureV2 | None = None,
-    ) -> CaptureOcrProjectionV3:
+        failure: OperationFailure | None = None,
+    ) -> CaptureOcrProjection:
         canonical_provenance = self.coerce_provenance(provenance)
         normalized_pages = [
             replace(item, provenance=item.provenance or canonical_provenance) for item in pages
@@ -929,16 +952,16 @@ class _OcrProjectionBuilder:
         )
         if status is OcrProjectionStatus.COMPLETED and source is None:
             raise OcrProjectionError("completed OCR projection requires source and provenance")
-        return CaptureOcrProjectionV3(
+        return CaptureOcrProjection(
             api_version=API_VERSION,
             schema_version="3",
             capture_id=capture_id,
             status=status,
             source=source,
             pages=projection_pages,
-            page_count=len(projection_pages),
+            processed_page_count=len(projection_pages),
             runtime_version=RUNTIME_VERSION,
-            contract_sha256=self.contract_sha256,
+            contract_set_sha256=self.contract_set_sha256,
             provenance=canonical_provenance,
             warnings=[value[:500] for value in dict.fromkeys(item for item in warnings if item)],
             failure=effective_failure,
@@ -946,8 +969,8 @@ class _OcrProjectionBuilder:
         )
 
     @staticmethod
-    def no_text_failure() -> CaptureFailureV2:
-        return CaptureFailureV2(
+    def no_text_failure() -> OperationFailure:
+        return OperationFailure(
             code="ocr_no_text",
             message="OCR produced no text.",
             stage="extraction",
@@ -962,33 +985,33 @@ class _OcrProjectionBuilder:
         kind: str,
         expected_pages: Sequence[OcrPageInput],
         completed_pages: Iterable[OcrPageInput] = (),
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
+        provenance: OcrProvenance | CaptureEngine | None = None,
         created_at: datetime,
         warnings: Sequence[str] = (),
     ) -> OcrTerminalOutcome:
         if kind == "timeout":
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_worker_timeout",
                 message="OCR worker timed out before completing all pages.",
                 stage="extraction",
                 retryable=True,
             )
         elif kind == "protocol":
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_worker_protocol",
                 message="OCR worker returned an invalid response.",
                 stage="extraction",
                 retryable=False,
             )
         elif kind == "worker":
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_worker_failed",
                 message="OCR worker failed before completing all pages.",
                 stage="extraction",
                 retryable=True,
             )
         elif kind == "unavailable":
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_runtime_unavailable",
                 message="OCR runtime was unavailable before completing all pages.",
                 stage="extraction",
@@ -1056,11 +1079,11 @@ class _OcrProjectionBuilder:
         source: CaptureSource,
         expected_pages: Sequence[OcrPageInput],
         completed_pages: Iterable[OcrPageInput],
-        failure: CaptureFailureV2,
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
+        failure: OperationFailure,
+        provenance: OcrProvenance | CaptureEngine | None = None,
         created_at: datetime,
         warnings: Sequence[str] = (),
-    ) -> CaptureOcrProjectionV3:
+    ) -> CaptureOcrProjection:
         expected = tuple(expected_pages)
         canonical_provenance = self.coerce_provenance(provenance)
         trusted = self._trusted_completed_pages(
@@ -1095,7 +1118,7 @@ class _OcrProjectionBuilder:
         self,
         expected_pages: Sequence[OcrPageInput],
         completed_pages: Sequence[OcrPageInput],
-        provenance: OcrProvenanceV3,
+        provenance: OcrProvenance,
     ) -> tuple[OcrPageInput | None, ...]:
         expected = tuple(expected_pages)
         by_page: dict[int, OcrPageInput] = {}
@@ -1125,12 +1148,12 @@ class _OcrProjectionBuilder:
         *,
         capture_id: str,
         source: CaptureSource | None,
-        failure: CaptureFailureV2,
+        failure: OperationFailure,
         created_at: datetime,
         pages: Iterable[OcrPageInput] = (),
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
+        provenance: OcrProvenance | CaptureEngine | None = None,
         warnings: Sequence[str] = (),
-    ) -> CaptureOcrProjectionV3:
+    ) -> CaptureOcrProjection:
         return self.build(
             capture_id=capture_id,
             source=source,
@@ -1172,7 +1195,7 @@ class _OcrProjectionBuilder:
         return tuple(boxes)
 
     @classmethod
-    def _page(cls, item: OcrPageInput, provenance: OcrProvenanceV3 | None) -> OcrPageProjectionV3:
+    def _page(cls, item: OcrPageInput, provenance: OcrProvenance | None) -> OcrPageProjection:
         if item.page < 1:
             raise OcrProjectionError("OCR page must be one-based")
         if item.raster_width <= 0 or item.raster_height <= 0:
@@ -1191,8 +1214,8 @@ class _OcrProjectionBuilder:
             )
         box_inputs = cls._box_inputs(item)
         boxes = tuple(
-            OcrBoxV3(
-                polygon=[OcrPointV3(x=x, y=y) for x, y in box.polygon],
+            OcrBox(
+                polygon=[OcrPoint(x=x, y=y) for x, y in box.polygon],
                 text=box.text,
                 confidence=box.confidence,
             )
@@ -1222,10 +1245,10 @@ class _OcrProjectionBuilder:
         effective_provenance = provenance or item.provenance
         if effective_provenance is None:
             raise OcrProjectionError("OCR page provenance is required")
-        return OcrPageProjectionV3(
+        return OcrPageProjection(
             page=item.page,
             status=status,
-            raster=OcrRasterV3(
+            raster=OcrRaster(
                 width=item.raster_width,
                 height=item.raster_height,
                 scale=item.raster_scale,
@@ -1253,4 +1276,5 @@ __all__ = [
     "OcrRequestEnginePort",
     "OcrTerminalResult",
     "OcrTerminalOutcome",
+    "image_page_manifest",
 ]

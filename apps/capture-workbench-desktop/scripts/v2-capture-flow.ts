@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 const defaultIngestionChunkBytes = 1024 * 1024;
 const terminalCaptureStatuses = new Set(['completed', 'failed', 'cancelled']);
 
-interface CaptureFailure {
+interface OperationFailure {
   readonly code?: string;
   readonly message?: string;
   readonly stage?: string | null;
@@ -12,7 +12,7 @@ interface CaptureFailure {
 export interface CaptureOperation {
   readonly captureId: string;
   readonly status: string;
-  readonly error?: CaptureFailure | null;
+  readonly error?: OperationFailure | null;
 }
 
 interface IngestionResponse {
@@ -52,14 +52,14 @@ export function isTerminalCaptureStatus(status: string): boolean {
 
 export function buildOpenIngestionRequest(input: {
   readonly clientRequestId: string;
-  readonly kind?: 'pdf' | 'image' | 'audio';
+  readonly kind?: 'pdf' | 'image' | 'recording';
   readonly fileName: string;
   readonly mediaType?: string;
   readonly totalBytes: number;
   readonly sourceSha256: string;
 }): {
   readonly protocolVersion: '2';
-  readonly kind: 'pdf' | 'image' | 'audio';
+  readonly kind: 'pdf' | 'image' | 'recording';
   readonly mode: 'file';
   readonly clientRequestId: string;
   readonly fileName: string;
@@ -99,6 +99,7 @@ export function buildStartCaptureRequest(input: {
   readonly ingestionId: string;
   readonly structuringMode?: 'runtime' | 'host';
   readonly targetLanguage?: string;
+  readonly identifySpeakers?: boolean;
 }): {
   readonly protocolVersion: '2';
   readonly clientRequestId: string;
@@ -106,6 +107,7 @@ export function buildStartCaptureRequest(input: {
   readonly structuringMode: 'runtime' | 'host';
   readonly targetLanguage: string;
   readonly startPolicy: 'eager';
+  readonly identifySpeakers?: true;
 } {
   return {
     protocolVersion: '2',
@@ -114,6 +116,7 @@ export function buildStartCaptureRequest(input: {
     structuringMode: input.structuringMode ?? 'runtime',
     targetLanguage: input.targetLanguage ?? 'zh-TW',
     startPolicy: 'eager',
+    ...(input.identifySpeakers ? { identifySpeakers: true as const } : {}),
   };
 }
 
@@ -152,12 +155,13 @@ async function uploadIngestionChunks(input: {
 export async function startV2Capture(input: {
   readonly request: V2RequestFn;
   readonly fileName: string;
-  readonly kind?: 'pdf' | 'image' | 'audio';
+  readonly kind?: 'pdf' | 'image' | 'recording';
   readonly mediaType?: string;
   readonly sourceBytes: Uint8Array;
   readonly sourceSha256?: string;
   readonly structuringMode?: 'runtime' | 'host';
   readonly targetLanguage?: string;
+  readonly identifySpeakers?: boolean;
   readonly chunkBytes?: number;
 }): Promise<CaptureOperation> {
   const sourceSha256 =
@@ -216,6 +220,7 @@ export async function startV2Capture(input: {
         ingestionId: ingestion.ingestionId,
         structuringMode: input.structuringMode,
         targetLanguage: input.targetLanguage,
+        identifySpeakers: input.identifySpeakers,
       }),
     ),
   });

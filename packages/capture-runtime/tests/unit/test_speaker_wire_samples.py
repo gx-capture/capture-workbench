@@ -15,20 +15,20 @@ from capture_runtime.contracts import (
     CaptureBlock,
     CaptureDocument,
     CaptureEngine,
-    CaptureEventV2,
-    CaptureOperationV2,
+    CaptureEvent,
+    CaptureEventType,
+    CaptureOperation,
     CaptureSource,
     CaptureSourceKind,
     CaptureSpeaker,
+    CaptureStatus,
     RawCapture,
     RawCaptureSegment,
+    RuntimeInstallation,
     RuntimeInstallationStatus,
-    RuntimeInstallationV2,
+    RuntimeRequirement,
+    RuntimeRequirements,
     RuntimeRequirementStatus,
-    RuntimeRequirementsV2,
-    RuntimeRequirementV2,
-    StreamingCaptureStatus,
-    StreamingEventType,
     TimeLocator,
     project_source_text,
 )
@@ -76,7 +76,7 @@ def _raw(*, speakers: bool) -> RawCapture:
             if speakers
             else []
         ),
-        suggested_units=[] if speakers else ["vertical-japanese-reader"],
+        suggested_requirement_ids=[] if speakers else ["vertical-japanese-reader"],
         created_at=CREATED,
     )
 
@@ -104,36 +104,36 @@ def wire_samples() -> dict[str, Any]:
         extraction_engine=raw.extraction_engine,
         diarization_engine=raw.diarization_engine,
         speakers=raw.speakers,
-        suggested_units=raw.suggested_units,
+        suggested_requirement_ids=raw.suggested_requirement_ids,
         structuring_engine=_engine("host", "deterministic", "d", "cpu"),
         created_at=CREATED,
         completed_at=CREATED,
     )
-    requirements = RuntimeRequirementsV2(
+    requirements = RuntimeRequirements(
         items=[
-            RuntimeRequirementV2(
+            RuntimeRequirement(
                 requirement_id="speaker-diarization",
-                kind="speaker-identification",
+                kind="speaker-diarization",
                 display_name="Speaker identification",
                 status=RuntimeRequirementStatus.UNAVAILABLE,
-                required_for=["audio"],
+                required_for=["recording"],
                 install_strategy="runtime-catalog",
                 optional=True,
                 detail="No downloadable model is published for this runtime release.",
             ),
-            RuntimeRequirementV2(
+            RuntimeRequirement(
                 requirement_id="speech-recognition",
-                kind="transcription",
+                kind="speech-recognition",
                 display_name="Speech recognition",
                 status=RuntimeRequirementStatus.INSTALLABLE,
-                required_for=["audio"],
+                required_for=["recording"],
                 install_strategy="runtime-catalog",
                 optional=True,
                 download_bytes=10_480_000_000,
             ),
         ]
     )
-    installation = RuntimeInstallationV2(
+    installation = RuntimeInstallation(
         installation_id="installation-1",
         requirement_id="speech-recognition",
         status=RuntimeInstallationStatus.RUNNING,
@@ -143,11 +143,11 @@ def wire_samples() -> dict[str, Any]:
         download_bytes=10_480_000_000,
         downloaded_bytes=2_950_000_000,
     )
-    document_operation = CaptureOperationV2(
+    document_operation = CaptureOperation(
         capture_id="capture-document",
         ingestion_id="ingestion-document",
         kind=CaptureSourceKind.PDF,
-        status=StreamingCaptureStatus.EXTRACTING,
+        status=CaptureStatus.EXTRACTING,
         progress=0.675,
         partial_revision=0,
         last_event_sequence=11,
@@ -156,11 +156,11 @@ def wire_samples() -> dict[str, Any]:
         pages_total=12,
         pages_done=9,
     )
-    audio_operation = CaptureOperationV2(
+    recording_operation = CaptureOperation(
         capture_id="capture-audio",
         ingestion_id="ingestion-audio",
-        kind=CaptureSourceKind.AUDIO,
-        status=StreamingCaptureStatus.EXTRACTING,
+        kind=CaptureSourceKind.RECORDING,
+        status=CaptureStatus.EXTRACTING,
         progress=0.3,
         partial_revision=3,
         last_event_sequence=8,
@@ -169,12 +169,12 @@ def wire_samples() -> dict[str, Any]:
         duration_ms=2_490_000,
         covered_until_ms=724_000,
     )
-    page_event = CaptureEventV2(
+    page_event = CaptureEvent(
         event_id="capture-document/11",
         sequence=11,
         capture_id="capture-document",
         kind=CaptureSourceKind.PDF,
-        event_type=StreamingEventType.CHECKPOINT,
+        event_type=CaptureEventType.CHECKPOINT,
         stage="extracting",
         progress=0.675,
         created_at=CREATED,
@@ -190,7 +190,7 @@ def wire_samples() -> dict[str, Any]:
             ("runtimeRequirements", requirements),
             ("runtimeInstallation", installation),
             ("documentCaptureOperation", document_operation),
-            ("audioCaptureOperation", audio_operation),
+            ("recordingCaptureOperation", recording_operation),
             ("documentCaptureEvent", page_event),
         )
     }

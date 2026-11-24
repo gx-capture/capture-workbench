@@ -15,7 +15,12 @@ The desktop host starts one verified `capture-runtime` sidecar on a random loopb
 ## Acceptance targets
 
 - `capture-workbench-desktop:diagnostic-desktop-ocr` runs real OCR against the
-  non-installed `build-acceptance` binary; it is a diagnostic, not release evidence.
+  non-installed `build-acceptance` binary. Run in acceptance mode it is the OCR
+  half of the packaged acceptance below; it is not the release evidence of a
+  consumer gate.
+- `capture-workbench-desktop:acceptance-packaged-real-asr` and
+  `review-packaged-real-screenshots`: the packaged acceptance with real OCR and
+  speech recognition, below.
 - `capture-workbench-desktop:build-practical-installer` and
   `acceptance-practical-installed` build a side-by-side production installer
   (only the identifier, product name, and binary name differ) and run the
@@ -28,6 +33,142 @@ Each consumer runs its own acceptance gate and writes its own manifest.
 Cert Prep's gate is `acceptance-real` and LAW's gate is
 `law-prep-web-e2e:acceptance-real`; a release is gated by those gates.
 The release procedure is in `.agents/GUIDES/release-runbook.md`.
+
+## Packaged acceptance with real engines
+
+Two journeys drive the non-installed `build-acceptance` binary with real
+engines and compare checkpoint screenshots with approved baselines (#163):
+
+- OCR (`scripts/real-desktop-ocr-smoke.ts`, spec
+  `real-desktop-ocr-acceptance.spec.ts`): first-run OCR install, a scanned PDF
+  or image through the native picker, its result and provenance, deletion in
+  History. Compared: `01-consent-required`, `01-runtime-ready`,
+  `03-ocr-checkpoint` (the result page) and `04-review-complete`; the install
+  and processing screenshots show moving progress and are saved only.
+- ASR (`scripts/real-desktop-asr-journey.ts`, spec
+  `real-desktop-asr-acceptance.spec.ts`): speech recognition installed from the
+  ASR page, a structuring model from Settings › Diagnostics (a recording is
+  structured before it is done), a recording done, its result and provenance,
+  the same recording cancelled (取消中, then 已取消) and started again to its
+  end, speech recognition removed on Settings › Engines, both documents deleted
+  in History. Compared: `asr-ready`, `asr-done-row`, `asr-result`,
+  `asr-cancelled-row` and `engine-removed`. The completed row after Start again
+  is saved as `asr-restarted-row`. Cancel and Start again are proven
+  at layer 1; here each runs once for its screens. Speech runs the installed
+  pack's default (`tea-asr-1.1` on `cuda` with the NVIDIA driver,
+  `tea-asr-1.1-mini` on `cpu` without). The structured result must carry the
+  raw capture's speech provenance, and Settings › Diagnostics must show it.
+
+Masks (`checkpointScreenshotMasks`) cover file names, recognized text, the
+transcript, the live transcript lines and partial text, the player, speaker
+names, recording durations and History's "updated" column. The continuous
+privacy CSS also hides the file name in History's delete dialog. Both journeys
+end by proving the app, its runtime and workers, the CDP port and the run's data
+are gone.
+
+Both open the app's window and use the native file picker; leave the mouse
+and keyboard alone while they run. Comparisons continue after a mismatch or a
+missing baseline. Under `<run>/test-results/`, a mismatch produces actual,
+expected and diff images, and a missing baseline produces a masked actual image
+for approval. The journey writes its evidence after teardown with each
+comparison's outcome and the cleanup checks. A completed run requires every
+comparison to match and every cleanup check to pass.
+
+Inputs (private files stay outside the repositories and are never uploaded):
+
+- `CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT` is required for both OCR and ASR. Choose a
+  short parent directory such as `C:\cwr`. Each run creates and removes its own
+  subdirectory for app data, engines and the engine cache. The generated
+  subdirectory path must be at most 40 characters because engine workers load
+  only from paths shorter than Windows MAX_PATH.
+- OCR: `CAPTURE_REAL_DESKTOP_OCR_PDF` (or `_INPUT` for an image) with
+  `<input>.expected.json` beside it, or another file named by
+  `CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS`. Only page 1 of a PDF is
+  recognized, so the text anchors must come from page 1.
+- ASR: `CAPTURE_REAL_DESKTOP_ASR_RECORDING`, an excerpt of one to three minutes.
+  `CAPTURE_REAL_DESKTOP_STRUCTURING_MODEL_OPTION_ID` picks the structuring
+  model (default `qwen3.5-0.8b-v1`). A cold run downloads the speech models
+  (about 10.5 GB for the `cuda` pack) and the structuring model.
+
+### Baseline review (no candidate)
+
+The review runs both journeys on the local acceptance build with the local
+release runtime, before a runtime candidate exists. Build
+`capture-runtime:build-release-artifacts` first; the target stages
+`packages/capture-runtime/dist/release`, builds `build-acceptance` and serves
+that release's worker archives from a loopback mirror. Set
+`CAPTURE_REAL_DESKTOP_RELEASE_DIR` to use another directory for both runtime
+staging and the worker mirror:
+
+```powershell
+$env:CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT = 'C:\cw163'
+$env:CAPTURE_REAL_DESKTOP_OCR_PDF = 'C:\private\scan.pdf'
+$env:CAPTURE_REAL_DESKTOP_ASR_RECORDING = 'C:\private\excerpt.m4a'
+corepack pnpm nx run capture-workbench-desktop:review-packaged-real-screenshots
+```
+
+`--journey ocr` or `--journey asr` after the target runs one journey. Its run ID is
+`E2E_BASELINE_REVIEW_RUN_ID`, never `E2E_ACCEPTANCE_RUN_ID`, and its evidence
+(`output/playwright/capture-workbench-review/<run>/<journey>-journey-evidence.json`)
+says `baseline-review` and names no candidate, so it cannot pass for release
+acceptance. Both modes require the effective Playwright setting
+`updateSnapshots: 'none'` and reject command-line snapshot updates.
+The review command ends with the list of
+checkpoints whose image differed from its baseline or had none.
+
+### Approving images
+
+The product owner looks at each listed checkpoint's `-actual.png`, and its
+`-expected.png` and `-diff.png` when it has a baseline, in the review run's
+`test-results`. For each approved checkpoint, copy that exact actual image
+into the snapshot directory as its baseline, then commit the images in their
+own change:
+
+```powershell
+# The ASR spec has no snapshot directory before its first approved baseline.
+New-Item -ItemType Directory -Force apps\capture-workbench-desktop\scripts\real-desktop-asr-acceptance.spec.ts-snapshots | Out-Null
+Copy-Item <run>\test-results\<test folder>\asr-result-actual.png `
+  apps\capture-workbench-desktop\scripts\real-desktop-asr-acceptance.spec.ts-snapshots\asr-result-chromium-win32.png
+```
+
+The OCR baselines are in `real-desktop-ocr-acceptance.spec.ts-snapshots`. A
+rejected image is a UI defect to fix and review again. `packaged-checkpoints.test.ts`
+fails when a baseline belongs to no compared checkpoint.
+
+### Acceptance (with the runtime candidate)
+
+After the release candidate exists, one acceptance run of each journey
+confirms the approved baselines against the candidate's runtime. Stage the
+candidate's runtime, build the acceptance installer (it records the
+provenance) and the acceptance binary:
+
+```powershell
+node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
+  --artifact <candidate>\runtime\capture-runtime-x86_64-pc-windows-msvc.exe `
+  --manifest <candidate>\runtime\capture-runtime-manifest.json `
+  --schema <candidate>\runtime\capture-document-v2.schema.json --source release
+corepack pnpm nx run capture-workbench-desktop:build-nsis-acceptance
+corepack pnpm nx run capture-workbench-desktop:build-acceptance
+$env:CAPTURE_RUNTIME_CANDIDATE_ROOT = '<candidate>'
+$env:CAPTURE_RUNTIME_CANDIDATE_ID = '<candidate id>'
+$env:CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE = '<folder build-nsis-acceptance printed>\capture-workbench-acceptance-nsis.provenance.json'
+$env:CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT = 'C:\cw163'
+$env:CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN = '1'
+$env:CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT = '<local OCR model directory>'
+$env:CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE = 'directml'
+$env:CAPTURE_REAL_DESKTOP_OCR_PDF = 'C:\private\scan.pdf'
+node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts
+$env:CAPTURE_REAL_DESKTOP_ASR_RECORDING = 'C:\private\excerpt.m4a'
+corepack pnpm nx run capture-workbench-desktop:acceptance-packaged-real-asr
+```
+
+The OCR run uses the script, not the `diagnostic-desktop-ocr` target, whose
+first step stages the locally built runtime over the candidate's. Acceptance
+requires the candidate identity (`CAPTURE_RUNTIME_CANDIDATE_*`) and
+authenticates the packaged runtime against it. Each journey writes
+`<journey>-journey-evidence.json` with `mode: acceptance` and the candidate ID
+under `output/playwright/capture-workbench/<run>`. OCR also writes the
+acceptance manifest there.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a
@@ -94,11 +235,11 @@ real PDF and an existing app-data directory over the v2 ingestion and capture
 flow (`POST /v2/ingestions`, chunked `PUT /v2/ingestions/{id}/chunks/{i}`,
 `POST /v2/ingestions/{id}/finalize`, `POST /v2/captures`). This target is
 excluded from normal CI and opens no window. When the directory lacks them, the
-smoke installs the `windowsml-ocr` engine and the `qwen3.5-0.8b-v1` model
+smoke installs the `text-recognition` engine and the `qwen3.5-0.8b-v1` model
 through the runtime; a directory the desktop app has already prepared needs no
 download. Ollama itself must already be installed on `PATH` unless
 `CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL=1` is set, in which case the runtime
-installs `ollama-runtime` system-wide with `winget`:
+installs `structuring-runtime` system-wide with `winget`:
 
 ```powershell
 $env:CAPTURE_REAL_SMOKE_PDF = 'C:\path\to\user-provided.pdf'
@@ -115,7 +256,7 @@ evidence (`tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.jso
 ## Opt-in staged-runtime three-media diagnostic
 
 This preliminary diagnostic starts a staged runtime, then installs
-`windowsml-ocr` and `speech-recognition` (forcing `cuda`) in host-controlled
+`text-recognition` and `speech-recognition` (forcing `cuda`) in host-controlled
 order and exercises a real scanned PDF, image, and audio file over the v2
 ingestion and capture flow (`POST /v2/ingestions`, chunked
 `PUT /v2/ingestions/{id}/chunks/{i}`, `POST /v2/ingestions/{id}/finalize`,
@@ -136,6 +277,8 @@ For a build that is not published yet, set
 `CAPTURE_REAL_MEDIA_WORKER_MIRROR_URL` to a loopback mirror
 (`http://127.0.0.1:<port>`) to opt into the local worker mirror
 (`CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1` and `CAPTURE_ENGINE_CACHE_DIR=off`).
+The Desktop App's loopback worker mirror and absolute local OCR model root
+overrides are for verification only and each requires its explicit opt-in.
 The diagnostic forwards `LOCALAPPDATA`, `TEMP`, and `USERNAME` to the runtime,
 strips ambient provider/model overrides, verifies DirectML OCR and lock-selected
 TEA-ASR provenance, proves UUID-scoped capture deletion, and checks its owned
@@ -151,11 +294,12 @@ structuring, edit/export/restore, and restart persistence), run the dev-server
 smoke (`apps/capture-workbench-e2e/src/real-engines.spec.ts`):
 
 ```powershell
-corepack pnpm nx run capture-workbench-e2e:smoke-real-engines
+corepack pnpm nx run capture-workbench-e2e:smoke-real-engines-installation
+corepack pnpm nx run capture-workbench-e2e:smoke-real-engines-execution
 ```
 
 `smoke-real-media` forces the `cuda` pack and checks TEA-ASR 1.1 on CUDA;
-`smoke-real-engines` checks the installed pack (`tea-asr-1.1` on `cuda` with the
+`smoke-real-engines-execution` checks the installed pack (`tea-asr-1.1` on `cuda` with the
 NVIDIA driver, `tea-asr-1.1-mini` on `cpu` without it). A development
 transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md` describes, by setting
@@ -163,10 +307,29 @@ transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 GPU switch only selects the device; its fixed launch environment does not yet
 expose the model setting.
 
-To also check progressive audio, first record a reference with
-`node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
-(`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
-file as `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS` (or `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`).
+For the progressive partial check, use a recording longer than five minutes with speech after the checkpoint,
+in a format the runtime decodes. Generate a digest-only
+oracle with `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
+using `CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` for the recording and
+`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT` for the JSON. Set
+`CAPTURE_SPEECH_RECOGNITION_VARIANT` to the installed pack (`cuda` or `cpu`),
+or use `auto` to select by NVIDIA driver availability. The generator uses the selected pack's default model and
+device with CPU fallback disabled.
+
+For `smoke-real-engines-execution`, set both
+`CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` to that recording and
+`CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_ORACLE` to its JSON oracle. The check
+logs a skip when both are unset. `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS`
+still supplies the expected text anchors for the separate speaker-identification
+recording. A successful live check is recorded as `proven.progressivePartial`
+with pack and extraction provenance in the smoke evidence.
+
+Keep `CAPTURE_REAL_ENGINES_APP_DATA` and `CAPTURE_REAL_ENGINES_TEMP_DIR` outside
+the workspace. The host copies source recordings into app data, and the temp
+directory holds browser artifacts and exports. The runtime's engine cache
+(under `LOCALAPPDATA/gx-capture/engine-cache` on Windows by default) must also
+resolve outside the workspace.
+
 The oracle installs the speech worker and model into a fresh kept run tree
 (`.kept-run-trees/audio-oracle-<time>` beside the checkout) and leaves it there;
 remove it when the machine is idle with
@@ -180,6 +343,15 @@ silent, current-user NSIS install and uninstall:
 ```powershell
 corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skip-nx-cache
 ```
+
+Every installed QA check (this smoke and the capture-lifecycle check below) holds one
+lock per Windows account (by the SID of the process's access token, not by environment
+variables) and QA product, in any worktree, from its preflight through its cleanup;
+a second check refuses and names the one that holds it. Windows frees the lock when the
+holding process ends. The QA checks also refuse to install without an installed
+WebView2 Runtime (a valid version under the Evergreen runtime's registration, read as
+`.github/actions/ensure-webview2` reads it), because the QA installer would install one
+silently and its uninstaller would leave it behind.
 
 It refuses to run over an existing QA install,
 uses an owned run directory below `tmp/capture-workbench-desktop/installed-smoke`, launches
@@ -214,6 +386,72 @@ records `evidenceKind: installed-nsis-smoke` and the installer source.
 `deterministic` identifies the fixture-runtime QA build and `release` identifies
 the release installer. Both reports are diagnostic. Real OCR, speech recognition
 and structuring were not exercised.
+
+## Installed QA capture-lifecycle check
+
+The capture lifecycle's Desktop-only behaviour is checked on the installed QA build
+(fixture runtime) by a manual target. It is a diagnostic, not a release gate, and
+not part of verify or CI:
+
+```powershell
+corepack pnpm nx run capture-workbench-desktop:diagnostic-installed-deterministic-capture-lifecycle
+```
+
+It builds the QA installer first (`build-nsis-deterministic`). The check opens the
+app's window and sends it input: F5 and Ctrl+R, the native file dialog, mouse
+drags of files, and the title bar's close message. Leave the mouse and keyboard
+alone until it ends. Keys go out only while the QA app's process (PID and start
+time) owns the foreground, read as the last operation before they are sent; if the
+foreground changes while they are sent, the run fails saying input may have reached
+another window and sends nothing more. A drag aims at the app's drop area and counts
+only when the button was released at the drop point over the app's window; the helper
+always releases the button it pressed, also when a step fails, on its own deadline
+and when the check asks it to stop. Only if the check has to kill the helper does it
+say the left mouse button may need to be released by hand (click it once). It refuses
+to run over an existing QA installation, without an installed WebView2 Runtime, while
+another installed QA check holds the lock, and when a run tree of an earlier run is
+still there.
+
+It proves, in this order: F5 on the OCR page and Ctrl+R on the ASR page while a
+capture runs reload the page, leave the row interrupted, write nothing and delete
+only the stored capture link, and Start again completes; closing the app while a
+capture runs ends every process of the app tree within 1 s (exit times read from
+process handles opened before the close message) and leaves nothing by 1 s, 5 s and
+15 s (each from a snapshot started 0.5 s earlier whose inventory returned by that
+time; times are compared as measured); at the next start, recorded from before the
+page's first script (WebView2 starts paused with `WEBVIEW2_WAIT_FOR_SCRIPT_DEBUGGER`
+at every launch), the row is interrupted, nothing is written, the page asks the host
+once to delete exactly the stored link and the new runtime answers one DELETE with 204
+or 404, and Start again completes; files dropped with native OLE drag and drop on the
+OCR page, the ASR page and History are imported in drop order and captured one at a
+time in that order: in the library writes, and in the fixture runtime's own log, where
+a capture counts from the successful create that names it to the first successful read
+of its outcome. A claim that does not hold fails the run by name; uninstall and cleanup
+still run and report each step.
+
+Everything stays below `tmp/capture-workbench-desktop/installed-capture-lifecycle`.
+Before the first write, the workspace root and every folder down to the run tree must
+be real folders, not links or junctions. The run tree is removed at the end of a
+run only when no process of the run is left (before and after the uninstall), the
+uninstaller removed the installation, no registry key remains and the real product app
+data is unchanged; otherwise it is kept and the run fails. The evidence then lists
+recovery steps for exactly what remains (processes to end, the uninstaller if it is
+still in the tree, registry keys to delete) with workspace-relative paths, and the
+command prints the tree's absolute path to stderr. A step runs or deletes something
+only when the run verified it as its own: the uninstaller and the tree only while the
+tree carries this run's marker and is still the directory the run made, a registry key
+only in the view (32- or 64-bit) it was seen in and with the run's install directory
+as its install location. For anything else, and for a run tree an earlier run left,
+the steps say what to look at and why, and name nothing to run or delete. The check's own temporary directory
+is removed in its cleanup phase, or by the command line's exit hook when the check
+never got that far; both use the same removal, which leaves a directory in place when
+its path or identity no longer proves the run made it. One
+`installed-capture-lifecycle-<time>.json` per run records the outcome, the source
+commit, the installer's name, size and SHA-256, each phase's claims and
+observations, and the measured close times with their method; it passes only with
+every expected claim proven. The window helpers are
+`scripts/installed-window-input.ps1`, `scripts/installed-window-drop.ps1` and
+`scripts/installed-app-tree.ps1`.
 
 ## Loopback ownership boundary
 

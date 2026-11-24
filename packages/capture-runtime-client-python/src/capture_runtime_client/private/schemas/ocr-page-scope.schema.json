@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "description": "Public evidence describing which PDF pages entered OCR.\n\nPage numbers are the source PDF's, in ascending order. A selection may\nleave pages out, so the source can have more pages than were read.",
+  "properties": {
+    "sourcePageCount": {
+      "minimum": 1,
+      "title": "Sourcepagecount",
+      "type": "integer"
+    },
+    "requestedPageNumbers": {
+      "items": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxItems": 500,
+      "minItems": 1,
+      "title": "Requestedpagenumbers",
+      "type": "array"
+    },
+    "processedPageNumbers": {
+      "items": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxItems": 500,
+      "minItems": 1,
+      "title": "Processedpagenumbers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "sourcePageCount",
+    "requestedPageNumbers",
+    "processedPageNumbers"
+  ],
+  "title": "OcrPageScope",
+  "type": "object"
+}

@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "capture-sidecar-launcher"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "rand",
  "serde",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "capture-workbench-desktop"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "capture-sidecar-launcher",
  "dirs",

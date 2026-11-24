@@ -37,20 +37,20 @@ from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
     SPEECH_TEMP_PREFIX,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
     WORKER_SOURCE_TEMP_PREFIX,
 )
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureOcrProjectionV3,
+    CaptureOcrProjection,
     CaptureRequirementId,
     CaptureSource,
     CaptureSourceKind,
     CaptureSpeaker,
-    OcrPageScopeV2,
+    OcrPageScope,
     OcrPageStatus,
-    OcrProvenanceV3,
+    OcrProvenance,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
@@ -70,8 +70,6 @@ from capture_runtime.ocr.application.use_cases import ExtractPageText
 from capture_runtime.ocr.infrastructure.image_normalization import (
     image_ocr_scale,
     normalize_image_content,
-    oriented_image_dimensions,
-    png_raster_dimensions,
 )
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
@@ -90,6 +88,7 @@ from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrPipeline,
     OcrRequest,
     OcrTerminalOutcome,
+    image_page_manifest,
 )
 from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
@@ -100,6 +99,7 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     WorkerOcrProgress,
 )
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
+from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_content_selection import (
     speech_model_not_installed_message,
@@ -107,6 +107,7 @@ from capture_runtime.provisioning.infrastructure.engine_content_selection import
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
     SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.application.use_cases import TranscribeAudio
@@ -115,6 +116,8 @@ from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import (
     DEFAULT_RUN_TIMEOUT_SECONDS,
     WorkerCancelledError,
+    WorkerExecutionError,
+    WorkerFailureDiagnostics,
     complete_worker_cleanup,
 )
 
@@ -181,14 +184,49 @@ class OcrSourcePreflightError(RuntimeError):
         super().__init__("OCR source preflight failed.")
 
 
+RecordingWorkerFailureCode = Literal[
+    "speech_recognition_worker_failed",
+    "speaker_identification_worker_failed",
+]
+
+
+class RecordingWorkerFailure(RuntimeError):
+    """A speech recognition or speaker identification worker produced no result.
+
+    The code names the worker. Its failure class and stages are diagnostics for
+    the runtime log; the capture failure carries neither.
+    """
+
+    def __init__(
+        self,
+        code: RecordingWorkerFailureCode,
+        diagnostics: WorkerFailureDiagnostics,
+    ) -> None:
+        super().__init__(code)
+        self.code: RecordingWorkerFailureCode = code
+        self.diagnostics = diagnostics
+
+
+def _no_extracted_content() -> CaptureProcessingError:
+    # The source decides this, so a retry produces no text either.
+    return CaptureProcessingError(
+        "Extraction produced no non-empty content.",
+        code="extraction_no_text",
+        retryable=False,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureExtractionOutcome:
     """Typed extraction result carrying raw data and optional OCR projection."""
 
     raw: RawCapture
-    ocr_projection: CaptureOcrProjectionV3 | None = None
+    ocr_projection: CaptureOcrProjection | None = None
     # Private worker receipt retained until the owning capture reaches success.
     _execution_proof: OcrExecutionDeviceProofV1 | None = None
+    # The recording's length as a worker measured it from the decoded audio;
+    # None for a document or when no worker measured it.
+    duration_ms: int | None = None
 
 
 class CaptureExtractor(Protocol):
@@ -209,7 +247,7 @@ class CaptureExtractor(Protocol):
 
 
 class _SyncOcrEngineAdapter:
-    """Local rasterizer + WindowsML adapter behind the OCR engine port."""
+    """Local rasterizer + ONNX OCR adapter behind the OCR engine port."""
 
     def __init__(
         self,
@@ -230,7 +268,7 @@ class _SyncOcrEngineAdapter:
         extract_page = ExtractPageText(adapter)
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
-        provenance: OcrProvenanceV3 | None = None
+        provenance: OcrProvenance | None = None
         for expected in request.manifest:
             self._check_cancelled(request)
             image_png: bytes | None = None
@@ -281,7 +319,7 @@ class _SyncOcrEngineAdapter:
             warnings=tuple(_unique_warnings(warnings)),
         )
 
-    def _provenance(self, result: object) -> OcrProvenanceV3:
+    def _provenance(self, result: object) -> OcrProvenance:
         return self._extractor.ocr_pipeline.observation_provenance(result)
 
     @staticmethod
@@ -296,7 +334,7 @@ class _WorkerResultOcrEngine:
     def __init__(
         self,
         result: _OcrRunResult,
-        engine: OcrProvenanceV3,
+        engine: OcrProvenance,
     ) -> None:
         self._result = result
         self._engine = engine
@@ -376,7 +414,7 @@ class _OcrWorkerFailureEngineAdapter:
         *,
         kind: Literal["timeout", "protocol", "worker", "unavailable"],
         completed_pages: tuple[OcrPageInput, ...],
-        provenance: OcrProvenanceV3 | None,
+        provenance: OcrProvenance | None,
     ) -> None:
         self._kind = kind
         self._completed_pages = completed_pages
@@ -419,7 +457,7 @@ _SOURCE_SUFFIXES = {
 
 
 class StandaloneRuntimeCaptureExtractor:
-    """Production extractor using only package-owned WindowsML and speech recognition adapters."""
+    """Production extractor using only package-owned OCR and speech recognition adapters."""
 
     def __init__(
         self,
@@ -429,14 +467,14 @@ class StandaloneRuntimeCaptureExtractor:
         ocr_adapter: OcrAdapter | None = None,
         speech_recognition_adapter: SpeechRecognitionAdapter | None = None,
         engine_manager: EngineInstallationManager | None = None,
-        contract_sha256: str | None = None,
+        contract_set_sha256: str | None = None,
     ) -> None:
         self._clock = clock
         self.config = config
         self.ocr_adapter = ocr_adapter
         self.speech_recognition_adapter = speech_recognition_adapter
         self.engine_manager = engine_manager
-        self._contract_sha256 = contract_sha256
+        self._contract_set_sha256 = contract_set_sha256
         self.ocr_pipeline = OcrPipeline()
 
     async def release_warm_workers(self) -> None:
@@ -505,11 +543,12 @@ class StandaloneRuntimeCaptureExtractor:
         self._checkpoint(cancel_event)
         ocr_projection = None
         expected_ocr_pages: tuple[OcrPageManifest, ...] | None = None
-        ocr_page_scope: OcrPageScopeV2 | None = None
+        ocr_page_scope: OcrPageScope | None = None
         execution_proof: OcrExecutionDeviceProofV1 | None = None
         diarization_engine: CaptureEngine | None = None
         speakers: list[CaptureSpeaker] = []
-        suggested_units: set[str] = set()
+        duration_ms: int | None = None
+        suggested_requirement_ids: set[str] = set()
         try:
             if sniffed.kind is CaptureSourceKind.PDF:
                 if isinstance(content, Path):
@@ -533,8 +572,8 @@ class StandaloneRuntimeCaptureExtractor:
                     raise OcrWorkerFailure(kind="unavailable", progress=None) from error
                 execution_proof = result.execution_proof
                 try:
-                    engine = self._capture_engine(result, expected_engine="windowsml-ocr")
-                    suggested_units.update(result.suggested_units)
+                    engine = self._capture_engine(result, expected_engine="text-recognition")
+                    suggested_requirement_ids.update(result.suggested_requirement_ids)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -559,7 +598,7 @@ class StandaloneRuntimeCaptureExtractor:
                     ) from error
                 self._validate_worker_segments_against_projection(result, ocr_projection)
                 segments = _projection_segments(ocr_projection)
-                ocr_page_scope = OcrPageScopeV2(
+                ocr_page_scope = OcrPageScope(
                     source_page_count=source_page_count,
                     requested_page_numbers=[page.page for page in expected_ocr_pages],
                     processed_page_numbers=[page.page for page in result.pages],
@@ -587,8 +626,8 @@ class StandaloneRuntimeCaptureExtractor:
                     raise OcrWorkerFailure(kind="unavailable", progress=None) from error
                 execution_proof = result.execution_proof
                 try:
-                    engine = self._capture_engine(result, expected_engine="windowsml-ocr")
-                    suggested_units.update(result.suggested_units)
+                    engine = self._capture_engine(result, expected_engine="text-recognition")
+                    suggested_requirement_ids.update(result.suggested_requirement_ids)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -616,7 +655,7 @@ class StandaloneRuntimeCaptureExtractor:
             else:
                 if pdf_page_numbers is not None:
                     raise ValueError("PDF page selection is only valid for PDF sources.")
-                speech_result = await self._run_worker(
+                speech_result = await self._run_speech_recognition_worker(
                     SPEECH_RECOGNITION_REQUIREMENT_ID,
                     content,
                     sniffed.media_type,
@@ -651,6 +690,7 @@ class StandaloneRuntimeCaptureExtractor:
                         ),
                     )
                     segments, speakers = _speaker_capture_segments(speech_result, diarization)
+                    duration_ms = diarization.duration_ms
                     diarization_engine = CaptureEngine(
                         engine=diarization.engine,
                         model=diarization.model,
@@ -675,7 +715,7 @@ class StandaloneRuntimeCaptureExtractor:
             ) from error
         self._checkpoint(cancel_event)
         if not segments:
-            raise ValueError("Extraction produced no non-empty content.")
+            raise _no_extracted_content()
         raw = RawCapture(
             source=source,
             segments=segments,
@@ -683,7 +723,9 @@ class StandaloneRuntimeCaptureExtractor:
             extraction_engine=engine,
             diarization_engine=diarization_engine,
             speakers=speakers,
-            suggested_units=cast(list[CaptureRequirementId], sorted(suggested_units)),
+            suggested_requirement_ids=cast(
+                list[CaptureRequirementId], sorted(suggested_requirement_ids)
+            ),
             warnings=_unique_warnings(warnings),
             ocr_page_scope=ocr_page_scope,
             created_at=self._clock.now(),
@@ -692,6 +734,7 @@ class StandaloneRuntimeCaptureExtractor:
             raw=raw,
             ocr_projection=ocr_projection,
             _execution_proof=execution_proof,
+            duration_ms=duration_ms,
         )
 
     async def _extract_pdf_with_worker(
@@ -722,11 +765,11 @@ class StandaloneRuntimeCaptureExtractor:
         self,
         source: CaptureSource,
         result: _OcrRunResult,
-        engine: OcrProvenanceV3,
+        engine: OcrProvenance,
         *,
         cancel_event: asyncio.Event,
         expected_pages: tuple[OcrPageManifest, ...],
-    ) -> CaptureOcrProjectionV3:
+    ) -> CaptureOcrProjection:
         request = OcrRequest(
             capture_id=source.sha256,
             source=source,
@@ -759,15 +802,12 @@ class StandaloneRuntimeCaptureExtractor:
             async with asyncio.timeout(self.config.engine_resolution_timeout_seconds):
                 engine = await self.engine_manager.resolve_active_engine(requirement_id)
         except TimeoutError as error:
-            raise ExtractionRuntimeUnavailableError(
-                f"Runtime requirement {requirement_id} could not be resolved "
-                "within the bounded timeout."
-            ) from error
+            raise RequirementResolutionTimeoutError(requirement_id) from error
         if engine is None:
             raise ExtractionRuntimeUnavailableError(
                 f"Runtime requirement {requirement_id} is not installed and ready."
             )
-        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+        if requirement_id == TEXT_RECOGNITION_REQUIREMENT_ID:
             selection_resolver = getattr(self.engine_manager, "ocr_compute_selection", None)
             if not callable(selection_resolver):
                 raise ExtractionRuntimeUnavailableError("OCR compute plan is unavailable.")
@@ -776,7 +816,7 @@ class StandaloneRuntimeCaptureExtractor:
                     "OCR deviceId overrides are not accepted; use the retained compute plan."
                 )
             selection = await selection_resolver(
-                contract_sha256=self._contract_sha256 or "",
+                contract_set_sha256=self._contract_set_sha256 or "",
             )
             if selection is None:
                 raise ExtractionRuntimeUnavailableError(
@@ -802,7 +842,7 @@ class StandaloneRuntimeCaptureExtractor:
                     )
                 worker_options["runtimeSha256"] = acceptance_runtime_sha256
         vertical_reader_dir = None
-        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+        if requirement_id == TEXT_RECOGNITION_REQUIREMENT_ID:
             vertical_reader_dir = await self._vertical_reader_dir()
         return (
             engine,
@@ -824,7 +864,7 @@ class StandaloneRuntimeCaptureExtractor:
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
     ) -> _OcrRunResult:
         engine, path, worker_options, vertical_reader_dir = await self._prepare_worker_run(
-            WINDOWSML_REQUIREMENT_ID,
+            TEXT_RECOGNITION_REQUIREMENT_ID,
             content,
             media_type,
             options,
@@ -850,6 +890,32 @@ class StandaloneRuntimeCaptureExtractor:
             )
         finally:
             path.unlink(missing_ok=True)
+
+    async def _run_speech_recognition_worker(
+        self,
+        requirement_id: str,
+        content: bytes | Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        *,
+        progress: Callable[[int], None] | None = None,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+    ) -> WorkerRunResult:
+        try:
+            return await self._run_worker(
+                requirement_id,
+                content,
+                media_type,
+                options,
+                cancel_event,
+                progress=progress,
+                timeout_seconds=timeout_seconds,
+            )
+        except WorkerExecutionError as error:
+            raise RecordingWorkerFailure(
+                "speech_recognition_worker_failed", error.diagnostics
+            ) from error
 
     async def _run_worker(
         self,
@@ -920,6 +986,17 @@ class StandaloneRuntimeCaptureExtractor:
             finally:
                 raise cancelled
 
+    @classmethod
+    async def _await_speaker_identification(
+        cls, pending: asyncio.Task[WorkerDiarizationResult], cancellation: asyncio.Event
+    ) -> WorkerDiarizationResult:
+        try:
+            return await cls._await_worker(pending, cancellation)
+        except WorkerExecutionError as error:
+            raise RecordingWorkerFailure(
+                "speaker_identification_worker_failed", error.diagnostics
+            ) from error
+
     @staticmethod
     def _source_prefix(content: bytes | Path) -> bytes:
         if isinstance(content, Path):
@@ -966,7 +1043,9 @@ class StandaloneRuntimeCaptureExtractor:
         try:
             async with asyncio.timeout(self.config.engine_resolution_timeout_seconds):
                 engine = await self.engine_manager.resolve_active_engine(DIARIZATION_REQUIREMENT_ID)
-        except (TimeoutError, EngineCatalogError):
+        except TimeoutError as error:
+            raise RequirementResolutionTimeoutError(DIARIZATION_REQUIREMENT_ID) from error
+        except EngineCatalogError:
             engine = None
         if engine is None:
             raise ExtractionRuntimeUnavailableError(
@@ -975,7 +1054,7 @@ class StandaloneRuntimeCaptureExtractor:
         path = content if isinstance(content, Path) else self._worker_source(content, media_type)
         try:
             worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
-            return await self._await_worker(
+            return await self._await_speaker_identification(
                 asyncio.create_task(
                     DiarizeAudio(worker_client).execute(
                         engine,
@@ -1067,19 +1146,7 @@ class StandaloneRuntimeCaptureExtractor:
         if raster_cache is not None:
             raster_cache.append(normalized)
         self._checkpoint(cancel_event)
-        raster_width, raster_height = png_raster_dimensions(normalized)
-        if raster_width is None or raster_height is None:
-            raise ValueError("OCR raster metadata is unavailable for image input.")
-        source_width, source_height = oriented_image_dimensions(content)
-        raster_scale = min(raster_width / source_width, raster_height / source_height)
-        return (
-            OcrPageManifest(
-                page=1,
-                raster_width=raster_width,
-                raster_height=raster_height,
-                raster_scale=raster_scale,
-            ),
-        )
+        return (image_page_manifest(content, normalized),)
 
     def _preflight_image_manifest(
         self,
@@ -1156,8 +1223,8 @@ class StandaloneRuntimeCaptureExtractor:
     def _capture_engine(result: WorkerRunResult, *, expected_engine: str) -> CaptureEngine:
         if result.engine != expected_engine:
             raise ValueError("worker returned incompatible engine provenance")
-        if expected_engine == "windowsml-ocr" and result.device not in {
-            "windowsml-dml",
+        if expected_engine == "text-recognition" and result.device not in {
+            "directml",
             "cpu",
         }:
             raise ValueError("OCR worker returned incompatible device provenance")
@@ -1170,22 +1237,22 @@ class StandaloneRuntimeCaptureExtractor:
             stage_ms=result.stage_ms if expected_engine == "speech-recognition" else None,
         )
 
-    def _capture_ocr_provenance(self, result: WorkerRunResult) -> OcrProvenanceV3:
+    def _capture_ocr_provenance(self, result: WorkerRunResult) -> OcrProvenance:
         provenance = result.ocr_provenance
         if provenance is None:
             # In-memory test adapters predate the profile-bearing worker wire;
             # production WorkerClient always supplies this field.
             fallback = self.ocr_pipeline.default_provenance
-            provenance = OcrProvenanceV3(
+            provenance = OcrProvenance(
                 status="resolved",
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model=result.model,
                 model_digest=result.digest,
                 device=result.device,
                 profile_id=fallback.profile_id,
                 profile_spec_sha256=fallback.profile_spec_sha256,
             )
-        if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+        if not provenance.is_resolved or provenance.engine != "text-recognition":
             raise ValueError("worker returned incomplete OCR profile provenance")
         if provenance.model != result.model or provenance.model_digest != result.digest:
             raise ValueError("worker OCR profile provenance does not match result identity")
@@ -1196,7 +1263,7 @@ class StandaloneRuntimeCaptureExtractor:
     @staticmethod
     def _validate_worker_segments_against_projection(
         result: _OcrRunResult,
-        projection: CaptureOcrProjectionV3,
+        projection: CaptureOcrProjection,
     ) -> None:
         """Reject a legacy segment envelope that diverges from OCR pages.
 
@@ -1243,7 +1310,7 @@ class StandaloneRuntimeCaptureExtractor:
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
-        ocr_page_scope: OcrPageScopeV2 | None = None
+        ocr_page_scope: OcrPageScope | None = None
         if sniffed.kind is CaptureSourceKind.PDF:
             segments, ocr_projection = self._extract_pdf(
                 content,
@@ -1259,7 +1326,7 @@ class StandaloneRuntimeCaptureExtractor:
                 device=ocr_projection.provenance.device,
             )
             warnings = list(ocr_projection.warnings)
-            ocr_page_scope = OcrPageScopeV2(
+            ocr_page_scope = OcrPageScope(
                 source_page_count=self._pdf_page_count(content),
                 requested_page_numbers=[page.page for page in ocr_projection.pages],
                 processed_page_numbers=[page.page for page in ocr_projection.pages],
@@ -1285,7 +1352,7 @@ class StandaloneRuntimeCaptureExtractor:
             ocr_projection = None
         self._checkpoint(cancel_event)
         if not segments:
-            raise ValueError("Extraction produced no non-empty content.")
+            raise _no_extracted_content()
         raw = RawCapture(
             source=source,
             segments=segments,
@@ -1304,7 +1371,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         *,
         page_numbers: tuple[int, ...] | None = None,
-    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjectionV3]:
+    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjection]:
         manifest = self._preflight_pdf_manifest(
             content,
             cancel_event,
@@ -1345,7 +1412,7 @@ class StandaloneRuntimeCaptureExtractor:
         content: bytes,
         source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjectionV3]:
+    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjection]:
         raster_pages: list[bytes] = []
         manifest = self._preflight_image_manifest(
             content,
@@ -1507,7 +1574,7 @@ def _unique_warnings(warnings: list[str]) -> list[str]:
     return list(dict.fromkeys(warning[:500] for warning in warnings if warning.strip()))
 
 
-def _projection_segments(projection: CaptureOcrProjectionV3) -> list[RawCaptureSegment]:
+def _projection_segments(projection: CaptureOcrProjection) -> list[RawCaptureSegment]:
     return [
         RawCaptureSegment(
             segment_id=f"page-{page.page}",

@@ -43,7 +43,7 @@ identity. The open work is [#247](https://github.com/gx-capture/capture-workbenc
    the assignment, and only then resumes it. A host launches the Capture
    runtime with `launch_sidecar` or `launch_sidecar_with_observer` (3 attempts
    within 60 seconds, a fresh loopback port and bearer token per attempt) or
-   owns a process directly through `OwnedRuntimeSession::spawn` or
+   owns a process directly through `OwnedSidecarSession::spawn` or
    `OwnedSidecarProcess::spawn`. LAW runs each of its runtime processes as a
    separate owned session.
 
@@ -64,9 +64,9 @@ identity. The open work is [#247](https://github.com/gx-capture/capture-workbenc
    is recognized: the runtime removes the stale file and starts Ollama.
 
 5. **Existing native exports and callers are the boundary.** src/lib.rs
-   exports `OwnedRuntimeSession`, `OwnedSidecarProcess`,
-   `RuntimeTerminationProof`, `RuntimeCleanupError` and
-   `RuntimeCleanupErrorKind`; src/launcher/ owns SidecarLaunchSpec,
+   exports `OwnedSidecarSession`, `OwnedSidecarProcess`,
+   `SidecarTerminationProof`, `SidecarCleanupError` and
+   `SidecarCleanupErrorKind`; src/launcher/ owns SidecarLaunchSpec,
    LaunchOptions, LaunchedSidecar, launch_sidecar, and
    launch_sidecar_with_observer; desktop Tauri src/state.rs, src/launcher.rs,
    and src/commands.rs are callers. The implementation uses those paths and the
@@ -100,7 +100,7 @@ identity. The open work is [#247](https://github.com/gx-capture/capture-workbenc
 - Choosing a run-shaped OcrPipeline without the three alternatives,
   comparison, and current-owner migration.
 - Adding a coordinator around desktop state instead of using
-  OwnedRuntimeSession and its launcher exports/callers.
+  OwnedSidecarSession and its launcher exports/callers.
 - Letting a timeout, exception, unknown adapter, or incomplete identity guess
   CPU; or retrying CPU/another GPU after selected DirectML failure.
 - Persisting tokens, OCR, source/model paths, raw process diagnostics, or host

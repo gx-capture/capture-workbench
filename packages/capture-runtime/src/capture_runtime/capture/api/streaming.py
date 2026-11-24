@@ -10,8 +10,11 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Path, Request, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
+from capture_runtime.capture.application.streaming_capture_service import (
+    StructuringProviderUnavailableError,
+)
 from capture_runtime.capture.domain.size_policy import (
     SOURCE_SIZE_EXCEEDED_MESSAGE,
     IngestionSourceSizeExceededError,
@@ -21,29 +24,28 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingTransitionError,
+    partial_wire_payload,
 )
 from capture_runtime.contracts import (
     CaptureDocument,
-    CaptureOcrProjectionV3,
-    CaptureOperationV2,
-    CaptureStreamingResult,
-    FinalizeIngestionV2,
-    IngestionV2,
-    OpenIngestionV2,
-    OpenStructuringSessionV2,
-    PartialCaptureV2,
+    CaptureOcrProjection,
+    CaptureOperation,
+    CaptureResult,
+    FinalizeIngestion,
+    Ingestion,
+    OpenIngestion,
+    OpenStructuringSession,
+    PartialCapture,
     RawCapture,
-    ReportStructuringFailureV2,
-    RuntimeStreamingCapabilitiesV2,
-    StartCaptureV2,
-    StructuringBatchV2,
-    StructuringSessionV2,
-    SubmitStructuringBatchV2,
+    ReportStructuringFailure,
+    StartCapture,
+    StructuringBatch,
+    StructuringSession,
+    SubmitStructuringBatch,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.routes.common import ApiProblem
-from capture_runtime.speech.infrastructure.progressive_audio import DEFAULT_CHECKPOINT_MS
-from capture_runtime.speech.infrastructure.progressive_decoder import progressive_decoder_ready
+from capture_runtime.structuring.domain.session.models import RetiredStructuringProfileError
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.structuring_session_repository import (
     StructuringSessionDigestConflictError,
@@ -71,27 +73,17 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     submit_batch = structuring_session_service.submit_use_case
     get_session = structuring_session_service.get_use_case
 
-    @router.get("/streaming/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
-    async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
-        return RuntimeStreamingCapabilitiesV2(
-            supports_progressive_audio=progressive_decoder_ready(),
-            max_chunk_bytes=service.max_chunk_bytes,
-            checkpoint_interval_ms=DEFAULT_CHECKPOINT_MS,
-            heartbeat_interval_ms=5_000,
-            stall_timeout_ms=90_000,
-        )
-
     @router.post(
         "/ingestions",
-        response_model=IngestionV2,
+        response_model=Ingestion,
         status_code=status.HTTP_201_CREATED,
     )
     async def open_ingestion(
-        request: OpenIngestionV2,
+        request: OpenIngestion,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
-    ) -> IngestionV2:
+    ) -> Ingestion:
         _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
             return open_ingestion_use_case.execute(request)
@@ -104,8 +96,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Ingestion request id was already used with different metadata.",
             ) from error
 
-    @router.get("/ingestions/{ingestion_id}", response_model=IngestionV2)
-    async def get_ingestion(ingestion_id: str) -> IngestionV2:
+    @router.get("/ingestions/{ingestion_id}", response_model=Ingestion)
+    async def get_ingestion(ingestion_id: str) -> Ingestion:
         try:
             return service.get_ingestion(ingestion_id)
         except StreamingRecordNotFoundError as error:
@@ -113,7 +105,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.put(
         "/ingestions/{ingestion_id}/chunks/{chunk_index}",
-        response_model=IngestionV2,
+        response_model=Ingestion,
     )
     async def append_chunk(
         request: Request,
@@ -122,7 +114,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         content_range: Annotated[str, Header(alias="Content-Range")],
         digest: Annotated[str, Header(alias="Digest")],
         _idempotency_key: Annotated[str, Header(alias="X-Idempotency-Key")],
-    ) -> IngestionV2:
+    ) -> Ingestion:
         match = _CONTENT_RANGE.fullmatch(content_range)
         digest_match = _DIGEST.fullmatch(digest)
         if match is None or digest_match is None:
@@ -132,10 +124,16 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Content-Range and Digest headers are invalid.",
             )
         byte_offset, end_offset, total_bytes = (int(value) for value in match.groups())
+        if total_bytes <= 0:
+            raise ApiProblem(422, "invalid_chunk_headers", "Content-Range total is invalid.")
+        if end_offset >= total_bytes:
+            raise ApiProblem(
+                422,
+                "invalid_chunk_headers",
+                "Content-Range end must be less than its total.",
+            )
         if end_offset < byte_offset or end_offset - byte_offset + 1 > service.max_chunk_bytes:
             raise ApiProblem(413, "chunk_too_large", "Chunk exceeds the configured size limit.")
-        if int(total_bytes) <= 0:
-            raise ApiProblem(422, "invalid_chunk_headers", "Content-Range total is invalid.")
         try:
             ingestion = service.get_ingestion(ingestion_id)
         except StreamingRecordNotFoundError as error:
@@ -171,11 +169,11 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 _safe_message(str(error)),
             ) from error
 
-    @router.post("/ingestions/{ingestion_id}/finalize", response_model=IngestionV2)
+    @router.post("/ingestions/{ingestion_id}/finalize", response_model=Ingestion)
     async def finalize_ingestion(
         ingestion_id: str,
-        request: FinalizeIngestionV2,
-    ) -> IngestionV2:
+        request: FinalizeIngestion,
+    ) -> Ingestion:
         try:
             return finalize_ingestion_use_case.execute(ingestion_id, request)
         except StreamingRecordNotFoundError as error:
@@ -199,15 +197,15 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.post(
         "/captures",
-        response_model=CaptureOperationV2,
+        response_model=CaptureOperation,
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def start_capture(
-        request: StartCaptureV2,
+        request: StartCapture,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
-    ) -> CaptureOperationV2:
+    ) -> CaptureOperation:
         _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
             return start_capture_use_case.execute(request)
@@ -220,8 +218,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Capture request id was already used with different metadata.",
             ) from error
 
-    @router.get("/captures/{capture_id}", response_model=CaptureOperationV2)
-    async def get_capture(capture_id: str) -> CaptureOperationV2:
+    @router.get("/captures/{capture_id}", response_model=CaptureOperation)
+    async def get_capture(capture_id: str) -> CaptureOperation:
         try:
             return service.get_capture(capture_id)
         except StreamingRecordNotFoundError as error:
@@ -245,7 +243,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         async def stream() -> AsyncIterator[str]:
             cursor = after_sequence
             initial_replay = True
-            heartbeat_deadline = time.monotonic() + 5
+            heartbeat_seconds = service.heartbeat_interval_ms / 1000
+            heartbeat_deadline = time.monotonic() + heartbeat_seconds
             while True:
                 current_events = (
                     events
@@ -264,7 +263,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                         f"\ndata: {payload}\n\n"
                     )
                     cursor = max(cursor, event.sequence)
-                    heartbeat_deadline = time.monotonic() + 5
+                    heartbeat_deadline = time.monotonic() + heartbeat_seconds
 
                 if service.event_stream_should_close(capture_id):
                     # A repository transition persists the terminal snapshot
@@ -285,7 +284,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                     return
                 if time.monotonic() >= heartbeat_deadline:
                     yield ": heartbeat\n\n"
-                    heartbeat_deadline = time.monotonic() + 5
+                    heartbeat_deadline = time.monotonic() + heartbeat_seconds
                 await asyncio.sleep(0.05)
 
         return StreamingResponse(
@@ -294,10 +293,10 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    @router.get("/captures/{capture_id}/partial", response_model=PartialCaptureV2)
-    async def capture_partial(capture_id: str) -> PartialCaptureV2:
+    @router.get("/captures/{capture_id}/partial", response_model=PartialCapture)
+    async def capture_partial(capture_id: str) -> Response:
         try:
-            return service.partial(capture_id)
+            return JSONResponse(partial_wire_payload(service.partial(capture_id)))
         except StreamingPartialNotFoundError as error:
             raise ApiProblem(
                 409,
@@ -322,8 +321,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.get("/captures/{capture_id}/ocr", response_model=CaptureOcrProjectionV3)
-    async def capture_ocr(capture_id: str) -> CaptureOcrProjectionV3:
+    @router.get("/captures/{capture_id}/ocr", response_model=CaptureOcrProjection)
+    async def capture_ocr(capture_id: str) -> CaptureOcrProjection:
         try:
             return service.ocr(capture_id)
         except StreamingPartialNotFoundError as error:
@@ -335,8 +334,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post("/captures/{capture_id}/cancel", response_model=CaptureOperationV2)
-    async def cancel_capture(capture_id: str) -> CaptureOperationV2:
+    @router.post("/captures/{capture_id}/cancel", response_model=CaptureOperation)
+    async def cancel_capture(capture_id: str) -> CaptureOperation:
         try:
             return cancel_capture_use_case.execute(capture_id)
         except StreamingRecordNotFoundError as error:
@@ -348,6 +347,19 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     async def structure_capture(capture_id: str) -> CaptureDocument:
         try:
             return await service.structure(capture_id)
+        except StructuringProviderUnavailableError as error:
+            raise ApiProblem(
+                503,
+                "requirement_unavailable",
+                "The structuring provider is unavailable.",
+            ) from error
+        except StructuringValidationError as error:
+            # Issues can quote the provider document, including source text.
+            raise ApiProblem(
+                422,
+                "structuring_invalid_output",
+                "Structuring output failed strict schema or provenance validation.",
+            ) from error
         except StreamingTransitionError as error:
             raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
         except StreamingPartialNotFoundError as error:
@@ -361,21 +373,24 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.post(
         "/captures/{capture_id}/structure/session",
-        response_model=StructuringSessionV2,
+        response_model=StructuringSession,
         status_code=status.HTTP_201_CREATED,
     )
     async def open_structuring_session(
         capture_id: str,
-        request: OpenStructuringSessionV2,
+        request: OpenStructuringSession,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
-    ) -> StructuringSessionV2:
-        if request.capture_id != capture_id:
-            raise ApiProblem(422, "validation_error", "captureId must match the route capture.")
-        _require_matching_idempotency_key(idempotency_key, request.client_request_id)
+    ) -> StructuringSession:
+        # The key is stored beside the session, and a stored blank key fails
+        # the record's recovery check, so a blank key is rejected here.
+        if not idempotency_key.strip():
+            raise ApiProblem(422, "validation_error", "X-Idempotency-Key must not be blank.")
         try:
-            return open_session.execute(request)
+            return open_session.execute(capture_id, request, client_request_id=idempotency_key)
+        except RetiredStructuringProfileError as error:
+            raise ApiProblem(422, "validation_error", str(error)) from error
         except StructuringSessionIdempotencyConflictError as error:
             raise ApiProblem(
                 409,
@@ -395,9 +410,9 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.get(
         "/captures/{capture_id}/structure/session",
-        response_model=StructuringSessionV2,
+        response_model=StructuringSession,
     )
-    async def get_structuring_session(capture_id: str) -> StructuringSessionV2:
+    async def get_structuring_session(capture_id: str) -> StructuringSession:
         try:
             session = get_session.execute(capture_id)
             return session
@@ -408,12 +423,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.get(
         "/captures/{capture_id}/structure/session/batches/{batch_index}",
-        response_model=StructuringBatchV2,
+        response_model=StructuringBatch,
     )
     async def get_structuring_batch(
         capture_id: str,
         batch_index: Annotated[int, Path(ge=0)],
-    ) -> StructuringBatchV2:
+    ) -> StructuringBatch:
         try:
             session = get_session.execute(capture_id)
         except StructuringSessionRecordNotFoundError as error:
@@ -429,16 +444,16 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.put(
         "/captures/{capture_id}/structure/session/batches/{batch_index}",
-        response_model=StructuringSessionV2,
+        response_model=StructuringSession,
     )
     async def submit_structuring_batch(
         capture_id: str,
         batch_index: Annotated[int, Path(ge=0)],
-        payload: SubmitStructuringBatchV2,
+        payload: SubmitStructuringBatch,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
-    ) -> StructuringSessionV2:
+    ) -> StructuringSession:
         try:
             session = get_session.execute(capture_id)
         except StructuringSessionRecordNotFoundError as error:
@@ -490,14 +505,14 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post("/captures/{capture_id}/structure/commit", response_model=CaptureOperationV2)
+    @router.post("/captures/{capture_id}/structure/commit", response_model=CaptureOperation)
     async def commit_host_structure(
         capture_id: str,
         candidate: CaptureDocument,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
-    ) -> CaptureOperationV2:
+    ) -> CaptureOperation:
         try:
             return commit_host_result_use_case.execute(
                 capture_id, candidate, idempotency_key=idempotency_key
@@ -528,14 +543,14 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post("/captures/{capture_id}/structure/failure", response_model=CaptureOperationV2)
+    @router.post("/captures/{capture_id}/structure/failure", response_model=CaptureOperation)
     async def report_host_structure_failure(
         capture_id: str,
-        payload: ReportStructuringFailureV2,
+        payload: ReportStructuringFailure,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
-    ) -> CaptureOperationV2:
+    ) -> CaptureOperation:
         try:
             return service.report_host_failure(
                 capture_id,
@@ -554,8 +569,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.get("/captures/{capture_id}/result", response_model=CaptureStreamingResult)
-    async def capture_result(capture_id: str) -> CaptureStreamingResult:
+    @router.get("/captures/{capture_id}/result", response_model=CaptureResult)
+    async def capture_result(capture_id: str) -> CaptureResult:
         try:
             return service.terminal_result(capture_id)
         except StreamingPartialNotFoundError as error:
@@ -609,8 +624,6 @@ def _chunk_error_code(message: str) -> str:
         return "chunk_conflict"
     if "contiguous" in lowered or "ordered" in lowered:
         return "chunk_out_of_order"
-    if "exceed" in lowered:
-        return "chunk_too_large"
     return "chunk_rejected"
 
 

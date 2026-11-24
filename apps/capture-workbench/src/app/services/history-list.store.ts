@@ -25,12 +25,18 @@ export class HistoryListStore {
   readonly pendingDelete = signal<HistoryRow | null>(null);
   readonly dialogState = computed(() => this.pendingDelete() ? 'open' : 'closed');
   readonly hasDocuments = computed(() => (this.library.allDocuments() ?? []).length > 0);
-  private readonly allRows = computed(() => (this.library.allDocuments() ?? []).map((document) => historyRow(
-    document,
-    this.capture.busyIds().has(document.documentId),
-    this.capture.oneShotOperations().get(document.documentId) ?? this.capture.recordingOperations().get(document.documentId),
-    this.capture.hasActiveCapture(document.documentId),
-  )));
+  private readonly allRows = computed(() => (this.library.allDocuments() ?? []).map((document) => {
+    const { documentId } = document;
+    return historyRow(document, {
+      owned: this.capture.busyIds().has(documentId),
+      cancelling: this.capture.cancellingIds().has(documentId),
+      unstored: this.capture.unstoredOutcomes().has(documentId),
+      failureReason: this.capture.unstoredOutcomes().get(documentId) ?? null,
+      // A decision or a delete claims the document too; it is not a capture in progress.
+      claimed: this.capture.isDocumentClaimed(documentId),
+      operation: this.capture.oneShotOperations().get(documentId) ?? this.capture.recordingOperations().get(documentId),
+    });
+  }));
   readonly rows = computed(() => filterHistoryRows(this.allRows(), {
     type: this.typeFilter(), status: this.statusFilter(), search: this.search(),
   }));
@@ -83,6 +89,8 @@ export class HistoryListStore {
       return;
     }
     this.deleting.set(true);
+    // Leaving the page only stops this page's updates: the delete belongs to
+    // the library and keeps the document claimed until the host answers.
     const generation = this.transientGeneration;
     this.library.delete(pending.documentId).pipe(
       takeUntilDestroyed(this.destroyRef),
@@ -96,6 +104,12 @@ export class HistoryListStore {
       error: () => {
         if (generation !== this.transientGeneration) return;
         this.error.set(desktopMessages().historyDeleteFailed);
+        this.pendingDelete.set(null);
+      },
+      // Also when the library declined the delete (the document became
+      // claimed meanwhile): nothing was deleted and the row stays.
+      complete: () => {
+        if (generation !== this.transientGeneration) return;
         this.pendingDelete.set(null);
       },
     });

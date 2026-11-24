@@ -25,7 +25,7 @@ function makeRequirement(
     requirementId,
     displayName: requirementId,
     status,
-    kind: 'runtime',
+    kind: requirementId,
     requiredFor: ['capture'],
     installStrategy: 'runtime-catalog',
     detail: null,
@@ -82,16 +82,19 @@ describe('AsrPage', () => {
       install: vi.fn(),
       installSpeakers: vi.fn(),
       cancel: vi.fn(),
-      retry: vi.fn(),
-      restart: vi.fn(),
+      startAgain: vi.fn(),
       view: vi.fn(),
       exportTxt: vi.fn(),
       exportBusyIds: signal(new Set<string>()),
+      cancellingIds: signal<ReadonlySet<string>>(new Set()),
     };
 
+    const progressUnavailable = signal<ReadonlySet<CaptureRequirementId>>(new Set());
     const features = {
       installing: signal(false),
       startingRequirementId: signal<CaptureRequirementId | null>(null),
+      progressUnavailable,
+      isProgressUnavailable: (requirementId: CaptureRequirementId) => progressUnavailable().has(requirementId),
       installationFor: vi.fn((requirementId: CaptureRequirementId): RuntimeInstallation | null =>
         options.installation?.requirementId === requirementId ? options.installation : null),
       installRequirement: vi.fn(),
@@ -145,6 +148,34 @@ describe('AsrPage', () => {
     expect(other.querySelector('[data-testid="engine-card-progress"]')).toBeNull();
   });
 
+  it('keeps the engine card progress with a hint while status requests fail', () => {
+    const { fixture, features } = setup({
+      speechReady: false,
+      installation: {
+        installationId: 'inst-speech-1',
+        requirementId: 'speech-recognition',
+        status: 'running',
+        progress: 0.3,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
+    });
+    const el = fixture.nativeElement as HTMLElement;
+    const card = el.querySelector(
+      '[data-testid="engine-card"][data-requirement-id="speech-recognition"]',
+    ) as HTMLElement;
+    expect(card.querySelector('[data-testid="install-progress-retrying"]')).toBeNull();
+
+    features.progressUnavailable.set(new Set(['speech-recognition']));
+    fixture.detectChanges();
+
+    expect(card.querySelector('[data-testid="install-progress-bar"]')).not.toBeNull();
+    expect(card.querySelector('[data-testid="install-progress-retrying"]')?.textContent).toContain(
+      desktopMessages().installProgressRetrying,
+    );
+    expect(card.querySelector('[data-testid="engine-card-cancel"]')).not.toBeNull();
+  });
+
   it('shows the install panel and disabled empty-queue button when speech recognition is missing', () => {
     const { fixture, queue, features } = setup({
       speechReady: false,
@@ -175,7 +206,7 @@ describe('AsrPage', () => {
   });
 
   it('renders drop zone, language selector, optional speaker install vs checkbox, and speaker note', () => {
-    const { fixture: withoutSpeakers, queue: withoutSpeakersQueue } = setup({
+    const { fixture: withoutSpeakers, queue: withoutSpeakersQueue, features: withoutSpeakersFeatures } = setup({
       speechReady: true,
       speakersReady: false,
     });
@@ -203,6 +234,12 @@ describe('AsrPage', () => {
     });
     withoutSpeakers.detectChanges();
     expect(el1.querySelector('[data-testid="asr-optional-speakers"]')?.textContent).toContain('正在安裝說話者辨識 50%');
+    expect(el1.querySelector('[data-testid="asr-speakers-progress-retrying"]')).toBeNull();
+    withoutSpeakersFeatures.progressUnavailable.set(new Set(['speaker-diarization']));
+    withoutSpeakers.detectChanges();
+    expect(el1.querySelector('[data-testid="asr-speakers-progress-retrying"]')?.textContent).toContain(
+      desktopMessages().installProgressRetrying,
+    );
     expect(el1.querySelector('[data-testid="engine-card-cancel"]')).toBeNull();
 
     TestBed.resetTestingModule();
@@ -282,10 +319,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: false,
+        canCancel: true,
+        cancelling: false,
+        canStartAgain: false,
+        canView: false,
         speakerCount: null,
         playbackUnavailable: false,
         canExport: false,
         errorMessage: '',
+        failureReason: null,
       },
       {
         documentId: '2'.repeat(32),
@@ -298,10 +340,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: false,
+        canCancel: true,
+        cancelling: false,
+        canStartAgain: false,
+        canView: false,
         speakerCount: null,
         playbackUnavailable: false,
         canExport: false,
         errorMessage: '',
+        failureReason: null,
       },
       {
         documentId: '3'.repeat(32),
@@ -314,10 +361,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: false,
+        canCancel: false,
+        cancelling: false,
+        canStartAgain: false,
+        canView: true,
         speakerCount: 3,
         playbackUnavailable: true,
         canExport: true,
         errorMessage: '',
+        failureReason: null,
       },
       {
         documentId: '4'.repeat(32),
@@ -330,10 +382,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: true,
+        canCancel: false,
+        cancelling: false,
+        canStartAgain: true,
+        canView: false,
         speakerCount: null,
         playbackUnavailable: false,
         canExport: false,
         errorMessage: '',
+        failureReason: null,
       },
     ];
 
@@ -343,6 +400,8 @@ describe('AsrPage', () => {
     expect(el.querySelector('[data-testid="asr-live-heard"]')?.textContent?.trim()).toBe(
       '已聽到 12:04／41:30',
     );
+    expect(el.querySelector('[data-testid="asr-live-card"]')?.getAttribute('data-document-id'))
+      .toBe(liveCapture.documentId);
     const partialSection = el.querySelector('[data-testid="streaming-partial"]') as HTMLElement;
     expect(partialSection.dataset['coveredUntilMs']).toBe('724000');
     expect(partialSection.dataset['partialRevision']).toBe('3');
@@ -368,6 +427,34 @@ describe('AsrPage', () => {
     (renderedRows[2].querySelector('[data-testid="asr-row-export"]') as HTMLButtonElement).click();
     expect(queue.exportTxt).toHaveBeenCalledWith('3'.repeat(32));
     (renderedRows[3].querySelector('[data-testid="asr-row-restart"]') as HTMLButtonElement).click();
-    expect(queue.restart).toHaveBeenCalledWith('4'.repeat(32));
+    expect(queue.startAgain).toHaveBeenCalledWith('4'.repeat(32));
+
+    // While a cancel is being applied to the running recording, its Cancel buttons wait.
+    const cancelButtons = () => [
+      el.querySelector('[data-testid="asr-live-cancel"]'),
+      renderedRows[0].querySelector('[data-testid="asr-row-cancel"]'),
+      renderedRows[1].querySelector('[data-testid="asr-row-cancel"]'),
+    ].map((button) => (button as HTMLButtonElement).disabled);
+    // One action per row state: only the interrupted recording offers Start again, only the finished one View.
+    expect(renderedRows.map((item) => [
+      item.querySelector('[data-testid="asr-row-cancel"]') !== null,
+      item.querySelector('[data-testid="asr-row-restart"]') !== null,
+      item.querySelector('[data-testid="asr-row-view"]') !== null,
+    ])).toEqual([[true, false, false], [true, false, false], [false, false, true], [false, true, false]]);
+    expect(cancelButtons()).toEqual([false, false, false]);
+    queue.cancellingIds.set(new Set([liveCapture.documentId]));
+    queue.rows.set(rows.map((item, index) => index === 0
+      ? { ...item, statusText: '取消中', cancelling: true }
+      : item));
+    fixture.detectChanges();
+    expect(cancelButtons()).toEqual([true, true, false]);
+    expect(renderedRows[0].querySelector('[data-testid="asr-row-chip"]')?.textContent?.trim()).toBe('取消中');
+
+    // An interrupted recording that holds a result is looked at, never captured again in place.
+    queue.rows.set(rows.map((item, index) => index === 3 ? { ...item, canStartAgain: false, canView: true } : item));
+    fixture.detectChanges();
+    const keptRow = el.querySelectorAll('[data-testid="asr-queue-row"]')[3];
+    expect(keptRow?.querySelector('[data-testid="asr-row-restart"]')).toBeNull();
+    expect(keptRow?.querySelector('[data-testid="asr-row-view"]')).not.toBeNull();
   });
 });

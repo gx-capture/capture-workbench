@@ -2,10 +2,10 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type {
-  RuntimeModelInstallation,
-  RuntimeModelOption,
+  StructuringModelInstallation,
+  StructuringModelOption,
 } from '@gx-capture/capture-workbench-ui';
-import { setDesktopLocale } from '../i18n/desktop-messages';
+import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import type {
   DiagnosticsDocumentView,
   DiagnosticsRuntimeView,
@@ -33,7 +33,7 @@ describe('DiagnosticsPage', () => {
           runtimeVersion: '0.0.0-test',
           apiVersion: '2.0',
           contractSetVersion: '2',
-          contractSha256: 'a'.repeat(64),
+          contractSetSha256: 'a'.repeat(64),
         },
       ),
       documentId: signal<string | null>(options.documentId ?? null),
@@ -50,30 +50,31 @@ describe('DiagnosticsPage', () => {
     };
 
     const features = {
-      modelOptions: signal<readonly RuntimeModelOption[]>([
+      modelOptions: signal<readonly StructuringModelOption[]>([
         {
           optionId: 'qwen-test',
           displayName: 'Qwen Test',
           modelReference: 'qwen:test',
           expectedDigest: null,
-          expectedBytes: null,
+          downloadBytes: null,
           profileId: 'p1',
           profileSpecSha256: 'b'.repeat(64),
           status: 'active',
         },
       ]),
       selectedModelOptionId: signal<string | null>('qwen-test'),
-      activeModelOption: signal<RuntimeModelOption | null>({
+      activeModelOption: signal<StructuringModelOption | null>({
         optionId: 'qwen-test',
         displayName: 'Qwen Test',
         modelReference: 'qwen:test',
         expectedDigest: null,
-        expectedBytes: null,
+        downloadBytes: null,
         profileId: 'p1',
         profileSpecSha256: 'b'.repeat(64),
         status: 'active',
       }),
-      activeModelInstallation: signal<RuntimeModelInstallation | null>(null),
+      activeModelInstallation: signal<StructuringModelInstallation | null>(null),
+      modelProgressUnavailable: signal(false),
       modelInstallationPercent: signal(0),
       modelInstallationPhase: signal(''),
       installing: signal(false),
@@ -115,6 +116,31 @@ describe('DiagnosticsPage', () => {
     expect(store.copyDigest).toHaveBeenCalledWith('a'.repeat(64));
   });
 
+  it('keeps the model progress with a hint while status requests fail and the runtime stays ready', () => {
+    const { fixture, features, el } = setup();
+    features.activeModelInstallation.set({
+      installationId: 'model-inst-1',
+      optionId: 'qwen-test',
+      status: 'running',
+      progress: 0.3,
+      createdAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:00Z',
+    });
+    features.modelProgressUnavailable.set(true);
+    fixture.detectChanges();
+
+    expect(el.querySelector('[data-testid="diagnostics-runtime-error"]')).toBeNull();
+    const progress = el.querySelector('[data-testid="diagnostics-model-progress"]') as HTMLElement;
+    expect(progress.getAttribute('data-status')).toBe('running');
+    expect(progress.querySelector('[data-testid="diagnostics-model-progress-retrying"]')?.textContent).toContain(
+      desktopMessages().installProgressRetrying,
+    );
+
+    features.modelProgressUnavailable.set(false);
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="diagnostics-model-progress-retrying"]')).toBeNull();
+  });
+
   it('shows error message and reconnect action when runtime is in error state', () => {
     const { store, el } = setup({
       runtimeView: {
@@ -124,7 +150,7 @@ describe('DiagnosticsPage', () => {
         runtimeVersion: null,
         apiVersion: null,
         contractSetVersion: null,
-        contractSha256: null,
+        contractSetSha256: null,
       },
     });
 
@@ -141,15 +167,17 @@ describe('DiagnosticsPage', () => {
         documentId: docId,
         fileName: 'contract.pdf',
         extraction: {
-          engine: 'windowsml-ocr',
+          engine: 'text-recognition',
           model: 'ocr-v1',
           device: 'dml',
+          deviceName: null,
           digest: `sha256:${'d'.repeat(64)}`,
         },
         structuring: {
           engine: 'ollama',
           model: 'qwen-test',
-          device: null,
+          device: 'cuda',
+          deviceName: 'GPU example',
           digest: `sha256:${'e'.repeat(64)}`,
         },
         evidence: {
@@ -166,7 +194,7 @@ describe('DiagnosticsPage', () => {
     expect(el.querySelector('[data-testid="diagnostics-document-filename"]')?.textContent?.trim()).toBe('contract.pdf');
 
     const ext = el.querySelector('[data-testid="diagnostics-extraction-provenance"]');
-    expect(ext?.getAttribute('data-engine')).toBe('windowsml-ocr');
+    expect(ext?.getAttribute('data-engine')).toBe('text-recognition');
     expect(ext?.getAttribute('data-model')).toBe('ocr-v1');
     expect(ext?.getAttribute('data-device')).toBe('dml');
     expect(ext?.getAttribute('data-digest')).toBe(`sha256:${'d'.repeat(64)}`);
@@ -174,6 +202,8 @@ describe('DiagnosticsPage', () => {
     const str = el.querySelector('[data-testid="diagnostics-structuring-provenance"]');
     expect(str?.getAttribute('data-engine')).toBe('ollama');
     expect(str?.getAttribute('data-model')).toBe('qwen-test');
+    expect(str?.getAttribute('data-device')).toBe('cuda');
+    expect(str?.textContent).toContain('GPU example');
     expect(str?.getAttribute('data-digest')).toBe(`sha256:${'e'.repeat(64)}`);
 
     expect(el.querySelector('[data-testid="diagnostics-evidence-pages"]')?.textContent?.trim()).toBe('2');

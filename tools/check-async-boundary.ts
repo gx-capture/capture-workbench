@@ -191,10 +191,27 @@ function exceptionReason(relativePath) {
   if (
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts' ||
+    // The real-engine journeys on the packaged Desktop App and the modules
+    // they share: Playwright page steps, the owned app process, the loopback
+    // worker mirror and the run's files.
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-desktop-asr-journey.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-workbench-session.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-journey-run.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-checkpoint-comparison.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-real-journeys.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/release-worker-mirror.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-media-smoke.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-engine-device-check.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/v2-capture-flow.ts' ||
       relativePath ===
@@ -248,6 +265,13 @@ function exceptionReason(relativePath) {
     'apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts'
   ) {
     return 'installed desktop/release CLI process boundary';
+  }
+  if (
+    relativePath ===
+    'apps/capture-workbench-desktop/scripts/installed-capture-lifecycle.ts'
+  ) {
+    // Playwright page steps and window helpers, like the installed smoke.
+    return 'installed desktop capture-lifecycle CLI process boundary';
   }
   if (
     relativePath ===

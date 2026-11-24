@@ -6,7 +6,6 @@ import {
   type CaptureRuntimeClientOptions,
   type RuntimeDiscovery,
   type RuntimeReady,
-  type RuntimeStreamingCapabilities,
   type RuntimeTransport,
   type RuntimeTransportRequest,
 } from '../contracts.js';
@@ -30,12 +29,9 @@ export interface RuntimeDiscoveryContext {
   readonly transport: RuntimeTransport;
   readonly json: RuntimeJson;
   readonly getReady: (signal?: AbortSignal) => Promise<RuntimeReady>;
-  readonly getStreamingCapabilities: (
-    signal?: AbortSignal,
-  ) => Promise<RuntimeStreamingCapabilities>;
 }
 
-/** Negotiate readiness, contract identity, and the v2 streaming surface. */
+/** Negotiate readiness, its capabilities, and contract identity. */
 export async function negotiateRuntime(
   context: RuntimeDiscoveryContext,
   signal?: AbortSignal,
@@ -46,7 +42,7 @@ export async function negotiateRuntime(
   const expectedSchema =
     context.options.expectedSchemaVersion ?? CAPTURE_DOCUMENT_SCHEMA_VERSION;
   const expectedHash =
-    context.options.expectedSchemaSha256 ?? CAPTURE_DOCUMENT_SCHEMA_SHA256;
+    context.options.expectedCaptureDocumentSchemaSha256 ?? CAPTURE_DOCUMENT_SCHEMA_SHA256;
   if (ready.service !== 'capture-runtime')
     failures.push(`service ${ready.service} is not Capture Runtime`);
   if (!ready.ready) failures.push('runtime is not ready');
@@ -56,14 +52,13 @@ export async function negotiateRuntime(
     failures.push(
       `document schema version ${ready.captureDocumentSchemaVersion} is unsupported`,
     );
-  const remoteHash = ready.captureDocumentSchemaSha256 ?? ready.schemaSha256;
+  const remoteHash = ready.captureDocumentSchemaSha256;
   if (remoteHash && remoteHash !== expectedHash)
     failures.push('document schema hash is incompatible');
-  const structuringModes = ready.capabilities['structuringModes'];
+  const structuringModes = ready.capabilities.structuringModes;
   if (
-    !Array.isArray(structuringModes) ||
-    (!structuringModes.includes('host') &&
-      !structuringModes.includes('runtime'))
+    !structuringModes.includes('host') &&
+    !structuringModes.includes('runtime')
   )
     failures.push('runtime exposes no structuring mode');
   if (failures.length)
@@ -130,9 +125,6 @@ export async function negotiateRuntime(
     );
   }
   const bundleSchemaHash = validateContractBundle(contractBundle);
-  // V2 readiness is part of the negotiated client surface. Do not silently
-  // continue after a malformed or otherwise incompatible response.
-  const streaming = await context.getStreamingCapabilities(signal);
   if (
     ready.captureDocumentSchemaSha256 &&
     ready.captureDocumentSchemaSha256 !== bundleSchemaHash
@@ -143,8 +135,7 @@ export async function negotiateRuntime(
   }
   return {
     ready,
-    streaming,
-    schemaSha256: bundleSchemaHash,
+    captureDocumentSchemaSha256: bundleSchemaHash,
     contractIndex,
     contractBundle,
   };
@@ -152,7 +143,6 @@ export async function negotiateRuntime(
 
 function validateContractIndex(index: ContractIndex): void {
   const required = [
-    'catalogVersion',
     'runtimeVersion',
     'contractSetVersion',
     'surfaces',
@@ -163,8 +153,14 @@ function validateContractIndex(index: ContractIndex): void {
     throw new CaptureRuntimeProtocolError(
       'Capture Runtime contract index is missing required fields.',
     );
+  // The index has no other fields: a retired one such as `catalogVersion`
+  // means the runtime serves an older contract index.
+  const known = new Set([...required, 'mediaType']);
+  if (Object.keys(index).some((field) => !known.has(field)))
+    throw new CaptureRuntimeProtocolError(
+      'Capture Runtime contract index has fields outside the contract index.',
+    );
   if (
-    index['catalogVersion'] !== '2' ||
     index['contractSetVersion'] !== '2' ||
     typeof index['runtimeVersion'] !== 'string'
   )
@@ -196,6 +192,7 @@ function validateContractBundle(bundle: ContractBundle): string {
     'schemas',
     'operations',
     'problems',
+    'failureCodes',
     'invariants',
   ] as const;
   if (
@@ -252,7 +249,6 @@ function validateContractBundle(bundle: ContractBundle): string {
   );
   for (const path of [
     '/v2/health/ready',
-    '/v2/streaming/health/ready',
     '/v2/runtime/requirements',
     '/v2/runtime/installations',
     '/v2/captures',
@@ -332,7 +328,7 @@ function validateContractBundle(bundle: ContractBundle): string {
   }
   if (
     ocr?.body?.kind !== 'none' ||
-    ocr?.responseSchema !== 'CaptureOcrProjectionV3' ||
+    ocr?.responseSchema !== 'CaptureOcrProjection' ||
     !ocr.responseStatusCodes?.includes(200)
   ) {
     throw new CaptureRuntimeCompatibilityError(
@@ -366,7 +362,6 @@ function validateContractBundle(bundle: ContractBundle): string {
 }
 
 type ContractIndex = {
-  readonly catalogVersion?: unknown;
   readonly runtimeVersion?: unknown;
   readonly contractSetVersion?: unknown;
   readonly surfaces?: unknown;
@@ -381,6 +376,9 @@ type ContractBundle = {
   readonly schemas: readonly unknown[];
   readonly operations: readonly unknown[];
   readonly problems: readonly unknown[];
+  // Codes a failed job reports. A host's own failure report is not checked
+  // against this list.
+  readonly failureCodes: readonly unknown[];
   readonly invariants: readonly unknown[];
   readonly [key: string]: unknown;
 };

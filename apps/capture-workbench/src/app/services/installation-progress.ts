@@ -1,4 +1,4 @@
-import type { RuntimeModelInstallation } from '@gx-capture/capture-workbench-ui';
+import type { StructuringModelInstallation } from '@gx-capture/capture-workbench-ui';
 import { desktopMessages, type DesktopMessages } from '../i18n/desktop-messages';
 
 /** What an installation is doing, as the user sees it. */
@@ -77,7 +77,7 @@ function clampBelowComplete(percent: number): number {
 
 /** Converts model installation progress to the percentage shown by the UI. */
 export function modelInstallationPercent(
-  installation: RuntimeModelInstallation | null,
+  installation: StructuringModelInstallation | null,
 ): number {
   return installationPercent(installation);
 }
@@ -102,7 +102,7 @@ export function installationPercent(
 
 /** Maps a model installation state to its human-readable phase. */
 export function modelInstallationPhase(
-  installation: RuntimeModelInstallation | null,
+  installation: StructuringModelInstallation | null,
 ): string {
   if (!installation) return '';
   const phase = desktopMessages().modelPhase;

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import stat
 from pathlib import Path, PurePosixPath
 
-from ._engine_installation_errors import EngineInstallationError
+from ._engine_installation_errors import EngineFilesInUseError, EngineInstallationError
+
+_LOGGER = logging.getLogger(__name__)
+
+# ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION: another process holds the
+# file open or locked. Other permission errors (an ACL, a read-only file) are not.
+_FILE_IN_USE_WINERRORS = frozenset({32, 33})
 
 
 def resolved_child(root: Path, relative: str) -> Path:
@@ -20,11 +27,24 @@ def resolved_child(root: Path, relative: str) -> Path:
 
 def remove_inactive_versions(root: Path, active_version: str) -> None:
     versions = root / "versions"
-    if not versions.is_dir():
+    try:
+        metadata = versions.lstat()
+        if is_reparse_point(versions, metadata) or not stat.S_ISDIR(metadata.st_mode):
+            return
+        for item in versions.iterdir():
+            if item.name == active_version or item.name.startswith("."):
+                continue
+            try:
+                metadata = item.lstat()
+                if not is_reparse_point(item, metadata) and not stat.S_ISDIR(metadata.st_mode):
+                    continue
+                _remove_retired_engine_tree(item)
+            except (EngineInstallationError, OSError):
+                # Models retry at startup; engines retry on their next activation.
+                _LOGGER.warning("Inactive version %s could not be completely removed", item.name)
+    except OSError:
+        # Cleanup must not fail an already active installation.
         return
-    for item in versions.iterdir():
-        if item.is_dir() and item.name != active_version and not item.name.startswith("."):
-            shutil.rmtree(item, ignore_errors=True)
 
 
 def is_reparse_point(path: Path, metadata: os.stat_result) -> bool:
@@ -50,9 +70,51 @@ def remove_residue_path(path: Path) -> None:
         else:
             path.unlink()
     except OSError as error:
+        if getattr(error, "winerror", None) in _FILE_IN_USE_WINERRORS:
+            # Windows refuses to delete a file another process holds open.
+            raise EngineFilesInUseError(
+                f"engine file is in use and could not be removed: {path.name}"
+            ) from error
         raise EngineInstallationError(
             f"stale engine install residue could not be removed: {path.name}"
         ) from error
+
+
+def _remove_retired_engine_tree(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    if not is_reparse_point(path, metadata) and stat.S_ISDIR(metadata.st_mode):
+        failed = False
+        for child in path.iterdir():
+            try:
+                _remove_retired_engine_tree(child)
+            except (EngineInstallationError, OSError):
+                failed = True
+        if failed:
+            raise EngineInstallationError("retired engine tree could not be completely removed")
+        path.rmdir()
+    else:
+        remove_residue_path(path)
+
+
+def remove_retired_ocr_installation(app_data: Path) -> None:
+    """Remove legacy OCR storage while the caller holds the app-data lock."""
+    for directory_name in ("engines", "runtime-assets"):
+        parent = app_data / directory_name
+        try:
+            for directory in (app_data, parent):
+                try:
+                    metadata = directory.lstat()
+                except FileNotFoundError:
+                    break
+                if is_reparse_point(directory, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    raise EngineInstallationError("unsafe legacy OCR storage parent")
+            else:
+                _remove_retired_engine_tree(parent / "windowsml-ocr")
+        except (EngineInstallationError, OSError):
+            _LOGGER.warning("Retired OCR cleanup in %s will retry at startup", directory_name)
 
 
 def is_temporary_version_name(name: str) -> bool:
@@ -105,6 +167,7 @@ __all__ = [
     "is_reparse_point",
     "is_temporary_version_name",
     "remove_inactive_versions",
+    "remove_retired_ocr_installation",
     "remove_residue_path",
     "remove_stale_install_residue",
     "resolved_child",

@@ -29,7 +29,7 @@ never receives a local source path or the sidecar bearer token.
 
 ## Runtime requirement simplification
 
-The WindowsML OCR bundle remains a checksum-pinned, user-consented core
+The text recognition bundle remains a checksum-pinned, user-consented core
 requirement, but its versioned descriptor is owned by capture-runtime source.
 Release builds, Tauri manifests, native launch commands, and renderer IPC do
 not carry `CAPTURE_WINDOWSML_BUNDLE_*` environment variables or duplicate the
@@ -56,5 +56,5 @@ installation error rather than fake readiness or deterministic OCR.
   history table at `/history`.
 - Product builds contain only verified release runtime assets; deterministic
   assets remain test-only.
-- `pnpm run dev` and the opt-in real Ollama smoke require no WindowsML bundle
+- `pnpm run dev` and the opt-in real Ollama smoke require no text recognition bundle
   environment variables.

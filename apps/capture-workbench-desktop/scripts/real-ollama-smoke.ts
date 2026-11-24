@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -19,15 +20,16 @@ const outputDirectory = join(workspaceRoot, 'tmp', 'capture-workbench-desktop', 
 const maxWaitMs = 10 * 60_000;
 const maxInstallationWaitMs = 75 * 60_000;
 const coreRequirementIds = [
-  'windowsml-ocr',
-  'ollama-runtime',
+  'text-recognition',
+  'structuring-runtime',
 ] as const;
 const expectedStructuringEngine = 'ollama';
-const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
+const expectedStructuringModel = 'qwen3.5-0.8b-structure-v1';
 const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
 
 interface RuntimeRequirement {
   readonly requirementId: string;
+  readonly kind: string;
   readonly status: string;
   readonly detail?: string | null;
 }
@@ -39,7 +41,7 @@ interface RuntimeInstallation {
   readonly error?: { readonly message?: string } | null;
 }
 
-interface RuntimeModelInstallation {
+interface StructuringModelInstallation {
   readonly installationId: string;
   readonly optionId: string;
   readonly status: string;
@@ -50,6 +52,8 @@ export interface StructuringProvenance {
   readonly engine: typeof expectedStructuringEngine;
   readonly model: typeof expectedStructuringModel;
   readonly digest: string;
+  readonly device: string | null;
+  readonly deviceName: string | null;
 }
 
 export interface ExtractedOllamaResult {
@@ -66,6 +70,16 @@ export interface RealOllamaSmokeEvidence {
   readonly workerMirrorUsed: boolean;
 }
 
+export function assertOllamaCudaUuidPin(log: string): void {
+  const lastConfig = log.split(/\r?\n/u).filter((line) => line.includes('server config')).at(-1);
+  assert.ok(lastConfig, 'Owned Ollama must print its server config.');
+  assert.match(
+    lastConfig,
+    /(?:^|\s|\[|")CUDA_VISIBLE_DEVICES:GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=[\s\]"]|$)/iu,
+    'Owned Ollama must pin CUDA_VISIBLE_DEVICES to a GPU UUID in its last server config.',
+  );
+}
+
 export function extractOllamaStructuringProvenance(payload: unknown): ExtractedOllamaResult {
   const envelope = asRecord(payload);
   const document = asRecord(envelope?.['result']);
@@ -80,12 +94,27 @@ export function extractOllamaStructuringProvenance(payload: unknown): ExtractedO
   ) {
     throw new Error('Real capture result does not contain isolated Ollama profile provenance.');
   }
+  // The check below accepts only these shapes. This project is not strict, so
+  // its comparisons do not narrow the unknown fields on their own.
+  const device = (structuring['device'] ?? null) as string | null;
+  const deviceName = (structuring['deviceName'] ?? null) as string | null;
+  if (
+    (device !== null &&
+      device !== 'cuda' && device !== 'rocm' && device !== 'vulkan' && device !== 'cpu') ||
+    (deviceName !== null &&
+      (typeof deviceName !== 'string' || deviceName.trim() === '' ||
+        device === null || device === 'cpu'))
+  ) {
+    throw new Error('Real capture result contains invalid Ollama device provenance.');
+  }
   return {
     schemaVersion: document['schemaVersion'],
     structuringEngine: {
       engine: expectedStructuringEngine,
       model: expectedStructuringModel,
       digest: structuring['digest'],
+      device,
+      deviceName,
     },
   };
 }
@@ -100,11 +129,7 @@ export function buildRealOllamaSmokeEvidence(input: {
     releaseGateSatisfied: false,
     sourceKind: 'pdf',
     schemaVersion: input.schemaVersion,
-    structuringEngine: {
-      engine: input.structuringEngine.engine,
-      model: input.structuringEngine.model,
-      digest: input.structuringEngine.digest,
-    },
+    structuringEngine: { ...input.structuringEngine },
     workerMirrorUsed: input.workerMirrorUsed,
   };
 }
@@ -166,6 +191,13 @@ async function main(): Promise<void> {
 
     const result = await request<unknown>(runtimePort, origin, token, `/v2/captures/${captureId}/result`);
     const extracted = extractOllamaStructuringProvenance(result);
+    const nvidia = spawnSync('nvidia-smi', ['--list-gpus'], {
+      encoding: 'utf8', timeout: 2_000, windowsHide: true,
+    });
+    if (nvidia.status === 0 && nvidia.stdout.trim() !== '') {
+      assert.equal(extracted.structuringEngine.device, 'cuda', 'Owned Ollama must use the NVIDIA GPU.');
+      assertOllamaCudaUuidPin(await readFile(join(appData, 'ollama', 'ollama.log'), 'utf8'));
+    }
     const evidence = buildRealOllamaSmokeEvidence({
       schemaVersion: extracted.schemaVersion,
       structuringEngine: extracted.structuringEngine,
@@ -199,9 +231,12 @@ async function prepareCoreRequirements(
     if (!requirement) {
       throw new Error(`Real runtime did not expose required ${requirementId}.`);
     }
+    if (requirement.kind !== requirementId) {
+      throw new Error(`Real runtime returned the wrong requirement kind for ${requirementId}.`);
+    }
     if (requirement.status === 'ready') continue;
     if (
-      requirementId === 'ollama-runtime' &&
+      requirementId === 'structuring-runtime' &&
       process.env['CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL']?.trim() !== '1'
     ) {
       throw new Error(
@@ -250,15 +285,15 @@ async function prepareSelectedModel(
 ): Promise<void> {
   const options = await request<{
     readonly items: readonly { readonly optionId: string; readonly status: string }[];
-  }>(port, origin, token, '/v2/runtime/model-options');
+  }>(port, origin, token, '/v2/runtime/structuring-model-options');
   const option = options.items.find((item) => item.optionId === 'qwen3.5-0.8b-v1');
   if (!option) throw new Error('Real runtime did not expose the qwen3.5 0.8B model option.');
   if (option.status === 'active') return;
-  const installation = await request<RuntimeModelInstallation>(
+  const installation = await request<StructuringModelInstallation>(
     port,
     origin,
     token,
-    '/v2/runtime/model-installations',
+    '/v2/runtime/structuring-model-installations',
     {
       method: 'POST',
       headers: {
@@ -386,15 +421,15 @@ async function waitForModelInstallation(
   port: number,
   origin: string,
   token: string,
-  installation: RuntimeModelInstallation,
+  installation: StructuringModelInstallation,
 ): Promise<void> {
   const deadline = Date.now() + maxInstallationWaitMs;
   while (Date.now() < deadline) {
-    const current = await request<RuntimeModelInstallation>(
+    const current = await request<StructuringModelInstallation>(
       port,
       origin,
       token,
-      `/v2/runtime/model-installations/${installation.installationId}`,
+      `/v2/runtime/structuring-model-installations/${installation.installationId}`,
     );
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {

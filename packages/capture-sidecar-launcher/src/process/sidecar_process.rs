@@ -11,18 +11,18 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
 
-use super::error::{RuntimeCleanupError, RuntimeCleanupErrorKind};
+use super::error::{SidecarCleanupError, SidecarCleanupErrorKind};
 #[cfg(windows)]
 use super::native::{
     process_identity_from_handle, prove_process_terminated, resume_suspended_process,
     terminate_assigned_suspended_child, terminate_process_with_proof, terminate_unassigned_child,
     WindowsJob,
 };
-use super::session::{ensure_termination_proof, RuntimeTerminationProof};
+use super::session::{ensure_termination_proof, SidecarTerminationProof};
 
 /// One sidecar root process and, on Windows, its job-object boundary.
 ///
-/// Prefer [`crate::OwnedRuntimeSession`] for a launch that must be cloned
+/// Prefer [`crate::OwnedSidecarSession`] for a launch that must be cloned
 /// before readiness. This value is the single-owner handle underneath that
 /// token. On Windows the job is kill-on-close, so dropping this value closes
 /// the job handle and the system kills processes still in the job. That drop
@@ -63,7 +63,7 @@ impl OwnedSidecarProcess {
             return match terminate_unassigned_child(&mut child) {
                 Ok(()) => Err(error),
                 Err(cleanup_error) => Err(format!(
-                    "{error} The unassigned runtime root also failed cleanup: {cleanup_error}"
+                    "{error} The unassigned sidecar root also failed cleanup: {cleanup_error}"
                 )),
             };
         }
@@ -72,7 +72,7 @@ impl OwnedSidecarProcess {
             return match terminate_assigned_suspended_child(&mut job, &mut child) {
                 Ok(()) => Err(error),
                 Err(cleanup_error) => Err(format!(
-                    "{error} The assigned suspended runtime root also failed cleanup: {cleanup_error}"
+                    "{error} The assigned suspended sidecar root also failed cleanup: {cleanup_error}"
                 )),
             };
         }
@@ -83,7 +83,7 @@ impl OwnedSidecarProcess {
             return match terminate_assigned_suspended_child(&mut job, &mut child) {
                 Ok(()) => Err(error),
                 Err(cleanup_error) => Err(format!(
-                    "{error} The assigned suspended runtime root also failed cleanup: {cleanup_error}"
+                    "{error} The assigned suspended sidecar root also failed cleanup: {cleanup_error}"
                 )),
             };
         }
@@ -115,13 +115,13 @@ impl OwnedSidecarProcess {
     ///
     /// # Errors
     ///
-    /// Returns [`RuntimeCleanupError`]. The kind can be
-    /// [`RuntimeCleanupErrorKind::Ownership`],
-    /// [`RuntimeCleanupErrorKind::Liveness`],
-    /// [`RuntimeCleanupErrorKind::Termination`],
-    /// [`RuntimeCleanupErrorKind::Reap`], or
-    /// [`RuntimeCleanupErrorKind::Descendants`].
-    pub fn terminate(&mut self) -> Result<(), RuntimeCleanupError> {
+    /// Returns [`SidecarCleanupError`]. The kind can be
+    /// [`SidecarCleanupErrorKind::Ownership`],
+    /// [`SidecarCleanupErrorKind::Liveness`],
+    /// [`SidecarCleanupErrorKind::Termination`],
+    /// [`SidecarCleanupErrorKind::Reap`], or
+    /// [`SidecarCleanupErrorKind::Descendants`].
+    pub fn terminate(&mut self) -> Result<(), SidecarCleanupError> {
         ensure_termination_proof(self.terminate_and_prove()).map(|_| ())
     }
 
@@ -131,112 +131,112 @@ impl OwnedSidecarProcess {
     /// handle, waits for that root, and queries remaining job processes. If
     /// job termination fails, it kills the root from its launch handle and
     /// then the owned descendants. The returned proof can have
-    /// [`crate::RuntimeTerminationProof::descendants_terminated`] set to
+    /// [`crate::SidecarTerminationProof::descendants_terminated`] set to
     /// false. [`Self::terminate`] turns that into an error. On any other
     /// target the root is killed and waited on, and the descendant flag is
     /// false.
     ///
     /// # Errors
     ///
-    /// Returns [`RuntimeCleanupError`] with
-    /// [`RuntimeCleanupErrorKind::Ownership`],
-    /// [`RuntimeCleanupErrorKind::Liveness`],
-    /// [`RuntimeCleanupErrorKind::Termination`],
-    /// [`RuntimeCleanupErrorKind::Reap`], or
-    /// [`RuntimeCleanupErrorKind::Descendants`] when the proof cannot be
+    /// Returns [`SidecarCleanupError`] with
+    /// [`SidecarCleanupErrorKind::Ownership`],
+    /// [`SidecarCleanupErrorKind::Liveness`],
+    /// [`SidecarCleanupErrorKind::Termination`],
+    /// [`SidecarCleanupErrorKind::Reap`], or
+    /// [`SidecarCleanupErrorKind::Descendants`] when the proof cannot be
     /// collected. A collected proof whose descendant flag is false is `Ok`.
-    pub fn terminate_and_prove(&mut self) -> Result<RuntimeTerminationProof, RuntimeCleanupError> {
+    pub fn terminate_and_prove(&mut self) -> Result<SidecarTerminationProof, SidecarCleanupError> {
         let root_pid = self.id();
         #[cfg(windows)]
         {
             let root_handle = self.child.as_raw_handle();
             let root_identity = process_identity_from_handle(root_handle, root_pid).map_err(|error| {
-                RuntimeCleanupError::new(
+                SidecarCleanupError::new(
                     root_pid,
-                    RuntimeCleanupErrorKind::Ownership,
+                    SidecarCleanupErrorKind::Ownership,
                     format!(
-                        "Owned runtime root creation identity could not be captured before cleanup: {error}"
+                        "Owned sidecar root creation identity could not be captured before cleanup: {error}"
                     ),
                 )
             })?;
             if self.job.terminate().is_ok() {
                 prove_process_terminated(root_handle, root_identity).map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Liveness,
+                        SidecarCleanupErrorKind::Liveness,
                         format!(
-                            "Owned runtime root termination could not be proven from its launch handle: {error}"
+                            "Owned sidecar root termination could not be proven from its launch handle: {error}"
                         ),
                     )
                 })?;
                 self.child.wait().map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Reap,
-                        format!("Owned runtime root process could not be reaped: {error}"),
+                        SidecarCleanupErrorKind::Reap,
+                        format!("Owned sidecar root process could not be reaped: {error}"),
                     )
                 })?;
                 let descendants_terminated = self.job.active_processes().map_err(|error| {
-                    RuntimeCleanupError::new(root_pid, RuntimeCleanupErrorKind::Descendants, error)
+                    SidecarCleanupError::new(root_pid, SidecarCleanupErrorKind::Descendants, error)
                 })? == 0;
-                return Ok(RuntimeTerminationProof {
+                return Ok(SidecarTerminationProof {
                     root_pid,
                     root_reaped: true,
                     descendants_terminated,
                 });
             }
             let root_exited = self.child.try_wait().map_err(|error| {
-                RuntimeCleanupError::new(
+                SidecarCleanupError::new(
                     root_pid,
-                    RuntimeCleanupErrorKind::Liveness,
+                    SidecarCleanupErrorKind::Liveness,
                     format!(
-                        "Owned runtime root liveness could not be proven before Job fallback: {error}"
+                        "Owned sidecar root liveness could not be proven before Job fallback: {error}"
                     ),
                 )
             })?.is_some();
             if root_exited {
                 prove_process_terminated(root_handle, root_identity).map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Liveness,
+                        SidecarCleanupErrorKind::Liveness,
                         format!(
-                            "Owned runtime root exit could not be proven from its launch handle: {error}"
+                            "Owned sidecar root exit could not be proven from its launch handle: {error}"
                         ),
                     )
                 })?;
             } else {
                 terminate_process_with_proof(root_handle, root_identity).map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Termination,
+                        SidecarCleanupErrorKind::Termination,
                         format!(
-                            "Owned runtime root could not be terminated from its launch handle: {error}"
+                            "Owned sidecar root could not be terminated from its launch handle: {error}"
                         ),
                     )
                 })?;
             }
             self.child.wait().map_err(|error| {
-                RuntimeCleanupError::new(
+                SidecarCleanupError::new(
                     root_pid,
-                    RuntimeCleanupErrorKind::Reap,
-                    format!("Owned runtime root process could not be reaped: {error}"),
+                    SidecarCleanupErrorKind::Reap,
+                    format!("Owned sidecar root process could not be reaped: {error}"),
                 )
             })?;
             self.job
                 .terminate_owned_processes(root_identity)
                 .map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Descendants,
+                        SidecarCleanupErrorKind::Descendants,
                         format!(
-                            "Owned runtime Job termination failed; descendant ownership could not be proven: {error}"
+                            "Owned sidecar Job termination failed; descendant ownership could not be proven: {error}"
                         ),
                     )
                 })?;
             let descendants_terminated = self.job.active_processes().map_err(|error| {
-                RuntimeCleanupError::new(root_pid, RuntimeCleanupErrorKind::Descendants, error)
+                SidecarCleanupError::new(root_pid, SidecarCleanupErrorKind::Descendants, error)
             })? == 0;
-            Ok(RuntimeTerminationProof {
+            Ok(SidecarTerminationProof {
                 root_pid,
                 root_reaped: true,
                 descendants_terminated,
@@ -248,35 +248,35 @@ impl OwnedSidecarProcess {
                 .child
                 .try_wait()
                 .map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Liveness,
-                        format!("Owned runtime root liveness could not be read: {error}"),
+                        SidecarCleanupErrorKind::Liveness,
+                        format!("Owned sidecar root liveness could not be read: {error}"),
                     )
                 })?
                 .is_none()
             {
                 self.child.kill().map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Termination,
-                        format!("Owned runtime root process could not be stopped: {error}"),
+                        SidecarCleanupErrorKind::Termination,
+                        format!("Owned sidecar root process could not be stopped: {error}"),
                     )
                 })?;
             }
             self.child
                 .wait()
                 .map(|_| ())
-                .map(|_| RuntimeTerminationProof {
+                .map(|_| SidecarTerminationProof {
                     root_pid,
                     root_reaped: true,
                     descendants_terminated: false,
                 })
                 .map_err(|error| {
-                    RuntimeCleanupError::new(
+                    SidecarCleanupError::new(
                         root_pid,
-                        RuntimeCleanupErrorKind::Reap,
-                        format!("Owned runtime root process could not be reaped: {error}"),
+                        SidecarCleanupErrorKind::Reap,
+                        format!("Owned sidecar root process could not be reaped: {error}"),
                     )
                 })
         }

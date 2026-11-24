@@ -1,5 +1,5 @@
 import { Observable, catchError, defer, throwError } from 'rxjs';
-import type { CaptureFailure } from './contracts';
+import type { OperationFailure } from './contracts';
 
 export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message
@@ -7,7 +7,7 @@ export function errorMessage(error: unknown, fallback: string): string {
     : fallback;
 }
 
-export function redactFailure(error: CaptureFailure): CaptureFailure {
+export function redactFailure(error: OperationFailure): OperationFailure {
   return {
     ...error,
     code: redactSensitiveMessage(error.code),

@@ -10,7 +10,7 @@ The self-hosted `capture-directml` runner and GitHub candidate-receipt gate are
 removed. Model-enabled release verification is performed on the local Windows
 machine before tagging, using the exact checked-out `main` SHA, the canonical
 source lock, checksum-pinned online model downloads, the real engine probes,
-and the localhost real-engines smoke (`capture-workbench-e2e:smoke-real-engines`).
+and the localhost real-engine journeys (`capture-workbench-e2e:smoke-real-engines-installation`, `capture-workbench-e2e:smoke-real-engines-execution`).
 The GitHub release workflow does not
 re-run or attest to those model probes; it only builds and publishes the
 already locally verified source tree. The local evidence remains outside the
@@ -81,12 +81,13 @@ the approved canonical host set; redirected bytes must still match the
 original locked length and SHA-256.
 
 First-party `pipeline.json`, license, NOTICE, and fixture bytes use a mandatory
-two-commit bootstrap in `gx-capture/capture-workbench`. Commit A adds the
-reviewed bytes. A later commit B adds/approves the source lock, whose first-party
-URLs name the exact repository and full Commit A SHA (for example an immutable
-`raw.githubusercontent.com/gx-capture/capture-workbench/<commit-a>/...` URL).
-Commit B must be reachable after Commit A and the source lock may not reference
-Commit B itself: a checked-in lock cannot truthfully self-reference bytes at its
+two-commit bootstrap in `gx-capture/capture-workbench`. The source snapshot commit
+adds the reviewed bytes. A later source-lock commit adds or approves the source lock,
+whose first-party URLs name the exact repository and the full source snapshot SHA
+(for example an immutable
+`raw.githubusercontent.com/gx-capture/capture-workbench/<source-snapshot-sha>/...` URL).
+The source-lock commit must be reachable after the source snapshot, and the source
+lock may not reference the source-lock commit itself: a checked-in lock cannot truthfully self-reference bytes at its
 own not-yet-existing commit.
 
 ## Installation and Activation

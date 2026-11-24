@@ -24,7 +24,7 @@ from pydantic.alias_generators import to_camel
 
 API_VERSION: Final = '2.0'
 CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = '2'
-RUNTIME_VERSION: Final = '0.10.0'
+RUNTIME_VERSION: Final = '0.11.0'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -90,7 +90,7 @@ def _require_aware(value: datetime) -> datetime:
 class CaptureSourceKind(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
-    AUDIO = "audio"
+    RECORDING = "recording"
 
 
 class StructuringMode(StrEnum):
@@ -107,9 +107,8 @@ class RuntimeInstallationStatus(StrEnum):
     MANUAL_ACTION_REQUIRED = "manual_action_required"
 
 
-class RuntimeModelOptionStatus(StrEnum):
+class StructuringModelOptionStatus(StrEnum):
     NOT_INSTALLED = "not-installed"
-    INSTALLED = "installed"
     ACTIVE = "active"
 
 
@@ -122,7 +121,7 @@ class RuntimeRequirementStatus(StrEnum):
 
 
 class OcrComputeMode(StrEnum):
-    GPU_DML = "gpu-dml"
+    GPU = "gpu"
     CPU_FALLBACK = "cpu-fallback"
 
 
@@ -134,7 +133,7 @@ class OcrAdapterClass(StrEnum):
 
 class OcrComputeReasonCode(StrEnum):
     NO_COMPATIBLE_GPU = "no_compatible_gpu"
-    DML_PROVIDER_UNAVAILABLE = "dml_provider_unavailable"
+    GPU_PROVIDER_UNAVAILABLE = "gpu_provider_unavailable"
 
 
 class OcrComputeNoticeCode(StrEnum):
@@ -142,12 +141,12 @@ class OcrComputeNoticeCode(StrEnum):
 
 
 CaptureRequirementId = Literal[
-    "windowsml-ocr",
+    "text-recognition",
     "speech-recognition",
     "speaker-diarization",
     "vertical-japanese-reader",
-    "ollama-runtime",
-    "capture-ollama-model",
+    "structuring-runtime",
+    "structuring-model",
 ]
 
 
@@ -186,6 +185,7 @@ class CaptureEngine(StrictModel):
     model: NonEmptyString
     digest: EngineDigest
     device: NonEmptyString | None = None
+    device_name: NonEmptyString | None = None
     elapsed_ms: int | None = Field(default=None, ge=0)
     stage_ms: dict[NonEmptyString, Annotated[int, Field(ge=0)]] | None = None
 
@@ -207,23 +207,27 @@ class StructuringBatchStatus(StrEnum):
     FAILED = "failed"
 
 
-class StructuringProviderCapabilityV2(StrictModel):
+class StructuringProviderCapability(StrictModel):
     """Provider identity and schema dialect negotiated for one session."""
 
     provider: CaptureEngine
-    capability: NonEmptyString
     schema_dialect: NonEmptyString
 
 
-class OpenStructuringSessionV2(StrictModel):
-    """Authenticated request to open or replay a pull structuring session."""
+class OpenStructuringSession(StrictModel):
+    """Authenticated request to open or replay a pull structuring session.
+
+    The capture comes from the route and the idempotency key from the
+    X-Idempotency-Key header; the body names neither.
+    """
 
     protocol_version: Literal["2"] = "2"
-    capture_id: NonEmptyString
     target_language: str | None = None
-    provider_capability: StructuringProviderCapabilityV2
+    # The structuring profile the batches are planned for. The provider's model
+    # is its own name and does not select the profile.
+    profile_id: NonEmptyString
+    provider_capability: StructuringProviderCapability
     schema_dialect: NonEmptyString
-    client_request_id: NonEmptyString
 
     @field_validator("target_language")
     @classmethod
@@ -239,16 +243,16 @@ class OpenStructuringSessionV2(StrictModel):
         return self
 
 
-class StructuringSessionV2(StrictModel):
+class StructuringSession(StrictModel):
     """Current durable pull-session snapshot."""
 
     protocol_version: Literal["2"] = "2"
     session_id: NonEmptyString
     capture_id: NonEmptyString
-    raw_source_sha256: Sha256Hex
+    source_sha256: Sha256Hex
     contract_set_sha256: Sha256Hex
     target_language: str | None = None
-    provider_capability: StructuringProviderCapabilityV2
+    provider_capability: StructuringProviderCapability
     schema_dialect: NonEmptyString
     batch_count: int = Field(ge=1)
     next_batch_index: int = Field(ge=0)
@@ -282,7 +286,7 @@ class StructuringSessionV2(StrictModel):
         return self
 
 
-class StructuringBatchV2(StrictModel):
+class StructuringBatch(StrictModel):
     """Provider-ready prompt/schema projection for one ordered batch."""
 
     protocol_version: Literal["2"] = "2"
@@ -305,7 +309,7 @@ class StructuringBatchV2(StrictModel):
         return self
 
 
-class StructuringSemanticBlockV2(StrictModel):
+class StructuringSemanticBlock(StrictModel):
     """Minimal semantic block accepted from a pull-session provider."""
 
     source_segment_id: NonEmptyString
@@ -313,12 +317,12 @@ class StructuringSemanticBlockV2(StrictModel):
     target_text: CaptureText | None = None
 
 
-class SubmitStructuringBatchV2(StrictModel):
+class SubmitStructuringBatch(StrictModel):
     """Strict minimal semantic batch submission body."""
 
     protocol_version: Literal["2"] = "2"
     batch_digest: Sha256Hex
-    blocks: list[StructuringSemanticBlockV2] = Field(min_length=1)
+    blocks: list[StructuringSemanticBlock] = Field(min_length=1)
 
 
 class RawCaptureSegment(StrictModel):
@@ -343,7 +347,7 @@ class CaptureSpeaker(StrictModel):
     display_name: SpeakerName | None = None
 
 
-class OcrPageScopeV2(StrictModel):
+class OcrPageScope(StrictModel):
     """Public evidence describing which PDF pages entered OCR.
 
     Page numbers are the source PDF's, in ascending order. A selection may
@@ -380,9 +384,11 @@ class RawCapture(StrictModel):
     speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
     # Optional units that are not installed and would have read part of this
     # source better; the host may offer to install them and capture again.
-    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
+    suggested_requirement_ids: list[CaptureRequirementId] = Field(
+        default_factory=list, max_length=8
+    )
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
-    ocr_page_scope: OcrPageScopeV2 | None = None
+    ocr_page_scope: OcrPageScope | None = None
     created_at: datetime
 
     _aware_created_at = field_validator("created_at")(_require_aware)
@@ -430,7 +436,9 @@ class CaptureDocument(StrictModel):
     extraction_engine: CaptureEngine
     diarization_engine: CaptureEngine | None = None
     speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
-    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
+    suggested_requirement_ids: list[CaptureRequirementId] = Field(
+        default_factory=list, max_length=8
+    )
     structuring_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime
@@ -485,16 +493,16 @@ class CaptureDocument(StrictModel):
         return self
 
 
-class RuntimeArtifactDescriptorV2(StrictModel):
+class RuntimeArtifactDescriptor(StrictModel):
     artifact_url: NonEmptyString
     artifact_file_name: NonEmptyString
     bytes: int = Field(ge=1, le=536_870_912)
     sha256: Sha256Hex
 
 
-class RuntimeRequirementV2(StrictModel):
+class RuntimeRequirement(StrictModel):
     requirement_id: CaptureRequirementId
-    kind: NonEmptyString
+    kind: CaptureRequirementId
     display_name: NonEmptyString
     status: RuntimeRequirementStatus
     required_for: list[str]
@@ -503,49 +511,89 @@ class RuntimeRequirementV2(StrictModel):
     # work without it, so a host may leave it uninstalled.
     optional: bool = False
     detail: str | None = None
-    artifact: RuntimeArtifactDescriptorV2 | None = None
+    artifact: RuntimeArtifactDescriptor | None = None
     # Bytes a fresh install downloads (worker archive plus model files), so a
     # host can show the size before the user agrees. Absent when the install
     # strategy has no size the runtime knows, such as winget or a manual step.
     download_bytes: int | None = Field(default=None, ge=1)
 
+    @model_validator(mode="after")
+    def _validate_kind(self) -> Self:
+        if self.kind != self.requirement_id:
+            raise ValueError("kind must equal requirementId")
+        return self
 
-class RuntimeRequirementsV2(StrictModel):
-    items: list[RuntimeRequirementV2]
+
+class RuntimeRequirements(StrictModel):
+    items: list[RuntimeRequirement]
 
 
-class StartRuntimeInstallationV2(StrictModel):
-    requirement_id: CaptureRequirementId
+# Requirement IDs a 0.10.x host may still send, each with the ID that replaced
+# it. Spelled out here because the generated SDK models copy this module.
+_RETIRED_REQUIREMENT_IDS: Final = {
+    "windowsml-ocr": "text-recognition",
+    "ollama-runtime": "structuring-runtime",
+    "capture-ollama-model": "structuring-model",
+}
+
+
+# The requirements a general installation installs: every requirement id except
+# the structuring model, which is chosen and installed through structuring model
+# installation. Queries and results keep the full CaptureRequirementId.
+InstallableRequirementId = Literal[
+    "text-recognition",
+    "speech-recognition",
+    "speaker-diarization",
+    "vertical-japanese-reader",
+    "structuring-runtime",
+]
+
+
+class StartRuntimeInstallation(StrictModel):
+    requirement_id: InstallableRequirementId
     consent: Literal[True]
 
+    @field_validator("requirement_id", mode="before")
+    @classmethod
+    def reject_retired_requirement(cls, value: object) -> object:
+        replacement = _RETIRED_REQUIREMENT_IDS.get(value) if isinstance(value, str) else None
+        if value == "structuring-model" or replacement == "structuring-model":
+            raise ValueError(
+                f"{value} is installed through structuring model installation, "
+                "not general installation"
+            )
+        if replacement is not None:
+            raise ValueError(f"{value} is retired; use {replacement}")
+        return value
 
-class RuntimeModelOptionV2(StrictModel):
+
+class StructuringModelOption(StrictModel):
     option_id: NonEmptyString
     display_name: NonEmptyString
     model_reference: NonEmptyString
     expected_digest: Sha256Hex | None = None
-    expected_bytes: int | None = Field(default=None, ge=1)
+    download_bytes: int | None = Field(default=None, ge=1)
     profile_id: NonEmptyString
     profile_spec_sha256: Sha256Hex
-    status: RuntimeModelOptionStatus
+    status: StructuringModelOptionStatus
 
 
-class RuntimeModelOptionsV2(StrictModel):
+class StructuringModelOptions(StrictModel):
     catalog_sha256: Sha256Hex
-    items: list[RuntimeModelOptionV2]
+    items: list[StructuringModelOption]
 
 
-class StartRuntimeModelInstallationV2(StrictModel):
+class StartStructuringModelInstallation(StrictModel):
     option_id: NonEmptyString
     consent: Literal[True]
 
 
-class RuntimeModelInstallationV2(StrictModel):
+class StructuringModelInstallation(StrictModel):
     installation_id: str
     option_id: NonEmptyString
     status: RuntimeInstallationStatus
     progress: float = Field(ge=0, le=1)
-    error: CaptureFailureV2 | None = None
+    error: OperationFailure | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -555,16 +603,16 @@ class RuntimeModelInstallationV2(StrictModel):
     )
 
 
-class RuntimeModelInstallationsV2(StrictModel):
-    items: list[RuntimeModelInstallationV2]
+class StructuringModelInstallations(StrictModel):
+    items: list[StructuringModelInstallation]
 
 
-class RuntimeInstallationV2(StrictModel):
+class RuntimeInstallation(StrictModel):
     installation_id: str
     requirement_id: CaptureRequirementId
     status: RuntimeInstallationStatus
     progress: float = Field(ge=0, le=1)
-    error: CaptureFailureV2 | None = None
+    error: OperationFailure | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -590,25 +638,22 @@ class RuntimeInstallationV2(StrictModel):
         return self
 
 
-class RuntimeInstallationsV2(StrictModel):
-    items: list[RuntimeInstallationV2]
+class RuntimeInstallations(StrictModel):
+    items: list[RuntimeInstallation]
 
 
-class StreamingIngestionMode(StrEnum):
+class IngestionMode(StrEnum):
     FILE = "file"
 
 
-class StreamingIngestionStatus(StrEnum):
+class IngestionStatus(StrEnum):
     OPEN = "open"
-    FINALIZING = "finalizing"
     READY = "ready"
     CANCELLED = "cancelled"
     FAILED = "failed"
-    EXPIRED = "expired"
 
 
-class StreamingCaptureStatus(StrEnum):
-    CREATED = "created"
+class CaptureStatus(StrEnum):
     WAITING_INPUT = "waiting_input"
     EXTRACTING = "extracting"
     AWAITING_STRUCTURING = "awaiting_structuring"
@@ -618,7 +663,7 @@ class StreamingCaptureStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class StreamingEventType(StrEnum):
+class CaptureEventType(StrEnum):
     ACCEPTED = "accepted"
     INPUT_CHECKPOINT = "input_checkpoint"
     HEARTBEAT = "heartbeat"
@@ -630,10 +675,10 @@ class StreamingEventType(StrEnum):
     CANCELLED = "cancelled"
 
 
-class OpenIngestionV2(StrictModel):
+class OpenIngestion(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
-    mode: StreamingIngestionMode = StreamingIngestionMode.FILE
+    kind: CaptureSourceKind
+    mode: IngestionMode = IngestionMode.FILE
     client_request_id: NonEmptyString
     file_name: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
@@ -643,11 +688,11 @@ class OpenIngestionV2(StrictModel):
     source_sha256: Sha256Hex | None = None
 
 
-class IngestionV2(StrictModel):
+class Ingestion(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+    kind: CaptureSourceKind
     ingestion_id: NonEmptyString
-    status: StreamingIngestionStatus
+    status: IngestionStatus
     file_name: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
     ]
@@ -671,13 +716,13 @@ class IngestionV2(StrictModel):
             raise ValueError("contiguousBytes must not exceed receivedBytes")
         if self.next_offset != self.contiguous_bytes:
             raise ValueError("nextOffset must equal contiguousBytes")
-        if self.status is StreamingIngestionStatus.READY:
+        if self.status is IngestionStatus.READY:
             if self.received_bytes != self.total_bytes or self.finalized_sha256 is None:
                 raise ValueError("ready ingestion must be complete and checksummed")
         return self
 
 
-class StartCaptureV2(StrictModel):
+class StartCapture(StrictModel):
     protocol_version: Literal["2"] = "2"
     client_request_id: NonEmptyString
     ingestion_id: NonEmptyString
@@ -694,10 +739,10 @@ class StartCaptureV2(StrictModel):
             "numbers. Omit it to read every page."
         ),
     )
-    # Audio only: label who speaks each segment. Needs the speaker-diarization
+    # Recordings only: label who speaks each segment. Needs the speaker-diarization
     # unit, and the capture reports no partial transcript while it runs.
     identify_speakers: bool = False
-    # Audio only: the language spoken in the recording. Omit it for Chinese, the
+    # Recordings only: the language spoken in the recording. Omit it for Chinese, the
     # speech model's default.
     spoken_language: SpokenLanguage | None = None
 
@@ -716,13 +761,13 @@ class StartCaptureV2(StrictModel):
         return value
 
 
-class FinalizeIngestionV2(StrictModel):
+class FinalizeIngestion(StrictModel):
     protocol_version: Literal["2"] = "2"
     total_bytes: int = Field(gt=0)
     sha256: Sha256Hex
 
 
-class CaptureFailureV2(StrictModel):
+class OperationFailure(StrictModel):
     code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
     stage: NonEmptyString | None = None
@@ -752,11 +797,11 @@ class OcrProvenanceUnavailableReason(StrEnum):
     PROTOCOL_FAILURE = "protocol_failure"
 
 
-class OcrProvenanceResolvedV3(StrictModel):
+class OcrProvenanceResolved(StrictModel):
     """Concrete OCR identity available after model/provider resolution."""
 
     status: Literal["resolved"]
-    engine: Literal["windowsml-ocr"]
+    engine: Literal["text-recognition"]
     model: NonEmptyString
     model_digest: EngineDigest = Field(json_schema_extra={"not": {"const": "sha256:" + "0" * 64}})
     device: NonEmptyString
@@ -771,7 +816,7 @@ class OcrProvenanceResolvedV3(StrictModel):
         return value
 
 
-class OcrProvenanceUnavailableV3(StrictModel):
+class OcrProvenanceUnavailable(StrictModel):
     """Profile identity retained when model identity is not yet available."""
 
     status: Literal["unavailable"]
@@ -780,23 +825,27 @@ class OcrProvenanceUnavailableV3(StrictModel):
     reason: OcrProvenanceUnavailableReason
 
 
-OcrProvenancePayloadV3 = Annotated[
-    OcrProvenanceResolvedV3 | OcrProvenanceUnavailableV3,
+OcrProvenancePayload = Annotated[
+    OcrProvenanceResolved | OcrProvenanceUnavailable,
     Field(discriminator="status"),
 ]
 
 
-class OcrProvenanceV3(RootModel[OcrProvenancePayloadV3]):
+class OcrProvenance(RootModel[OcrProvenancePayload]):
     """Discriminated OCR provenance without fake model/device placeholders."""
 
-    root: OcrProvenancePayloadV3
+    root: OcrProvenancePayload
 
-    def __init__(self, root: OcrProvenancePayloadV3 | None = None, **data: Any) -> None:
+    def __init__(self, root: OcrProvenancePayload | None = None, **data: Any) -> None:
         if root is None:
-            root = TypeAdapter(OcrProvenancePayloadV3).validate_python(data)
+            # mypy cannot type an Annotated union as TypeAdapter's argument;
+            # the adapter's own type parameter states what it validates.
+            payload_type: Any = OcrProvenancePayload
+            adapter = TypeAdapter[OcrProvenanceResolved | OcrProvenanceUnavailable](payload_type)
+            root = adapter.validate_python(data)
         elif data:
-            raise TypeError("OcrProvenanceV3 accepts either root or wire fields, not both")
-        elif isinstance(root, OcrProvenanceV3):
+            raise TypeError("OcrProvenance accepts either root or wire fields, not both")
+        elif isinstance(root, OcrProvenance):
             root = root.root
         super().__init__(root=root)
 
@@ -806,7 +855,7 @@ class OcrProvenanceV3(RootModel[OcrProvenancePayloadV3]):
 
     @property
     def is_resolved(self) -> bool:
-        return isinstance(self.root, OcrProvenanceResolvedV3)
+        return isinstance(self.root, OcrProvenanceResolved)
 
     @property
     def profile_id(self) -> str:
@@ -818,43 +867,43 @@ class OcrProvenanceV3(RootModel[OcrProvenancePayloadV3]):
 
     @property
     def reason(self) -> OcrProvenanceUnavailableReason:
-        if not isinstance(self.root, OcrProvenanceUnavailableV3):
+        if not isinstance(self.root, OcrProvenanceUnavailable):
             raise AttributeError("resolved OCR provenance has no unavailable reason")
         return self.root.reason
 
     @property
     def engine(self) -> str:
-        if not isinstance(self.root, OcrProvenanceResolvedV3):
+        if not isinstance(self.root, OcrProvenanceResolved):
             raise AttributeError("unavailable OCR provenance has no engine")
         return self.root.engine
 
     @property
     def model(self) -> str:
-        if not isinstance(self.root, OcrProvenanceResolvedV3):
+        if not isinstance(self.root, OcrProvenanceResolved):
             raise AttributeError("unavailable OCR provenance has no model")
         return self.root.model
 
     @property
     def model_digest(self) -> str:
-        if not isinstance(self.root, OcrProvenanceResolvedV3):
+        if not isinstance(self.root, OcrProvenanceResolved):
             raise AttributeError("unavailable OCR provenance has no model digest")
         return self.root.model_digest
 
     @property
     def device(self) -> str:
-        if not isinstance(self.root, OcrProvenanceResolvedV3):
+        if not isinstance(self.root, OcrProvenanceResolved):
             raise AttributeError("unavailable OCR provenance has no device")
         return self.root.device
 
 
-class OcrRasterV3(StrictModel):
+class OcrRaster(StrictModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     scale: float = Field(gt=0, le=8)
     coordinate_system: Literal["pixel"]
 
 
-class OcrPointV3(StrictModel):
+class OcrPoint(StrictModel):
     """One predictor-input pixel coordinate in polygon order."""
 
     x: float = Field(ge=0)
@@ -868,10 +917,10 @@ class OcrPointV3(StrictModel):
         return value
 
 
-class OcrBoxV3(StrictModel):
+class OcrBox(StrictModel):
     """A text region retaining the predictor polygon without rectangle loss."""
 
-    polygon: list[OcrPointV3] = Field(min_length=4, max_length=256)
+    polygon: list[OcrPoint] = Field(min_length=4, max_length=256)
     text: ProjectedText
     confidence: float | None = Field(..., ge=0, le=1)
 
@@ -899,20 +948,20 @@ class OcrBoxV3(StrictModel):
         return max(1, math.ceil(max(point.y for point in self.polygon)) - self.y)
 
 
-class OcrPageProjectionV3(StrictModel):
+class OcrPageProjection(StrictModel):
     # Recognized pages carry the pipeline's arithmetic-mean score rounded to
     # four decimal places, or 0.0 when text is legal without numeric region
     # scores. None is reserved for empty and failed pages on the wire.
     page: int = Field(ge=1)
     status: OcrPageStatus
-    raster: OcrRasterV3
+    raster: OcrRaster
     text: Annotated[str, StringConstraints(max_length=8_000_000)] = ""
-    boxes: list[OcrBoxV3] = Field(default_factory=list, max_length=100_000)
+    boxes: list[OcrBox] = Field(default_factory=list, max_length=100_000)
     # ``null`` is a terminal empty/failed-page value; recognized pages are
     # validated below and receive either the rounded mean or the no-score 0.0.
     confidence: float | None = Field(default=None, ge=0, le=1)
-    provenance: OcrProvenanceV3
-    failure: CaptureFailureV2 | None = None
+    provenance: OcrProvenance
+    failure: OperationFailure | None = None
 
     @model_validator(mode="after")
     def validate_page_payload(self) -> Self:
@@ -946,7 +995,7 @@ class OcrPageProjectionV3(StrictModel):
         return self
 
 
-class CaptureOcrProjectionV3(StrictModel):
+class CaptureOcrProjection(StrictModel):
     """The page-addressable OCR result of a capture.
 
     Each page carries its source page number, in ascending order: every page of
@@ -962,21 +1011,21 @@ class CaptureOcrProjectionV3(StrictModel):
     # empty collection used by a failed run before a safe page count exists.
     # Requiring the member here keeps JSON Schema and runtime construction
     # semantics aligned while still allowing ``pages=[]``.
-    pages: list[OcrPageProjectionV3] = Field(..., max_length=500)
-    page_count: int = Field(ge=0, le=500)
+    pages: list[OcrPageProjection] = Field(..., max_length=500)
+    processed_page_count: int = Field(ge=0, le=500)
     runtime_version: RuntimeVersionText
-    contract_sha256: Sha256Hex
-    provenance: OcrProvenanceV3
+    contract_set_sha256: Sha256Hex
+    provenance: OcrProvenance
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
-    failure: CaptureFailureV2 | None = None
+    failure: OperationFailure | None = None
     created_at: datetime
 
     _aware_created_at = field_validator("created_at")(_require_aware)
 
     @model_validator(mode="after")
     def validate_projection(self) -> Self:
-        if self.page_count != len(self.pages):
-            raise ValueError("pageCount must equal the number of OCR pages")
+        if self.processed_page_count != len(self.pages):
+            raise ValueError("processedPageCount must equal the number of OCR pages")
         if not _ascending_page_numbers([page.page for page in self.pages]):
             raise ValueError("OCR pages must be in ascending source page order")
         if self.status is OcrProjectionStatus.COMPLETED:
@@ -1004,7 +1053,7 @@ class CaptureOcrProjectionV3(StrictModel):
         return self
 
 
-class ReportStructuringFailureV2(StrictModel):
+class ReportStructuringFailure(StrictModel):
     protocol_version: Literal["2"] = "2"
     code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
@@ -1031,22 +1080,22 @@ def _validate_capture_progress(
         if pages_done is not None and pages_done > pages_total:
             raise ValueError("pagesDone cannot exceed pagesTotal")
     if (duration_ms is not None or covered_until_ms is not None) and (
-        kind is not CaptureSourceKind.AUDIO
+        kind is not CaptureSourceKind.RECORDING
     ):
-        raise ValueError("durationMs and coveredUntilMs are only for audio captures")
+        raise ValueError("durationMs and coveredUntilMs are only for recordings")
 
 
-class CaptureOperationV2(StrictModel):
+class CaptureOperation(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
     ingestion_id: NonEmptyString
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
-    status: StreamingCaptureStatus
+    kind: CaptureSourceKind
+    status: CaptureStatus
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int = Field(ge=0)
     last_event_sequence: int = Field(ge=0)
     source: CaptureSource | None = None
-    error: CaptureFailureV2 | None = None
+    error: OperationFailure | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -1066,9 +1115,9 @@ class CaptureOperationV2(StrictModel):
     @model_validator(mode="after")
     def validate_state(self) -> Self:
         terminal = {
-            StreamingCaptureStatus.COMPLETED,
-            StreamingCaptureStatus.FAILED,
-            StreamingCaptureStatus.CANCELLED,
+            CaptureStatus.COMPLETED,
+            CaptureStatus.FAILED,
+            CaptureStatus.CANCELLED,
         }
         if (self.status in terminal) != (self.completed_at is not None):
             raise ValueError("terminal streaming captures must have completedAt")
@@ -1082,8 +1131,8 @@ class CaptureOperationV2(StrictModel):
         return self
 
 
-class CaptureStreamingResult(StrictModel):
-    operation: CaptureOperationV2
+class CaptureResult(StrictModel):
+    operation: CaptureOperation
     raw: RawCapture
     result: CaptureDocument
 
@@ -1096,12 +1145,14 @@ class CaptureStreamingResult(StrictModel):
         return self
 
 
-class PartialCaptureV2(StrictModel):
+class PartialCapture(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
     source: CaptureSource
     revision: int = Field(ge=0)
-    covered_until_ms: int = Field(ge=0)
+    # Recordings only: how far transcription has got. Absent for a document,
+    # and for a recording whose coverage is unknown.
+    covered_until_ms: int | None = Field(default=None, ge=0)
     segments: list[RawCaptureSegment] = Field(default_factory=list, max_length=10_000)
     source_text: Annotated[str, StringConstraints(max_length=8_000_000)] = ""
     extraction_engine: CaptureEngine | None = None
@@ -1119,19 +1170,19 @@ class PartialCaptureV2(StrictModel):
         return self
 
 
-class CaptureEventV2(StrictModel):
+class CaptureEvent(StrictModel):
     protocol_version: Literal["2"] = "2"
     event_id: NonEmptyString
     sequence: int = Field(ge=0)
     capture_id: NonEmptyString
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
-    event_type: StreamingEventType
+    kind: CaptureSourceKind
+    event_type: CaptureEventType
     stage: NonEmptyString
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int | None = Field(default=None, ge=0)
     covered_until_ms: int | None = Field(default=None, ge=0)
     segments: list[RawCaptureSegment] = Field(default_factory=list, max_length=1_000)
-    error: CaptureFailureV2 | None = None
+    error: OperationFailure | None = None
     created_at: datetime
     # The operation's page and media progress, on the events that change it.
     pages_done: int | None = Field(default=None, ge=0)
@@ -1142,11 +1193,11 @@ class CaptureEventV2(StrictModel):
 
     @model_validator(mode="after")
     def validate_event_payload(self) -> Self:
-        if self.event_type is StreamingEventType.SEGMENT and not self.segments:
+        if self.event_type is CaptureEventType.SEGMENT and not self.segments:
             raise ValueError("segment events must contain at least one segment")
-        if self.event_type is StreamingEventType.FAILED and self.error is None:
+        if self.event_type is CaptureEventType.FAILED and self.error is None:
             raise ValueError("failed events must contain an error")
-        if self.event_type is not StreamingEventType.FAILED and self.error is not None:
+        if self.event_type is not CaptureEventType.FAILED and self.error is not None:
             raise ValueError("only failed events may contain an error")
         _validate_capture_progress(
             self.kind,
@@ -1160,24 +1211,24 @@ class CaptureEventV2(StrictModel):
         return self
 
 
-class RuntimeStreamingCapabilitiesV2(StrictModel):
-    protocol_version: Literal["2"] = "2"
-    capture_kinds: list[CaptureSourceKind] = Field(
-        default_factory=lambda: [
-            CaptureSourceKind.PDF,
-            CaptureSourceKind.IMAGE,
-            CaptureSourceKind.AUDIO,
-        ],
-        min_length=1,
-    )
-    supports_progressive_audio: bool = True
+class RuntimeCapabilities(StrictModel):
+    """What this runtime accepts: capture kinds, structuring modes and upload limits."""
+
+    capture_kinds: list[CaptureSourceKind] = Field(min_length=1)
+    structuring_modes: list[StructuringMode] = Field(min_length=1)
+    supports_cancellation: bool
+    supports_raw_diagnostics: bool
+    max_upload_bytes: int = Field(gt=0)
     max_chunk_bytes: int = Field(gt=0, le=4 * 1024 * 1024)
     checkpoint_interval_ms: int = Field(gt=0)
     heartbeat_interval_ms: int = Field(gt=0)
     stall_timeout_ms: int = Field(gt=0)
+    # Whether the packaged decoder that transcribes a finalized recording window
+    # by window, publishing partial results as it goes, can load in this runtime.
+    supports_progressive_recording: bool
 
 
-class OcrComputePreflightV2(StrictModel):
+class OcrComputePreflight(StrictModel):
     """Runtime-owned pre-OCR compute selection and user-notice contract."""
 
     model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
@@ -1187,7 +1238,7 @@ class OcrComputePreflightV2(StrictModel):
     service: Literal["capture-runtime"] = "capture-runtime"
     runtime_version: RuntimeVersionText = Field(default_factory=lambda: RUNTIME_VERSION)
     contract_set_version: Literal["2"] = "2"
-    contract_sha256: Sha256Hex
+    contract_set_sha256: Sha256Hex
     # The worker computes this digest from its own executable. It is absent
     # for the setup-time decision seam before a worker is installed, while
     # production engine-manager probes require it to match the catalog.
@@ -1200,13 +1251,13 @@ class OcrComputePreflightV2(StrictModel):
 
     @model_validator(mode="after")
     def validate_decision(self) -> Self:
-        if self.mode is OcrComputeMode.GPU_DML:
+        if self.mode is OcrComputeMode.GPU:
             if (
                 self.reason_code is not None
                 or self.user_notice_required
                 or self.notice_code is not None
             ):
-                raise ValueError("gpu-dml cannot carry a fallback reason or notice")
+                raise ValueError("gpu cannot carry a fallback reason or notice")
         elif (
             self.reason_code is None
             or not self.user_notice_required
@@ -1227,21 +1278,20 @@ class RuntimeReady(StrictModel):
     runtime_version: RuntimeVersionText = Field(default_factory=lambda: RUNTIME_VERSION)
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
-    schema_sha256: Sha256Hex | None = None
     contract_set_version: Literal["2"] = "2"
-    capabilities: dict[str, Any] = Field(default_factory=dict)
-    ocr_compute: OcrComputePreflightV2 | None = None
+    capabilities: RuntimeCapabilities
+    ocr_compute: OcrComputePreflight | None = None
     message: str | None = None
 
 
-class ErrorBodyV2(StrictModel):
+class ErrorBody(StrictModel):
     code: NonEmptyString
     message: NonEmptyString
     details: dict[str, Any] | None = None
 
 
-class ErrorEnvelopeV2(StrictModel):
-    error: ErrorBodyV2
+class ErrorEnvelope(StrictModel):
+    error: ErrorBody
 
 
 # Generated public names. Do not edit.
@@ -1260,56 +1310,56 @@ __all__ = [
     'TimeLocator',
     'CaptureSource',
     'CaptureEngine',
-    'StructuringProviderCapabilityV2',
-    'OpenStructuringSessionV2',
-    'StructuringSessionV2',
-    'StructuringBatchV2',
-    'StructuringSemanticBlockV2',
-    'SubmitStructuringBatchV2',
+    'StructuringProviderCapability',
+    'OpenStructuringSession',
+    'StructuringSession',
+    'StructuringBatch',
+    'StructuringSemanticBlock',
+    'SubmitStructuringBatch',
     'RawCaptureSegment',
     'CaptureSpeaker',
-    'OcrPageScopeV2',
+    'OcrPageScope',
     'RawCapture',
     'CaptureBlock',
     'CaptureDocument',
-    'RuntimeArtifactDescriptorV2',
-    'RuntimeRequirementV2',
-    'RuntimeRequirementsV2',
-    'StartRuntimeInstallationV2',
-    'RuntimeModelOptionV2',
-    'RuntimeModelOptionsV2',
-    'StartRuntimeModelInstallationV2',
-    'RuntimeModelInstallationV2',
-    'RuntimeModelInstallationsV2',
-    'RuntimeInstallationV2',
-    'RuntimeInstallationsV2',
-    'OpenIngestionV2',
-    'IngestionV2',
-    'StartCaptureV2',
-    'FinalizeIngestionV2',
-    'CaptureFailureV2',
-    'OcrProvenanceResolvedV3',
-    'OcrProvenanceUnavailableV3',
-    'OcrProvenanceV3',
-    'OcrRasterV3',
-    'OcrPointV3',
-    'OcrBoxV3',
-    'OcrPageProjectionV3',
-    'CaptureOcrProjectionV3',
-    'ReportStructuringFailureV2',
-    'CaptureOperationV2',
-    'CaptureStreamingResult',
-    'PartialCaptureV2',
-    'CaptureEventV2',
-    'RuntimeStreamingCapabilitiesV2',
-    'OcrComputePreflightV2',
+    'RuntimeArtifactDescriptor',
+    'RuntimeRequirement',
+    'RuntimeRequirements',
+    'StartRuntimeInstallation',
+    'StructuringModelOption',
+    'StructuringModelOptions',
+    'StartStructuringModelInstallation',
+    'StructuringModelInstallation',
+    'StructuringModelInstallations',
+    'RuntimeInstallation',
+    'RuntimeInstallations',
+    'OpenIngestion',
+    'Ingestion',
+    'StartCapture',
+    'FinalizeIngestion',
+    'OperationFailure',
+    'OcrProvenanceResolved',
+    'OcrProvenanceUnavailable',
+    'OcrProvenance',
+    'OcrRaster',
+    'OcrPoint',
+    'OcrBox',
+    'OcrPageProjection',
+    'CaptureOcrProjection',
+    'ReportStructuringFailure',
+    'CaptureOperation',
+    'CaptureResult',
+    'PartialCapture',
+    'CaptureEvent',
+    'RuntimeCapabilities',
+    'OcrComputePreflight',
     'RuntimeReady',
-    'ErrorBodyV2',
-    'ErrorEnvelopeV2',
+    'ErrorBody',
+    'ErrorEnvelope',
     'CaptureSourceKind',
     'StructuringMode',
     'RuntimeInstallationStatus',
-    'RuntimeModelOptionStatus',
+    'StructuringModelOptionStatus',
     'RuntimeRequirementStatus',
     'OcrComputeMode',
     'OcrAdapterClass',
@@ -1317,10 +1367,10 @@ __all__ = [
     'OcrComputeNoticeCode',
     'StructuringSessionStatus',
     'StructuringBatchStatus',
-    'StreamingIngestionMode',
-    'StreamingIngestionStatus',
-    'StreamingCaptureStatus',
-    'StreamingEventType',
+    'IngestionMode',
+    'IngestionStatus',
+    'CaptureStatus',
+    'CaptureEventType',
     'OcrProjectionStatus',
     'OcrPageStatus',
     'OcrProvenanceStatus',

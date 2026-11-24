@@ -10,9 +10,9 @@ pub(crate) use library::{
     LibrarySourcePayload, OcrEvidenceV1, MAX_EDITS_BYTES,
 };
 pub(crate) use runtime::{
-    RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-    RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-    RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+    RuntimeCancelUploadInput, RuntimeCaptureEventsInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+    RuntimeInstallationStartInput, RuntimeRecordingCaptureInput, RuntimeRequirementInput,
+    StructuringModelInstallationStartInput,
 };
 
 mod selection;

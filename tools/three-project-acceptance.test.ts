@@ -31,6 +31,7 @@ const capturePrivateBindings = {
   candidateRoot: 'C:\\private\\j49-runtime-candidate-5e8a1c4f7b2d9e6a0c3f5d8b1e7a4c9f',
   candidateId: 'a73f9c2e6b1d4f80c5e8a2b7d9f36c1e4a6d8b0f2c7e5a9d1b3f6c8e0a4d7b29',
   modelRoot: 'C:\\private\\j49-ocr-model-1a6f3c8e5b9d2f7a4c0e6b1d8f3a5c9e',
+  runDataRoot: 'C:\\j49-run-data-6c2e9f4a',
 } as const;
 
 function validCaptureOnlyEnvironment(): NodeJS.ProcessEnv {
@@ -38,8 +39,9 @@ function validCaptureOnlyEnvironment(): NodeJS.ProcessEnv {
     CAPTURE_REAL_DESKTOP_OCR_INPUT: capturePrivateBindings.ocrInput,
     CAPTURE_REAL_DESKTOP_EXECUTABLE: capturePrivateBindings.executable,
     CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE: capturePrivateBindings.installerProvenance,
-    CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: 'windowsml-dml',
+    CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: 'directml',
     CAPTURE_REAL_DESKTOP_TEARDOWN: 'window-close',
+    CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT: capturePrivateBindings.runDataRoot,
     CAPTURE_RUNTIME_CANDIDATE_ROOT: capturePrivateBindings.candidateRoot,
     CAPTURE_RUNTIME_CANDIDATE_ID: capturePrivateBindings.candidateId,
     CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN: '1',
@@ -61,6 +63,9 @@ function assertCaptureEnvironmentError(
   const typed = error as Error & { readonly key?: unknown; readonly code?: unknown };
   assert.equal(typed.key, key);
   assert.equal(typed.code, code);
+  if (key === 'CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT' && (code === 'missing' || code === 'blank')) {
+    assert.match(error.message, /CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT.*C:\\cwr.*Windows MAX_PATH/u);
+  }
   assert.match(error.stack ?? '', /three-project-acceptance\.ts/u);
   const stableErrorText = [
     error.message,
@@ -145,8 +150,6 @@ test('capture-only plan is typed, validates nine caller bindings, and scrubs inh
     cApTuRe_PDF_OCR_E2E_JPEG: 'C:\\private\\fixtures\\alias.jpg',
     CAPTURE_REAL_DESKTOP_OCR_PDF: 'C:\\private\\fixtures\\legacy.pdf',
     e2e_acceptance_event_root: 'C:\\private\\events',
-    E2E_ACCEPTANCE_UPDATE_SNAPSHOTS: '1',
-    E2E_ACCEPTANCE_BASELINE_REVIEWED: '1',
     E2E_ACCEPTANCE_DIAGNOSTICS: '1',
     E2E_ACCEPTANCE_KEEP_APP_DATA: '1',
   };
@@ -178,8 +181,6 @@ test('capture-only plan is typed, validates nine caller bindings, and scrubs inh
   assert.equal(plan.environment.cApTuRe_PDF_OCR_E2E_JPEG, undefined);
   assert.equal(plan.environment.CAPTURE_REAL_DESKTOP_OCR_PDF, undefined);
   assert.equal(plan.environment.e2e_acceptance_event_root, undefined);
-  assert.equal(plan.environment.E2E_ACCEPTANCE_UPDATE_SNAPSHOTS, undefined);
-  assert.equal(plan.environment.E2E_ACCEPTANCE_BASELINE_REVIEWED, undefined);
   assert.equal(plan.environment.E2E_ACCEPTANCE_DIAGNOSTICS, undefined);
   assert.equal(plan.environment.E2E_ACCEPTANCE_KEEP_APP_DATA, undefined);
   assert.equal(plan.environment.E2E_ACCEPTANCE_RUN_ID, 'capture-run-1');
@@ -199,8 +200,10 @@ test('capture-only plan rejects missing, blank, control, and malformed typed bin
     ['CAPTURE_REAL_DESKTOP_OCR_INPUT', undefined, 'missing'],
     ['CAPTURE_REAL_DESKTOP_EXECUTABLE', '   ', 'blank'],
     ['CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE', 'C:\\private\\provenance\0.json', 'control_character'],
-    ['CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE', 'windowsml-dml-other', 'invalid'],
+    ['CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE', 'directml-other', 'invalid'],
     ['CAPTURE_REAL_DESKTOP_TEARDOWN', 'terminate-process', 'invalid'],
+    ['CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT', undefined, 'missing'],
+    ['CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT', '  ', 'blank'],
     ['CAPTURE_RUNTIME_CANDIDATE_ROOT', 'C:\\private\\candidate\nroot', 'control_character'],
     ['CAPTURE_RUNTIME_CANDIDATE_ID', 'A'.repeat(64), 'invalid'],
     ['CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN', 'true', 'invalid'],

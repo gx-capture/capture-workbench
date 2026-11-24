@@ -10,7 +10,7 @@ agree on the same contract-set digest.
 
 ## Runtime discovery and bundle
 
-- `GET /meta/v2/contracts` is bearer-authenticated and returns `catalogVersion: 2`,
+- `GET /meta/v2/contracts` is bearer-authenticated and returns
   runtime and surface versions, `contractSetVersion`, the bundle SHA-256, an
   `ETag`, and an immutable download location.
 - `GET /meta/v2/contracts/sha256/{digest}` is bearer-authenticated and returns
@@ -22,7 +22,7 @@ agree on the same contract-set digest.
   catalog.
 - `ProblemRegistry` defines each remote code, HTTP status, category, retry
   policy, and details schema exactly once.
-- The active HTTP surface covers readiness, streaming readiness, runtime
+- The active HTTP surface covers readiness (with its capabilities), runtime
   requirements/installations/model options, ingestion, capture, structuring,
   results, cancellation/deletion, and SSE events.
 - Runtime startup fails closed when registered routes, models, operations, or
@@ -60,7 +60,7 @@ TypeScript client SDKs, with these frozen semantics:
 
 ## Compatibility identity and security
 
-- `catalogVersion: 2` identifies the discovery interface major.
+- `contractSetVersion` (string `"2"`) identifies the discovery contract-set version.
 - `contractSetVersion` plus the bundle SHA-256 is the compatibility identity;
   runtime semver is diagnostic metadata.
 - Before an operation, clients validate the catalog, required operations and

@@ -8,9 +8,9 @@ from typing import Protocol
 
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureFailureV2,
+    CaptureEventType,
+    OperationFailure,
     RawCaptureSegment,
-    StreamingEventType,
     TimeLocator,
 )
 from capture_runtime.speech.application.use_cases import TranscribeAudioWindow
@@ -45,12 +45,12 @@ class WindowTranscriber(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ProgressiveSessionEvent:
-    event_type: StreamingEventType
+    event_type: CaptureEventType
     stage: str
     partial_revision: int | None = None
     covered_until_ms: int | None = None
     segments: tuple[RawCaptureSegment, ...] = ()
-    error: CaptureFailureV2 | None = None
+    error: OperationFailure | None = None
     extraction_engine: CaptureEngine | None = None
     # The capture's progress, which the runtime sets from covered time.
     progress: float | None = None
@@ -109,7 +109,7 @@ class ProgressiveAudioSession:
             # Only now, with the whole recording heard, does no text mean no
             # speech; transcribing it again would hear none either.
             self._fail(
-                code="progressive_no_text_at_sample",
+                code="extraction_no_text",
                 message="No speech was heard in the audio.",
                 retryable=False,
                 stage="checkpoint",
@@ -119,7 +119,7 @@ class ProgressiveAudioSession:
             self._emit_checkpoint(self._covered_until_ms)
         self._terminal = True
         self._pending_events.append(
-            ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")
+            ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")
         )
         return self.drain_events()
 
@@ -127,7 +127,7 @@ class ProgressiveAudioSession:
         if not self._terminal:
             self._terminal = True
             self._pending_events.append(
-                ProgressiveSessionEvent(StreamingEventType.CANCELLED, "cancelled")
+                ProgressiveSessionEvent(CaptureEventType.CANCELLED, "cancelled")
             )
         return self.drain_events()
 
@@ -226,7 +226,7 @@ class ProgressiveAudioSession:
             self._partial_revision += 1
             self._pending_events.append(
                 ProgressiveSessionEvent(
-                    StreamingEventType.SEGMENT,
+                    CaptureEventType.SEGMENT,
                     "extracting",
                     partial_revision=self._partial_revision,
                     covered_until_ms=self._covered_until_ms,
@@ -257,7 +257,7 @@ class ProgressiveAudioSession:
     def _emit_checkpoint(self, covered_until_ms: int) -> None:
         self._pending_events.append(
             ProgressiveSessionEvent(
-                StreamingEventType.CHECKPOINT,
+                CaptureEventType.CHECKPOINT,
                 "checkpoint",
                 partial_revision=self._partial_revision,
                 covered_until_ms=covered_until_ms,
@@ -270,9 +270,9 @@ class ProgressiveAudioSession:
         self._terminal = True
         self._pending_events.append(
             ProgressiveSessionEvent(
-                StreamingEventType.FAILED,
+                CaptureEventType.FAILED,
                 stage,
-                error=CaptureFailureV2(
+                error=OperationFailure(
                     code=code,
                     message=message,
                     stage=stage,

@@ -29,7 +29,7 @@ const MODEL_FILES = [
   ['model/rec/inference.onnx', 'rec onnx'],
   ['model/rec/inference.yml', 'rec yml'],
   ['model/rec/ppocrv6_dict.txt', 'dict'],
-  ['provenance/commit-a.json', '{}'],
+  ['provenance/text-recognition.json', '{}'],
 ] as const;
 
 function descriptorForFixture(): LocalCandidateModelDescriptor {
@@ -100,7 +100,7 @@ async function verifyFixture(
       candidateRoot: candidate.root,
       candidateId: candidate.candidateId,
       modelRoot: root,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
   } finally {
     await rm(candidate.root, { recursive: true, force: true });
@@ -122,7 +122,7 @@ async function createCandidateFixture(descriptor: LocalCandidateModelDescriptor)
     catalogVersion: '2',
     runtimeVersion: RELEASE_VERSION,
     requirements: [{
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
       modelFiles: descriptor,
     }],
   }));
@@ -158,7 +158,7 @@ test('local candidate model verification binds the exact descriptor set without 
       candidateRoot: candidate.root,
       candidateId: candidate.candidateId,
       modelRoot: fixture.root,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
 
     assert.deepEqual(identity, {
@@ -186,7 +186,7 @@ test('local candidate model verification accepts a model root under an ancestor 
       candidateRoot: candidate.root,
       candidateId: candidate.candidateId,
       modelRoot: fixture.root,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     }));
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -284,7 +284,7 @@ test('local candidate model binding accepts a caller-selected temporary candidat
       candidateRoot: candidate.root,
       candidateId: candidate.candidateId,
       modelRoot: model.root,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     }));
   } finally {
     await rm(model.root, { recursive: true, force: true });
@@ -300,7 +300,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
       candidateRoot: candidate.root,
       candidateId: candidate.candidateId,
       modelRoot: model.root,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     }));
 
     await assert.rejects(
@@ -308,7 +308,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
         candidateRoot: candidate.root,
         candidateId: 'f'.repeat(64),
         modelRoot: model.root,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       }),
       /manifest identity|bound/u,
     );
@@ -321,7 +321,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
         candidateRoot: candidate.root,
         candidateId: candidate.candidateId,
         modelRoot: model.root,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       }),
       /candidate ID is not bound|manifest identity/u,
     );
@@ -343,7 +343,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
           candidateRoot: candidate.root,
           candidateId: reboundCandidateId,
           modelRoot: model.root,
-          requirementId: 'windowsml-ocr',
+          requirementId: 'text-recognition',
         }),
         /catalog bytes do not match the candidate manifest/u,
       );
@@ -361,7 +361,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
         candidateRoot: candidate.root,
         candidateId: candidate.candidateId,
         modelRoot: model.root,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       }),
       /catalog bytes do not match/u,
     );

@@ -12,10 +12,555 @@ const AUDIO: &[u8] = b"RIFF\0\0\0\0WAVECAPTURE_TEXT:Installed audio one|Installe
 const REQUEST_ID: &str = "e9bdf91d-32db-4a21-846d-a8d7ee669559";
 
 fn fixture() -> FixtureState {
+    controlled_fixture(CaptureControl::off())
+}
+
+fn controlled_fixture(capture_control: CaptureControl) -> FixtureState {
     FixtureState::new(FixtureSettings {
         api_token: "fixture-test-credential-unused-by-routing".into(),
         max_upload_bytes: 50 * 1024 * 1024,
+        capture_control,
     })
+}
+
+fn post(state: &FixtureState, path: &str, status: u16) -> Value {
+    exchange(state, json_request("POST", path, None, Value::Null), status)
+}
+
+fn events_body(state: &FixtureState, capture_id: &str) -> String {
+    let (status, _, body) = wire_exchange(
+        state,
+        json_request(
+            "GET",
+            &format!("/v2/captures/{capture_id}/events"),
+            None,
+            Value::Null,
+        ),
+    );
+    assert_eq!(status, 200);
+    String::from_utf8(body).unwrap()
+}
+
+/// The event stream replayed after the given `Last-Event-ID`.
+fn events_after(state: &FixtureState, capture_id: &str, last_event_id: &str) -> String {
+    let mut request = json_request(
+        "GET",
+        &format!("/v2/captures/{capture_id}/events"),
+        None,
+        Value::Null,
+    );
+    request
+        .headers
+        .insert("last-event-id".into(), last_event_id.into());
+    let (status, _, body) = wire_exchange(state, request);
+    assert_eq!(status, 200);
+    String::from_utf8(body).unwrap()
+}
+
+/// The `data` of every event in a stream, in order.
+fn sse_events(stream: &str) -> Vec<Value> {
+    stream
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect()
+}
+
+/// The `id` and `event` lines of every event in a stream, in order.
+fn event_ids_and_types(stream: &str) -> Vec<(u64, String)> {
+    stream
+        .split("\n\n")
+        .filter(|block| !block.is_empty())
+        .map(|block| {
+            let field = |name: &str| {
+                block
+                    .lines()
+                    .find_map(|line| line.strip_prefix(name))
+                    .unwrap_or_else(|| panic!("an event without {name}: {block}"))
+                    .to_owned()
+            };
+            (field("id: ").parse().unwrap(), field("event: "))
+        })
+        .collect()
+}
+
+/// The product runtime's answers for what a host-structured capture has not
+/// made: raw text and OCR before its extraction finished, a result never,
+/// and it refuses to structure it.
+fn assert_host_not_ready(state: &FixtureState, path: &str, reads: &[&str]) {
+    for read in reads {
+        let (method, code) = match *read {
+            "raw" => ("GET", "raw_unavailable"),
+            "ocr" => ("GET", "ocr_unavailable"),
+            "result" => ("GET", "result_unavailable"),
+            "structure" => ("POST", "invalid_capture_state"),
+            other => panic!("no not-ready answer for {other}"),
+        };
+        let answer = exchange(
+            state,
+            json_request(method, &format!("{path}/{read}"), None, Value::Null),
+            409,
+        );
+        assert_eq!(answer["error"]["code"], code, "{method} {path}/{read}");
+    }
+}
+
+const HOLD: CaptureControlSettings = CaptureControlSettings {
+    hold_captures: true,
+    capture_status_unavailable: false,
+    delete_unavailable: false,
+    fail_captures: false,
+};
+
+#[test]
+fn a_capture_created_while_captures_fail_ends_failed_with_a_failed_ocr_projection() {
+    let state = controlled_fixture(CaptureControl::fixed(CaptureControlSettings {
+        fail_captures: true,
+        ..CaptureControlSettings::default()
+    }));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    assert_eq!(created["status"], "failed");
+    assert_eq!(created["error"]["code"], "extraction_failed");
+    let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+    let ocr = get(&state, &format!("{path}/ocr"), 200);
+    assert_eq!(ocr["status"], "failed");
+    assert_eq!(ocr["failure"]["code"], "extraction_failed");
+    assert!(ocr["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|page| page["status"] == "failed" && page.get("text").is_none()));
+    // The product's not-ready answers for a capture the host structures.
+    assert_host_not_ready(&state, &path, &["raw", "result", "structure"]);
+
+    // Its terminal event carries the failure its status reports.
+    let capture_id = created["captureId"].as_str().unwrap();
+    let status = get(&state, &path, 200);
+    let events = events_body(&state, capture_id);
+    let data = events
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .expect("a terminal event");
+    let event: Value = serde_json::from_str(data).unwrap();
+    assert!(events.contains("event: failed"));
+    assert_eq!(event["error"], status["error"]);
+    assert_eq!(event["error"]["code"], "extraction_failed");
+    assert_eq!(event["progress"], status["progress"]);
+
+    // The failure belongs to the capture: clearing the switch does not undo it.
+    state
+        .settings
+        .capture_control
+        .set(CaptureControlSettings::default());
+    assert_eq!(get(&state, &path, 200)["status"], "failed");
+}
+
+#[test]
+fn a_held_recording_runs_until_the_hold_is_lifted_and_then_completes() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "recording", "audio/wav", AUDIO);
+    let created = exchange(&state, start_request(&id, "runtime"), 202);
+    assert_eq!(created["status"], "extracting");
+    assert_eq!(created["completedAt"], Value::Null);
+    let capture_id = created["captureId"].as_str().unwrap().to_owned();
+    let path = format!("/v2/captures/{capture_id}");
+
+    assert_eq!(get(&state, &path, 200)["status"], "extracting");
+    assert_eq!(events_body(&state, &capture_id), "");
+    let partial = get(&state, &format!("{path}/partial"), 200);
+    assert_eq!(partial["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(partial["sourceText"], "Installed audio one");
+    for suffix in ["raw", "result"] {
+        assert_eq!(
+            get(&state, &format!("{path}/{suffix}"), 409)["error"]["code"],
+            "capture_not_terminal"
+        );
+    }
+
+    state
+        .settings
+        .capture_control
+        .set(CaptureControlSettings::default());
+    assert_eq!(get(&state, &path, 200)["status"], "completed");
+    assert!(events_body(&state, &capture_id).contains("event: completed"));
+    assert_eq!(
+        get(&state, &format!("{path}/result"), 200)["result"]["sourceText"],
+        "Installed audio one\nInstalled audio two"
+    );
+}
+
+#[test]
+fn a_cancel_ends_a_held_capture_but_not_a_finished_one() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let held = exchange(&state, start_request(&id, "host"), 202);
+    let path = format!("/v2/captures/{}", held["captureId"].as_str().unwrap());
+    assert_eq!(
+        post(&state, &format!("{path}/cancel"), 200)["status"],
+        "cancelled"
+    );
+    // The cancel stays after the hold is lifted.
+    state
+        .settings
+        .capture_control
+        .set(CaptureControlSettings::default());
+    assert_eq!(get(&state, &path, 200)["status"], "cancelled");
+    assert!(events_body(&state, held["captureId"].as_str().unwrap()).contains("event: cancelled"));
+    // Cancelled before its extraction finished: nothing was extracted.
+    assert_host_not_ready(&state, &path, &["raw", "ocr", "result", "structure"]);
+
+    let finished_state = fixture();
+    let id = upload(&finished_state, "pdf", "application/pdf", PDF);
+    let finished = exchange(&finished_state, start_request(&id, "runtime"), 202);
+    let path = format!("/v2/captures/{}", finished["captureId"].as_str().unwrap());
+    assert_eq!(
+        post(&finished_state, &format!("{path}/cancel"), 200)["status"],
+        "completed"
+    );
+}
+
+#[test]
+fn a_host_structured_capture_waits_at_the_checkpoint_until_it_is_deleted() {
+    for (kind, media_type, bytes, expected_text) in [
+        (
+            "pdf",
+            "application/pdf",
+            PDF,
+            "Installed PDF page one\nInstalled PDF page two",
+        ),
+        ("image", "image/png", IMAGE, "Installed image words"),
+    ] {
+        let state = fixture();
+        let id = upload(&state, kind, media_type, bytes);
+        let created = exchange(&state, start_request(&id, "host"), 202);
+        assert_eq!(created["status"], "awaiting_structuring");
+        assert_eq!(created["progress"], 0.9);
+        assert_eq!(created["completedAt"], Value::Null);
+        assert_eq!(created["error"], Value::Null);
+        let capture_id = created["captureId"].as_str().unwrap().to_owned();
+        let path = format!("/v2/captures/{capture_id}");
+        // It does not complete by itself.
+        assert_eq!(get(&state, &path, 200), created);
+
+        // Its raw text and OCR projection are served, as at the product's checkpoint.
+        let raw = get(&state, &format!("{path}/raw"), 200);
+        assert_eq!(raw["sourceText"], expected_text);
+        let ocr = get(&state, &format!("{path}/ocr"), 200);
+        assert_eq!(ocr["status"], "completed");
+        assert_eq!(ocr["captureId"], capture_id.as_str());
+        // There is no result, and the runtime does not structure it.
+        assert_eq!(
+            get(&state, &format!("{path}/result"), 409)["error"]["code"],
+            "result_unavailable"
+        );
+        assert_eq!(
+            post(&state, &format!("{path}/structure"), 409)["error"]["code"],
+            "invalid_capture_state"
+        );
+        // Its event stream ends with the checkpoint.
+        let events = events_body(&state, &capture_id);
+        assert!(events.contains("event: checkpoint"));
+        assert!(events.contains("\"stage\":\"awaiting_structuring\""));
+        assert_eq!(events_after(&state, &capture_id, "1"), "");
+        assert_eq!(get(&state, &path, 200)["status"], "awaiting_structuring");
+
+        exchange(
+            &state,
+            json_request("DELETE", &path, None, Value::Null),
+            204,
+        );
+        get(&state, &path, 404);
+        get(&state, &format!("/v2/ingestions/{id}"), 404);
+    }
+}
+
+#[test]
+fn the_capture_controls_apply_to_a_host_structured_capture() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let held = exchange(&state, start_request(&id, "host"), 202);
+    let path = format!("/v2/captures/{}", held["captureId"].as_str().unwrap());
+    assert_eq!(held["status"], "extracting");
+    // While it is held, every read of what it has not made yet answers as the product does.
+    assert_host_not_ready(&state, &path, &["raw", "ocr", "result", "structure"]);
+
+    // Lifting the hold ends the extraction at the checkpoint, not at completed.
+    state.settings.capture_control.set(CaptureControlSettings {
+        delete_unavailable: true,
+        ..CaptureControlSettings::default()
+    });
+    let at_checkpoint = get(&state, &path, 200);
+    assert_eq!(at_checkpoint["status"], "awaiting_structuring");
+    exchange(
+        &state,
+        json_request("DELETE", &path, None, Value::Null),
+        503,
+    );
+    assert_eq!(get(&state, &path, 200), at_checkpoint);
+
+    // A cancel ends a capture waiting at the checkpoint, as in the product runtime.
+    assert_eq!(
+        post(&state, &format!("{path}/cancel"), 200)["status"],
+        "cancelled"
+    );
+    assert_eq!(get(&state, &path, 200)["status"], "cancelled");
+}
+
+#[test]
+fn a_renewed_hold_keeps_a_host_structured_capture_at_the_checkpoint() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    assert_eq!(created["status"], "extracting");
+    let capture_id = created["captureId"].as_str().unwrap();
+    let path = format!("/v2/captures/{capture_id}");
+
+    state
+        .settings
+        .capture_control
+        .set(CaptureControlSettings::default());
+    let checkpoint = get(&state, &path, 200);
+    assert_eq!(checkpoint["status"], "awaiting_structuring");
+    assert_eq!(checkpoint["lastEventSequence"], 1);
+    let raw = get(&state, &format!("{path}/raw"), 200);
+    let ocr = get(&state, &format!("{path}/ocr"), 200);
+
+    state.settings.capture_control.set(HOLD);
+    assert_eq!(get(&state, &path, 200), checkpoint);
+    let cancelled = post(&state, &format!("{path}/cancel"), 200);
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["progress"], 0.9);
+    assert_eq!(cancelled["lastEventSequence"], 2);
+    assert_eq!(get(&state, &path, 200), cancelled);
+    assert_eq!(get(&state, &format!("{path}/raw"), 200), raw);
+    assert_eq!(get(&state, &format!("{path}/ocr"), 200), ocr);
+    assert_eq!(
+        event_ids_and_types(&events_after(&state, capture_id, "1")),
+        [(2, "cancelled".to_owned())]
+    );
+}
+
+#[test]
+fn a_cancel_at_the_checkpoint_keeps_the_extraction_and_appends_its_event() {
+    let state = fixture();
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    let capture_id = created["captureId"].as_str().unwrap().to_owned();
+    let path = format!("/v2/captures/{capture_id}");
+    let raw = get(&state, &format!("{path}/raw"), 200);
+    let ocr = get(&state, &format!("{path}/ocr"), 200);
+    assert_eq!(created["lastEventSequence"], 1);
+
+    let cancelled = post(&state, &format!("{path}/cancel"), 200);
+    assert_eq!(cancelled["status"], "cancelled");
+    // As in the product runtime: progress stays, the cancellation is the next event.
+    assert_eq!(cancelled["progress"], 0.9);
+    assert_eq!(cancelled["lastEventSequence"], 2);
+    assert_eq!(cancelled["completedAt"], COMPLETED_AT);
+    assert_eq!(get(&state, &path, 200), cancelled);
+    // What the extraction made stays readable; there is still no result.
+    assert_eq!(get(&state, &format!("{path}/raw"), 200), raw);
+    assert_eq!(get(&state, &format!("{path}/ocr"), 200), ocr);
+    assert_host_not_ready(&state, &path, &["result", "structure"]);
+
+    // A client that read the checkpoint receives the cancellation, and only it.
+    let replayed = events_after(&state, &capture_id, "1");
+    assert_eq!(
+        event_ids_and_types(&replayed),
+        [(2, "cancelled".to_owned())]
+    );
+    let event = sse_events(&replayed).remove(0);
+    assert_eq!(event["sequence"], 2);
+    assert_eq!(event["stage"], "cancelled");
+    assert_eq!(event["progress"], 0.9);
+    // The whole stream is the checkpoint, then the cancellation; nothing follows it.
+    assert_eq!(
+        event_ids_and_types(&events_body(&state, &capture_id)),
+        [(1, "checkpoint".to_owned()), (2, "cancelled".to_owned())]
+    );
+    assert_eq!(events_after(&state, &capture_id, "2"), "");
+    // A second cancel changes nothing.
+    assert_eq!(post(&state, &format!("{path}/cancel"), 200), cancelled);
+}
+
+#[test]
+fn an_unavailable_capture_status_answers_503_while_other_reads_still_answer() {
+    let state = controlled_fixture(CaptureControl::fixed(CaptureControlSettings {
+        capture_status_unavailable: true,
+        ..HOLD
+    }));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+    assert_eq!(
+        get(&state, &path, 503)["error"]["code"],
+        "runtime_unavailable"
+    );
+    assert_eq!(
+        post(&state, &format!("{path}/cancel"), 200)["status"],
+        "cancelled"
+    );
+    exchange(
+        &state,
+        json_request("DELETE", &path, None, Value::Null),
+        204,
+    );
+    assert_eq!(
+        get(&state, &path, 404)["error"]["code"],
+        "capture_not_found"
+    );
+}
+
+#[test]
+fn an_unavailable_delete_leaves_the_capture_intact_until_retried() {
+    let state = controlled_fixture(CaptureControl::fixed(CaptureControlSettings {
+        delete_unavailable: true,
+        ..HOLD
+    }));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+    let before_delete = get(&state, &path, 200);
+    assert_eq!(before_delete["status"], "extracting");
+
+    let refused = exchange(
+        &state,
+        json_request("DELETE", &path, None, Value::Null),
+        503,
+    );
+    assert_eq!(
+        refused,
+        json!({
+            "error": {
+                "code": "runtime_unavailable",
+                "message": "Capture deletion is temporarily unavailable."
+            }
+        })
+    );
+    assert_eq!(get(&state, &path, 200), before_delete);
+
+    state.settings.capture_control.set(HOLD);
+    exchange(
+        &state,
+        json_request("DELETE", &path, None, Value::Null),
+        204,
+    );
+    assert_eq!(
+        get(&state, &path, 404)["error"]["code"],
+        "capture_not_found"
+    );
+}
+
+/// Held, released, a delete refused, held again: only a request that answered
+/// with the capture's state saw the checkpoint, so only such a request latches
+/// it. Without a read in between, the renewed hold reports extracting again.
+#[test]
+fn a_refused_delete_does_not_latch_the_checkpoint() {
+    let released = CaptureControlSettings {
+        delete_unavailable: true,
+        ..CaptureControlSettings::default()
+    };
+    let held = CaptureControlSettings {
+        delete_unavailable: true,
+        ..HOLD
+    };
+    for read_before_delete in [false, true] {
+        let state = controlled_fixture(CaptureControl::fixed(held));
+        let id = upload(&state, "pdf", "application/pdf", PDF);
+        let created = exchange(&state, start_request(&id, "host"), 202);
+        assert_eq!(created["status"], "extracting");
+        let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+
+        state.settings.capture_control.set(released);
+        if read_before_delete {
+            assert_eq!(get(&state, &path, 200)["status"], "awaiting_structuring");
+        }
+        exchange(
+            &state,
+            json_request("DELETE", &path, None, Value::Null),
+            503,
+        );
+
+        state.settings.capture_control.set(held);
+        let expected = if read_before_delete {
+            "awaiting_structuring"
+        } else {
+            "extracting"
+        };
+        assert_eq!(
+            get(&state, &path, 200)["status"],
+            expected,
+            "read before the delete: {read_before_delete}"
+        );
+    }
+}
+
+/// A status read refused with 503 shows no state either, so it latches nothing.
+#[test]
+fn a_refused_status_read_does_not_latch_the_checkpoint() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+
+    state.settings.capture_control.set(CaptureControlSettings {
+        capture_status_unavailable: true,
+        ..CaptureControlSettings::default()
+    });
+    get(&state, &path, 503);
+
+    state.settings.capture_control.set(HOLD);
+    assert_eq!(get(&state, &path, 200)["status"], "extracting");
+}
+
+/// The request log names a capture only when the route resolved it: a capture
+/// the fixture issued, reached by a request that passed authorization.
+#[test]
+fn only_an_authorized_request_for_an_issued_capture_names_it_for_the_request_log() {
+    const TOKEN: &str = "fixture-test-credential-unused-by-routing";
+    const HOST: &str = "127.0.0.1:4310";
+    let state = fixture();
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    // The creation itself names the capture it issued; a refused one names none.
+    let creation = state.route(start_request(&id, "host"));
+    assert_eq!(creation.status, 202);
+    let created = creation.body.clone().unwrap();
+    let capture_id = created["captureId"].as_str().unwrap();
+    assert_eq!(creation.capture_id(), Some(capture_id));
+    let refused = state.route(start_request("no-such-ingestion", "host"));
+    assert_eq!(refused.status, 404);
+    assert_eq!(refused.capture_id(), None);
+    let policy = crate::http::LocalRequestPolicy::new(TOKEN, HOST);
+    let request = |path: &str, token: &str| {
+        let mut request = json_request("GET", path, None, Value::Null);
+        request.headers.insert("host".into(), HOST.into());
+        request
+            .headers
+            .insert("authorization".into(), format!("Bearer {token}"));
+        request
+    };
+
+    let authorized = crate::answer(
+        &policy,
+        &state,
+        request(&format!("/v2/captures/{capture_id}/events"), TOKEN),
+    );
+    assert_eq!(authorized.status, 200);
+    assert_eq!(authorized.capture_id(), Some(capture_id));
+
+    // Shaped like the fixture's ids, but never issued.
+    let unknown = crate::answer(&policy, &state, request("/v2/captures/capture-999", TOKEN));
+    assert_eq!(unknown.status, 404);
+    assert_eq!(unknown.capture_id(), None);
+
+    let denied = crate::answer(
+        &policy,
+        &state,
+        request(&format!("/v2/captures/{capture_id}"), "another-credential"),
+    );
+    assert_eq!(denied.status, 401);
+    assert_eq!(denied.capture_id(), None);
 }
 
 fn json_request(method: &str, path: &str, key: Option<&str>, body: Value) -> Request {
@@ -172,7 +717,7 @@ fn upload(state: &FixtureState, kind: &str, media_type: &str, content: &[u8]) ->
 }
 
 #[test]
-fn desktop_pdf_and_image_complete_with_raw_ocr_result_and_cleanup() {
+fn runtime_structured_pdf_and_image_complete_with_raw_ocr_result_and_cleanup() {
     for (kind, media_type, bytes, expected_text, expected_pages) in [
         (
             "pdf",
@@ -185,7 +730,7 @@ fn desktop_pdf_and_image_complete_with_raw_ocr_result_and_cleanup() {
     ] {
         let state = fixture();
         let id = upload(&state, kind, media_type, bytes);
-        let created = exchange(&state, start_request(&id, "host"), 202);
+        let created = exchange(&state, start_request(&id, "runtime"), 202);
         assert_eq!(created["protocolVersion"], "2");
         assert_eq!(created["ingestionId"], id);
         assert_eq!(created["kind"], kind);
@@ -218,9 +763,12 @@ fn desktop_pdf_and_image_complete_with_raw_ocr_result_and_cleanup() {
         assert_eq!(ocr["captureId"], capture_id);
         assert_eq!(ocr["status"], "completed");
         assert_eq!(ocr["source"], raw["source"]);
-        assert_eq!(ocr["pageCount"], expected_pages);
+        assert_eq!(ocr["processedPageCount"], expected_pages);
         assert_eq!(ocr["runtimeVersion"], ready["ocrCompute"]["runtimeVersion"]);
-        assert_eq!(ocr["contractSha256"], ready["ocrCompute"]["contractSha256"]);
+        assert_eq!(
+            ocr["contractSetSha256"],
+            ready["ocrCompute"]["contractSetSha256"]
+        );
         assert_eq!(
             ready["ocrCompute"]["workerSha256"].as_str().unwrap().len(),
             64
@@ -258,9 +806,10 @@ fn desktop_sized_recording_completes_over_fifty_two_tcp_chunks() {
         api_token: "fixture-test-credential-unused-by-routing".into(),
         // The desktop launch policy passes this value to both real and fake runtimes.
         max_upload_bytes: 2 * 1024 * 1024 * 1024,
+        capture_control: CaptureControl::off(),
     });
     let total = 52 * 1024 * 1024;
-    let mut request = open_request("audio", "audio/wav", AUDIO);
+    let mut request = open_request("recording", "audio/wav", AUDIO);
     let mut metadata: Value = serde_json::from_slice(&request.body).unwrap();
     metadata["totalBytes"] = total.into();
     request.body = serde_json::to_vec(&metadata).unwrap();
@@ -303,7 +852,7 @@ fn desktop_sized_recording_completes_over_fifty_two_tcp_chunks() {
         200,
     );
     assert_eq!(finalized["receivedBytes"], total);
-    let capture = exchange(&state, start_request(id, "host"), 202);
+    let capture = exchange(&state, start_request(id, "runtime"), 202);
     assert_eq!(capture["status"], "completed");
     let result = get(
         &state,
@@ -343,6 +892,31 @@ fn retries_are_idempotent_and_conflicting_metadata_is_rejected() {
     assert_eq!(
         exchange(&state, start_request(id, "runtime"), 409)["error"]["code"],
         "idempotency_conflict"
+    );
+}
+
+#[test]
+fn retired_capture_kind_is_rejected_on_open() {
+    let state = fixture();
+    let response = exchange(&state, open_request("audio", "audio/wav", AUDIO), 422);
+    assert_eq!(response["error"]["code"], "validation_error");
+    assert_eq!(
+        response["error"]["details"]["issues"][0]["message"],
+        "Capture kind must be pdf, image, or recording."
+    );
+}
+
+#[test]
+fn an_ingestion_without_a_kind_is_rejected_on_open() {
+    let state = fixture();
+    let mut open = open_request("recording", "audio/wav", AUDIO);
+    let mut payload: Value = serde_json::from_slice(&open.body).unwrap();
+    payload.as_object_mut().unwrap().remove("kind");
+    open.body = serde_json::to_vec(&payload).unwrap();
+    let response = exchange(&state, open, 422);
+    assert_eq!(
+        response["error"]["details"]["issues"][0]["message"],
+        "Capture kind is required."
     );
 }
 
@@ -401,6 +975,50 @@ fn invalid_uploads_do_not_advance_or_finalize_the_ingestion() {
 }
 
 #[test]
+fn chunks_follow_the_advertised_limit_and_the_runtime_header_order() {
+    let state = fixture();
+    let ready = get(&state, "/v2/health/ready", 200);
+    let limit = ingestions::MAX_CHUNK_BYTES;
+    assert_eq!(ready["capabilities"]["maxChunkBytes"], limit);
+    let content = vec![b'a'; limit + 1];
+    let opened = exchange(
+        &state,
+        open_request("pdf", "application/pdf", &content),
+        201,
+    );
+    let id = opened["ingestionId"].as_str().unwrap();
+    let past_end = |start: usize, body: &[u8]| {
+        let mut request = chunk_request(id, 0, start, content.len(), body);
+        request.headers.insert(
+            "content-range".into(),
+            format!("bytes {start}-{}/{}", content.len(), content.len()),
+        );
+        request
+    };
+    // An end at or past the total is malformed before the size and state checks.
+    for request in [past_end(0, &content), past_end(5, b"ab")] {
+        assert_eq!(
+            exchange(&state, request, 422)["error"]["code"],
+            "invalid_chunk_headers"
+        );
+    }
+    assert_eq!(
+        exchange(
+            &state,
+            chunk_request(id, 0, 0, content.len(), &content),
+            413
+        )["error"]["code"],
+        "chunk_too_large"
+    );
+    let at_limit = exchange(
+        &state,
+        chunk_request(id, 0, 0, content.len(), &content[..limit]),
+        200,
+    );
+    assert_eq!(at_limit["nextOffset"], limit);
+}
+
+#[test]
 fn document_idempotency_headers_must_match_and_abandoned_uploads_can_be_deleted() {
     let state = fixture();
     let mut missing = open_request("pdf", "application/pdf", PDF);
@@ -447,7 +1065,7 @@ fn pdf_page_selection_preserves_source_page_locators() {
 #[test]
 fn progressive_audio_host_requests_complete_with_events_partial_and_result() {
     let state = fixture();
-    let mut open = open_request("audio", "audio/wav", AUDIO);
+    let mut open = open_request("recording", "audio/wav", AUDIO);
     open.headers.remove("x-idempotency-key");
     let mut payload: Value = serde_json::from_slice(&open.body).unwrap();
     payload.as_object_mut().unwrap().remove("protocolVersion");
@@ -491,6 +1109,10 @@ fn progressive_audio_host_requests_complete_with_events_partial_and_result() {
     let partial = get(&state, &format!("{path}/partial"), 200);
     assert_eq!(partial["segments"].as_array().unwrap().len(), 2);
     assert_eq!(partial["segments"][0]["locator"]["kind"], "time");
+    assert_eq!(partial["coveredUntilMs"], 2000);
+    // A recording has no OCR projection.
+    let ocr = get(&state, &format!("{path}/ocr"), 409);
+    assert_eq!(ocr["error"]["code"], "ocr_unavailable");
     assert_eq!(get(&state, &path, 200)["status"], "completed");
     assert_eq!(
         get(&state, &format!("{path}/result"), 200)["result"]["targetText"],
@@ -529,21 +1151,48 @@ fn desktop_pdf_ingestion_opens_with_the_host_request() {
 }
 
 #[test]
+fn general_installation_rejects_the_structuring_model() {
+    let state = fixture();
+    let install = |requirement_id: &str, key: &str| {
+        json_request(
+            "POST",
+            "/v2/runtime/installations",
+            Some(key),
+            json!({ "requirementId": requirement_id, "consent": true }),
+        )
+    };
+    let rejected = exchange(&state, install("structuring-model", "model-install"), 422);
+    assert_eq!(rejected["error"]["code"], "validation_error");
+    assert!(rejected["error"]["details"]["issues"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("structuring model installation"));
+    exchange(
+        &state,
+        install("structuring-runtime", "runtime-install"),
+        202,
+    );
+}
+
+#[test]
 fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
     let state = fixture();
     let before = get(&state, "/v2/runtime/requirements", 200);
+    for item in before["items"].as_array().unwrap() {
+        assert_eq!(item["kind"], item["requirementId"]);
+    }
     let installed = before["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["requirementId"] == "windowsml-ocr")
+        .find(|item| item["requirementId"] == "text-recognition")
         .unwrap()
         .clone();
     assert_eq!(installed["status"], "ready");
 
     let remove = json_request(
         "DELETE",
-        "/v2/runtime/requirements/windowsml-ocr/installation",
+        "/v2/runtime/requirements/text-recognition/installation",
         None,
         Value::Null,
     );
@@ -556,7 +1205,7 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
         &state,
         json_request(
             "DELETE",
-            "/v2/runtime/requirements/windowsml-ocr/installation",
+            "/v2/runtime/requirements/text-recognition/installation",
             None,
             Value::Null,
         ),
@@ -569,7 +1218,7 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
     assert_eq!(
         items
             .iter()
-            .find(|item| item["requirementId"] == "windowsml-ocr")
+            .find(|item| item["requirementId"] == "text-recognition")
             .unwrap()["status"],
         "installable"
     );
@@ -601,7 +1250,7 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
 #[test]
 fn model_options_match_catalog_profile_ids_and_active_scenario() {
     let state = fixture();
-    let options = get(&state, "/v2/runtime/model-options", 200);
+    let options = get(&state, "/v2/runtime/structuring-model-options", 200);
     let items = options["items"].as_array().unwrap();
     let summary: Vec<(&str, &str, &str, &str)> = items
         .iter()
@@ -620,19 +1269,19 @@ fn model_options_match_catalog_profile_ids_and_active_scenario() {
             (
                 "qwen3.5-0.8b-v1",
                 "qwen3.5:0.8b",
-                "capture-workbench-qwen3.5-0.8b-structure-v1",
+                "qwen3.5-0.8b-structure-v1",
                 "active",
             ),
             (
                 "qwen3.5-2b-v1",
                 "qwen3.5:2b",
-                "capture-workbench-qwen3.5-2b-structure-v1",
+                "qwen3.5-2b-structure-v1",
                 "not-installed",
             ),
             (
                 "qwen3.5-4b-v1",
                 "qwen3.5:4b",
-                "capture-workbench-qwen3.5-4b-structure-v1",
+                "qwen3.5-4b-structure-v1",
                 "not-installed",
             ),
         ]

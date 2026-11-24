@@ -33,10 +33,10 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('reports v2 host structuring failure with raw diagnostics and never completes', async () => {
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('awaiting_structuring', 0.7)),
       ),
-      reportStreamingStructuringFailure: vi.fn(() =>
+      reportStructuringFailure: vi.fn(() =>
         of({
           ...streamingOperation('failed'),
           error: {
@@ -63,7 +63,7 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(client.reportStreamingStructuringFailure).toHaveBeenCalledWith(
+    expect(client.reportStructuringFailure).toHaveBeenCalledWith(
       'capture-1',
       { code: 'host_provider_failed', message: 'Bearer [redacted]' },
       expect.any(AbortSignal),
@@ -96,25 +96,24 @@ describe('CaptureWorkbenchComponent', () => {
       warnings: ['runtime-warning'],
     };
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('awaiting_structuring', 0.7)),
       ),
-      getStreamingPartial: vi.fn<
-        NonNullable<CaptureClient['getStreamingPartial']>
+      getPartial: vi.fn<
+        NonNullable<CaptureClient['getPartial']>
       >(() =>
         of({
           protocolVersion: '2',
           captureId: 'capture-1',
           source: raw.source,
           revision: 1,
-          coveredUntilMs: 0,
           segments: raw.segments,
           sourceText: raw.sourceText,
           extractionEngine: raw.extractionEngine,
           updatedAt: raw.createdAt,
         } satisfies PartialCapture),
       ),
-      getStreamingRaw: vi.fn(() => of(raw)),
+      getRaw: vi.fn(() => of(raw)),
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(
       (request) => {
@@ -139,7 +138,7 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
 
     expect(structure).toHaveBeenCalledOnce();
-    expect(client.getStreamingRaw).toHaveBeenCalledWith(
+    expect(client.getRaw).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -149,7 +148,7 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('lets the v2 client own structuring without a browser provider', async () => {
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('completed')),
       ),
     });
@@ -166,10 +165,10 @@ describe('CaptureWorkbenchComponent', () => {
     selectFiles(fixture, [new File(['test'], 'scan.pdf')]);
     await fixture.whenStable();
 
-    expect(client.getStreamingPartial).not.toHaveBeenCalled();
-    expect(client.commitStreamingStructuredResult).not.toHaveBeenCalled();
-    expect(client.reportStreamingStructuringFailure).not.toHaveBeenCalled();
-    expect(client.getStreamingResult).toHaveBeenCalledWith(
+    expect(client.getPartial).not.toHaveBeenCalled();
+    expect(client.commitStructure).not.toHaveBeenCalled();
+    expect(client.reportStructuringFailure).not.toHaveBeenCalled();
+    expect(client.getResult).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );

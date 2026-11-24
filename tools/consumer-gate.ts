@@ -130,7 +130,7 @@ export async function verifyCandidateManifest(
     readonly sourceCommit: string;
     readonly releaseVersion: string;
   },
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   const manifestPath = join(candidateDirectory, 'candidate-manifest.json');
   const bytes = await readFile(manifestPath);
   const digest = createHash('sha256').update(bytes).digest('hex');
@@ -153,6 +153,7 @@ export async function verifyCandidateManifest(
     );
   }
   requireSha256(manifest.candidateId, 'Candidate ID');
+  return manifest;
 }
 
 export function aggregateConsumerGateResults(

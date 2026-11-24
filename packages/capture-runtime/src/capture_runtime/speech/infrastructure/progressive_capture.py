@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -14,18 +16,22 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, worker_child_environment
-from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
+from capture_runtime.constants import (
+    SPEECH_RECOGNITION_REQUIREMENT_ID,
+    SPEECH_SESSION_TEMP_DIR_PREFIX,
+)
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureFailureV2,
+    CaptureEventType,
     CaptureSource,
-    PartialCaptureV2,
+    OperationFailure,
+    PartialCapture,
     RawCapture,
     RawCaptureSegment,
-    StreamingEventType,
     TimeLocator,
     project_source_text,
 )
@@ -36,6 +42,7 @@ from capture_runtime.provisioning.infrastructure.engine_content_selection import
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
     SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.infrastructure.progressive_audio import (
@@ -59,16 +66,44 @@ from capture_runtime.speech.infrastructure.speech_session import (
     encode_credit,
 )
 from capture_runtime.worker_client import InstalledEngine
-from capture_runtime.worker_process import subprocess_path
+from capture_runtime.worker_process import (
+    WorkerFailureClass,
+    WorkerFailureDiagnostics,
+    subprocess_path,
+)
 from capture_runtime.worker_stage_policy import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WORKER_STAGE_PATTERN,
     sanitize_worker_stage_sequence,
 )
 
-EventSink = Callable[
-    [tuple[ProgressiveSessionEvent, ...], PartialCaptureV2 | None], Awaitable[None]
-]
+EventSink = Callable[[tuple[ProgressiveSessionEvent, ...], PartialCapture | None], Awaitable[None]]
+
+_WORKER_FAILURE_CLASSES: dict[str, WorkerFailureClass] = {
+    "progressive_stall": "timeout",
+    "progressive_worker_event_invalid": "protocol",
+    "progressive_worker_exit": "exit-before-response",
+    "progressive_worker_finish_failed": "worker",
+    "progressive_worker_frame_read_failed": "protocol",
+    "progressive_worker_input_failed": "worker",
+    "progressive_worker_start_failed": "worker",
+    "session_failed": "worker",
+}
+
+
+class ProgressiveWorkerFailure(CaptureProcessingError):
+    """A capture failure with private diagnostics from its progressive worker."""
+
+    def __init__(
+        self, failure: CaptureProcessingError, diagnostics: WorkerFailureDiagnostics
+    ) -> None:
+        super().__init__(
+            failure.args[0],
+            code=failure.code,
+            retryable=failure.retryable,
+            stage=failure.stage,
+        )
+        self.diagnostics = diagnostics
 
 
 @dataclass(slots=True)
@@ -82,10 +117,10 @@ class _ProgressiveState:
     segments: list[RawCaptureSegment] = field(default_factory=list)
 
     @property
-    def partial(self) -> PartialCaptureV2 | None:
+    def partial(self) -> PartialCapture | None:
         if self.extraction_engine is None:
             return None
-        return PartialCaptureV2(
+        return PartialCapture(
             capture_id=self.capture_id,
             source=self.source,
             revision=self.revision,
@@ -123,7 +158,7 @@ class _ProgressiveState:
         if partial is None or not partial.segments:
             raise CaptureProcessingError(
                 "Progressive audio produced no non-empty content.",
-                code="progressive_no_text_at_sample",
+                code="extraction_no_text",
                 stage="checkpoint",
             )
         assert partial.extraction_engine is not None
@@ -252,8 +287,11 @@ class ProgressiveCaptureProcessor:
     ) -> RawCapture:
         try:
             engine = await self._resolve_engine()
-        except (ExtractionRuntimeUnavailableError, TimeoutError):
+        except ExtractionRuntimeUnavailableError:
             raise
+        except TimeoutError as error:
+            # The same report as the buffered path gives for a slow engine check.
+            raise RequirementResolutionTimeoutError(SPEECH_RECOGNITION_REQUIREMENT_ID) from error
         except Exception as error:
             raise CaptureProcessingError(
                 "Progressive speech recognition engine could not be prepared.",
@@ -282,8 +320,7 @@ class ProgressiveCaptureProcessor:
             try:
                 partial = (
                     state.partial
-                    if event.event_type
-                    in {StreamingEventType.SEGMENT, StreamingEventType.CHECKPOINT}
+                    if event.event_type in {CaptureEventType.SEGMENT, CaptureEventType.CHECKPOINT}
                     else None
                 )
             except Exception as error:
@@ -306,9 +343,12 @@ class ProgressiveCaptureProcessor:
         except CaptureProcessingError:
             raise
         except Exception as error:
-            raise CaptureProcessingError(
+            startup_failure = CaptureProcessingError(
                 "Progressive speech recognition worker could not be started.",
                 code="progressive_worker_start_failed",
+            )
+            raise ProgressiveWorkerFailure(
+                startup_failure, WorkerFailureDiagnostics(stage_sequence=(), failure_class="worker")
             ) from error
         reusable = False
         try:
@@ -382,11 +422,23 @@ class ProgressiveCaptureProcessor:
                     retryable=failure.retryable,
                     stage=failure.stage or "extraction",
                 )
-            if not any(event.event_type is StreamingEventType.COMPLETED for event in events):
+            if not any(event.event_type is CaptureEventType.COMPLETED for event in events):
                 raise CaptureProcessingError("Progressive audio worker ended without completion.")
             raw = state.raw()
             reusable = not cancellation.is_set()
             return raw
+        except CaptureProcessingError as failure:
+            cause = failure.__cause__
+            worker_error = cause if isinstance(cause, CaptureProcessingError) else failure
+            failure_class = _WORKER_FAILURE_CLASSES.get(
+                worker_error.code, _WORKER_FAILURE_CLASSES.get(failure.code)
+            )
+            if failure_class is None:
+                raise
+            if isinstance(cause, asyncio.IncompleteReadError):
+                failure_class = "exit-before-response"
+            diagnostics = await worker.failure_diagnostics(failure_class)
+            raise ProgressiveWorkerFailure(failure, diagnostics) from cause
         finally:
             if reusable:
                 await self._park(_worker_key(engine, self.config), worker)
@@ -442,11 +494,25 @@ def _session_worker_launch(executable: Path) -> tuple[list[str], str]:
     return command, subprocess_path(executable.parent)
 
 
+def _remove_session_temp_dir(directory: Path) -> None:
+    """Remove a session worker's own directory; never follow a link or junction."""
+
+    with suppress(OSError):
+        metadata = directory.lstat()
+        if stat.S_ISDIR(metadata.st_mode) and not (
+            getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            shutil.rmtree(directory)
+
+
 class _SessionWorker:
     def __init__(
         self,
         process: asyncio.subprocess.Process,
-        stderr_task: asyncio.Task[str],
+        stderr_task: asyncio.Task[tuple[str, ...]],
+        *,
+        temp_dir: Path | None = None,
+        stderr_tail: bytearray | None = None,
     ) -> None:
         self.process = process
         assert process.stdin is not None
@@ -454,6 +520,9 @@ class _SessionWorker:
         self.stdin = process.stdin
         self.stdout = process.stdout
         self._stderr_task = stderr_task
+        self._stderr_tail = stderr_tail
+        self._temp_dir = temp_dir
+        self._closed = False
         # The worker's last stage; the runtime's own heartbeats repeat it.
         self._stage = "transcribing"
 
@@ -474,7 +543,6 @@ class _SessionWorker:
         environment.update(
             {
                 "CAPTURE_SESSION_MODEL_PATH": subprocess_path(engine.model_dir),
-                "CAPTURE_SESSION_TEMP_DIR": subprocess_path(config.temp_dir),
                 "CAPTURE_SESSION_PREFER_GPU": "1" if config.speech_prefer_gpu else "0",
                 "CAPTURE_SESSION_ALLOW_CPU_FALLBACK": (
                     "1" if config.speech_recognition_allow_cpu_fallback else "0"
@@ -491,24 +559,42 @@ class _SessionWorker:
         content_id = engine.content_id
         if content_id is not None:
             environment["CAPTURE_SESSION_SPEECH_CONTENT"] = content_id
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=environment,
-            cwd=cwd,
-            limit=4 * 1024 * 1024 + 5,
-            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
-        )
+        config.temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = config.temp_dir.absolute() / f"{SPEECH_SESSION_TEMP_DIR_PREFIX}{uuid4().hex}"
+        temp_dir.mkdir(exist_ok=False)
+        try:
+            environment["CAPTURE_SESSION_TEMP_DIR"] = subprocess_path(temp_dir)
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=environment,
+                cwd=cwd,
+                limit=4 * 1024 * 1024 + 5,
+                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+            )
+        except (Exception, asyncio.CancelledError):
+            await asyncio.to_thread(_remove_session_temp_dir, temp_dir)
+            raise
         assert process.stderr is not None
-        return cls(process, asyncio.create_task(_drain_stderr(process.stderr)))
+        stderr_tail = bytearray()
+        return cls(
+            process,
+            asyncio.create_task(_drain_stderr(process.stderr, stderr_tail)),
+            temp_dir=temp_dir,
+            stderr_tail=stderr_tail,
+        )
 
     async def begin(
         self, *, capture_id: str, source: CaptureSource, spoken_language: str | None = None
     ) -> None:
         """Start one capture's session; a warm worker serves one after another."""
 
+        # Same buffer `_drain_stderr` parses when the pipe closes, so a warm
+        # worker does not report the previous capture's stages.
+        if self._stderr_tail is not None:
+            self._stderr_tail.clear()
         await self._send(
             encode_control(
                 SessionFrameType.START,
@@ -571,7 +657,7 @@ class _SessionWorker:
                             code="progressive_stall",
                             stage="watchdog",
                         )
-                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, self._stage)
+                    heartbeat = ProgressiveSessionEvent(CaptureEventType.HEARTBEAT, self._stage)
                     events.append(heartbeat)
                     await on_event(heartbeat)
                     continue
@@ -599,7 +685,7 @@ class _SessionWorker:
                         return events
                     if payload_object.get("stage") not in (None, "", "input_ack"):
                         self._stage = str(payload_object["stage"])
-                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, self._stage)
+                    heartbeat = ProgressiveSessionEvent(CaptureEventType.HEARTBEAT, self._stage)
                     events.append(heartbeat)
                     await on_event(heartbeat)
                     continue
@@ -634,7 +720,7 @@ class _SessionWorker:
                     try:
                         event = _failure_event(payload)
                         if event.error is not None and event.error.code == "session_failed":
-                            stage_sequence = await self._worker_stage_sequence()
+                            stage_sequence = ">".join(await self._worker_stage_sequence())
                             if stage_sequence:
                                 event = ProgressiveSessionEvent(
                                     event.event_type,
@@ -659,7 +745,7 @@ class _SessionWorker:
                     await on_event(event)
                     return events
                 if frame_type is SessionFrameType.COMPLETED:
-                    event = ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")
+                    event = ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")
                     events.append(event)
                     await on_event(event)
                     return events
@@ -686,7 +772,7 @@ class _SessionWorker:
             self.stdin.write(payload)
             await self.stdin.drain()
         except (BrokenPipeError, ConnectionError, OSError) as error:
-            stage_sequence = await self._worker_stage_sequence()
+            stage_sequence = ">".join(await self._worker_stage_sequence())
             message = (
                 "Source extraction worker failed."
                 if not stage_sequence
@@ -698,17 +784,48 @@ class _SessionWorker:
                 stage="extraction",
             ) from error
 
-    async def _worker_stage_sequence(self) -> str:
+    async def failure_diagnostics(
+        self, failure_class: WorkerFailureClass
+    ) -> WorkerFailureDiagnostics:
+        # Callers that already collected stages leave them in the tail. Wait for
+        # the drain only when the worker exited before answering.
+        if failure_class == "exit-before-response":
+            stages = await self._worker_stage_sequence()
+            if not stages and self._stderr_tail:
+                stages = _stderr_stages(self._stderr_tail)
+        else:
+            stages = _stderr_stages(self._stderr_tail) if self._stderr_tail else ()
+        if failure_class == "exit-before-response" and self.process.returncode is None:
+            # Pipe EOF may arrive before the subprocess transport reports exit.
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self.process.wait(), timeout=0.2)
+        return WorkerFailureDiagnostics(
+            stage_sequence=stages,
+            failure_class=failure_class,
+            exit_code=self.process.returncode,
+        )
+
+    async def _worker_stage_sequence(self) -> tuple[str, ...]:
         if not self._stderr_task.done():
-            with suppress(asyncio.TimeoutError, asyncio.CancelledError):
+            try:
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=0.2)
+            except TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                # The capture task's own cancellation must propagate. shield()
+                # leaves the stderr task running in that case; a cancelled
+                # stderr task is the only CancelledError that stops here.
+                if not self._stderr_task.cancelled():
+                    raise
         if not self._stderr_task.done() or self._stderr_task.cancelled():
-            return ""
+            return ()
         with suppress(Exception):
             return self._stderr_task.result()
-        return ""
+        return ()
 
     async def close(self) -> None:
+        if self._closed:
+            return
         if self.process.returncode is None:
             with suppress(ProcessLookupError):
                 self.process.terminate()
@@ -723,25 +840,35 @@ class _SessionWorker:
             self._stderr_task.cancel()
         with suppress(asyncio.CancelledError):
             await self._stderr_task
+        self._closed = True
+        if self.process.returncode is not None and self._temp_dir is not None:
+            await asyncio.to_thread(_remove_session_temp_dir, self._temp_dir)
 
 
-async def _drain_stderr(stream: asyncio.StreamReader) -> str:
-    captured = bytearray()
+async def _drain_stderr(
+    stream: asyncio.StreamReader, captured: bytearray | None = None
+) -> tuple[str, ...]:
+    if captured is None:
+        captured = bytearray()
     while chunk := await stream.read(16 * 1024):
         captured.extend(chunk)
         if len(captured) > 64 * 1024:
             del captured[: -64 * 1024]
+    return _stderr_stages(captured)
+
+
+def _stderr_stages(captured: bytearray) -> tuple[str, ...]:
     stages = sanitize_worker_stage_sequence(
         WORKER_STAGE_PATTERN.findall(captured.decode("utf-8", errors="replace")),
         reject_unknown=False,
     )
-    return ">".join(stages[-MAX_WORKER_DIAGNOSTIC_STAGES:])
+    return stages[-MAX_WORKER_DIAGNOSTIC_STAGES:]
 
 
 def _segment_event(payload: bytes) -> ProgressiveSessionEvent:
     value = _json_object(payload)
     return ProgressiveSessionEvent(
-        StreamingEventType.SEGMENT,
+        CaptureEventType.SEGMENT,
         "extracting",
         partial_revision=int(value["partialRevision"]),
         covered_until_ms=int(value["coveredUntilMs"]),
@@ -757,7 +884,7 @@ def _segment_event(payload: bytes) -> ProgressiveSessionEvent:
 def _checkpoint_event(payload: bytes) -> ProgressiveSessionEvent:
     value = _json_object(payload)
     return ProgressiveSessionEvent(
-        StreamingEventType.CHECKPOINT,
+        CaptureEventType.CHECKPOINT,
         "checkpoint",
         partial_revision=int(value["partialRevision"]),
         covered_until_ms=int(value["coveredUntilMs"]),
@@ -767,9 +894,9 @@ def _checkpoint_event(payload: bytes) -> ProgressiveSessionEvent:
 def _failure_event(payload: bytes) -> ProgressiveSessionEvent:
     value = _json_object(payload)
     return ProgressiveSessionEvent(
-        StreamingEventType.FAILED,
+        CaptureEventType.FAILED,
         str(value.get("stage") or "extraction"),
-        error=CaptureFailureV2.model_validate(value),
+        error=OperationFailure.model_validate(value),
     )
 
 
@@ -779,9 +906,9 @@ def _terminal_event(
     return any(
         event.event_type
         in {
-            StreamingEventType.FAILED,
-            StreamingEventType.CANCELLED,
-            StreamingEventType.COMPLETED,
+            CaptureEventType.FAILED,
+            CaptureEventType.CANCELLED,
+            CaptureEventType.COMPLETED,
         }
         for event in events
     )
@@ -797,4 +924,4 @@ def _json_object(payload: bytes) -> dict[str, Any]:
     return value
 
 
-__all__ = ["ProgressiveCaptureProcessor"]
+__all__ = ["ProgressiveCaptureProcessor", "ProgressiveWorkerFailure"]

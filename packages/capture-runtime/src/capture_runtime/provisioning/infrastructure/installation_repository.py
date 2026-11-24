@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import threading
@@ -14,39 +15,74 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
+from capture_runtime.contract_set import canonical_json_bytes
 from capture_runtime.contracts import (
-    CaptureFailureV2,
+    OperationFailure,
+    RuntimeInstallation,
     RuntimeInstallationStatus,
-    RuntimeInstallationV2,
 )
 from capture_runtime.storage.common import (
     IdempotencyConflictError,
     RecordNotFoundError,
     atomic_json,
     dump_model,
+    project_stored_failure,
+    project_stored_requirement_id,
     record_identifier,
 )
 
 
+def _installation_fingerprint(requirement_id: str) -> str:
+    return hashlib.sha256(
+        canonical_json_bytes({"requirementId": requirement_id, "consent": True})
+    ).hexdigest()
+
+
 @dataclass(slots=True)
 class InstallationRecord:
-    job: RuntimeInstallationV2
+    job: RuntimeInstallation
     idempotency_key: str
     request_fingerprint: str
+    historical_requirement_id: str | None = None
+    # A failure as a 0.10.x runtime stored it, while the job still reports it.
+    historical_error: dict[str, Any] | None = None
 
     def dump(self) -> dict[str, object]:
+        job = dump_model(self.job)
+        if self.historical_requirement_id is not None:
+            job["requirementId"] = self.historical_requirement_id
+        if self.historical_error is not None and job.get("error") == project_stored_failure(
+            self.historical_error
+        ):
+            job["error"] = self.historical_error
         return {
-            "job": dump_model(self.job),
+            "job": job,
             "idempotencyKey": self.idempotency_key,
             "requestFingerprint": self.request_fingerprint,
         }
 
     @classmethod
     def load(cls, payload: dict[str, Any]) -> InstallationRecord:
+        job = payload["job"]
+        historical_requirement_id = None
+        historical_error = None
+        if isinstance(job, dict):
+            stored_id = job.get("requirementId")
+            current_id = project_stored_requirement_id(stored_id)
+            if current_id != stored_id:
+                historical_requirement_id = stored_id
+                job = {**job, "requirementId": current_id}
+            stored_error = job.get("error")
+            current_error = project_stored_failure(stored_error)
+            if current_error is not stored_error:
+                historical_error = stored_error
+                job = {**job, "error": current_error}
         return cls(
-            job=RuntimeInstallationV2.model_validate(payload["job"]),
+            job=RuntimeInstallation.model_validate(job),
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
+            historical_requirement_id=historical_requirement_id,
+            historical_error=historical_error,
         )
 
 
@@ -97,12 +133,20 @@ class InstallationRepository:
             existing_id = self._idempotency.get(idempotency_key)
             if existing_id is not None:
                 existing = self._records[existing_id]
-                if existing.request_fingerprint != request_fingerprint:
+                if existing.job.requirement_id != requirement_id or not (
+                    existing.request_fingerprint == request_fingerprint
+                    or (
+                        existing.historical_requirement_id is not None
+                        and existing.request_fingerprint
+                        == _installation_fingerprint(existing.historical_requirement_id)
+                        and request_fingerprint == _installation_fingerprint(requirement_id)
+                    )
+                ):
                     raise IdempotencyConflictError(idempotency_key)
                 return existing, False
             now = self._clock.now()
             installation_id = str(uuid4())
-            job = RuntimeInstallationV2(
+            job = RuntimeInstallation(
                 installation_id=installation_id,
                 requirement_id=requirement_id,
                 status=RuntimeInstallationStatus.QUEUED,
@@ -124,7 +168,7 @@ class InstallationRepository:
             except KeyError as error:
                 raise RecordNotFoundError(installation_id) from error
 
-    def list(self) -> list[RuntimeInstallationV2]:
+    def list(self) -> list[RuntimeInstallation]:
         with self._lock:
             return sorted(
                 (record.job for record in self._records.values()),
@@ -132,11 +176,14 @@ class InstallationRepository:
                 reverse=True,
             )
 
-    def update_job(self, installation_id: str, job: RuntimeInstallationV2) -> InstallationRecord:
+    def update_job(
+        self, installation_id: str, job: RuntimeInstallation, *, persist: bool = True
+    ) -> InstallationRecord:
         with self._lock:
             record = self.get(installation_id)
             record.job = job
-            self._persist(record)
+            if persist:
+                self._persist(record)
             return record
 
     def recover_interrupted(self) -> None:
@@ -151,7 +198,7 @@ class InstallationRepository:
                 record.job = record.job.model_copy(
                     update={
                         "status": RuntimeInstallationStatus.FAILED,
-                        "error": CaptureFailureV2(
+                        "error": OperationFailure(
                             code="runtime_restarted",
                             message="Capture Runtime restarted before installation completed.",
                             stage="runtime",

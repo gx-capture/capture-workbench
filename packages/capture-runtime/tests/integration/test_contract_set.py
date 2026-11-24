@@ -19,6 +19,7 @@ from capture_runtime.contract_set import (
     validate_route_inventory,
 )
 from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
+from capture_runtime.storage.common import RETIRED_FAILURE_CODES
 from tests.conftest import TOKEN
 
 
@@ -31,7 +32,7 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert first.sha256 == hashlib.sha256(first.bundle_bytes).hexdigest()
     assert first.index["sha256"] == first.sha256
     assert {surface["id"] for surface in first.bundle["surfaces"]} == {"v2"}
-    assert len(first.bundle["operations"]) == 33
+    assert len(first.bundle["operations"]) == 32
     assert {operation["surface"] for operation in first.bundle["operations"]} == {"v2"}
     assert any(
         operation["path"] == "/v2/captures/{capture_id}/events"
@@ -58,7 +59,7 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert (uninstall["method"], uninstall["path"], uninstall["responseSchema"]) == (
         "DELETE",
         "/v2/runtime/requirements/{requirement_id}/installation",
-        "RuntimeRequirementV2",
+        "RuntimeRequirement",
     )
     assert uninstall["idempotency"]["mode"] == "none"
     assert {
@@ -66,14 +67,69 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
         "requirement_disabled",
         "requirement_not_uninstallable",
         "requirement_in_use",
+        "uninstall_failed",
     } <= set(uninstall["problems"])
+    structure = next(
+        operation
+        for operation in first.bundle["operations"]
+        if operation["id"] == "v2.captures.structure"
+    )
+    result = next(
+        operation
+        for operation in first.bundle["operations"]
+        if operation["id"] == "v2.captures.result"
+    )
+    # POST /structure returns the document; GET /result returns the terminal envelope.
+    assert (structure["responseSchema"], result["responseSchema"]) == (
+        "CaptureDocument",
+        "CaptureResult",
+    )
+    assert list(structure["problems"]) == [
+        "unauthorized",
+        "invalid_host",
+        "origin_not_allowed",
+        "validation_error",
+        "capture_not_found",
+        "raw_unavailable",
+        "invalid_capture_state",
+        "requirement_unavailable",
+        "structuring_invalid_output",
+    ]
     assert any(schema["name"] == "CaptureDocument" for schema in first.bundle["schemas"])
     unauthorized = next(
         problem for problem in first.bundle["problems"] if problem["code"] == "unauthorized"
     )
     assert unauthorized["category"] == "authentication"
     assert unauthorized["retryable"] is False
-    assert unauthorized["detailsSchema"] == "ErrorDetailsV2"
+    assert unauthorized["detailsSchema"] == "ErrorDetails"
+
+
+def test_http_problems_and_job_failure_codes_are_separate_catalogues() -> None:
+    bundle = load_contract_set().bundle
+    problems = {problem["code"] for problem in bundle["problems"]}
+    failures = {failure["code"] for failure in bundle["failureCodes"]}
+    # A code is in both only when an HTTP response and a failed job both use it.
+    assert problems & failures == {"requirement_unavailable", "structuring_invalid_output"}
+    assert {
+        "extraction_failed",
+        "capture_interrupted",
+        "extraction_output_invalid",
+        "extraction_no_text",
+        "ingestion_source_unavailable",
+        "extraction_runtime_unavailable",
+        "speech_recognition_worker_failed",
+        "speaker_identification_worker_failed",
+        "ocr_worker_failed",
+        "installation_timeout",
+        "installation_io_failed",
+        "runtime_restarted",
+    } <= failures
+    assert "uninstall_failed" in problems
+    # Codes only 0.10.x runtimes wrote are read under their current names and
+    # are in neither published catalogue.
+    for retired in RETIRED_FAILURE_CODES:
+        assert retired not in problems | failures
+    assert all(set(failure) == {"code", "message"} for failure in bundle["failureCodes"])
 
 
 def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None:
@@ -119,7 +175,8 @@ def test_contract_discovery_requires_bearer_and_serves_verified_bundle(client) -
     assert index_response.headers["etag"] == f'"{contract_set.sha256}"'
     assert index_response.headers["x-contract-sha256"] == contract_set.sha256
     index = index_response.json()
-    assert index["catalogVersion"] == "2"
+    assert index["contractSetVersion"] == "2"
+    assert "catalogVersion" not in index
     assert index["runtimeVersion"] == RUNTIME_VERSION
     assert index["sha256"] == contract_set.sha256
     assert index["href"].endswith(f"/sha256/{contract_set.sha256}")
@@ -225,13 +282,30 @@ def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
 
 def test_contract_set_does_not_change_with_the_release_version() -> None:
     from capture_runtime.constants import RUNTIME_VERSION
-    from capture_runtime.contracts import RuntimeReady
+    from capture_runtime.contracts import (
+        CaptureSourceKind,
+        RuntimeCapabilities,
+        RuntimeReady,
+        StructuringMode,
+    )
 
     bundle = load_contract_set().bundle_bytes
     assert RUNTIME_VERSION.encode() not in bundle
 
+    capabilities = RuntimeCapabilities(
+        capture_kinds=[CaptureSourceKind.PDF],
+        structuring_modes=[StructuringMode.HOST],
+        supports_cancellation=True,
+        supports_raw_diagnostics=True,
+        max_upload_bytes=1,
+        max_chunk_bytes=1,
+        checkpoint_interval_ms=1,
+        heartbeat_interval_ms=1,
+        stall_timeout_ms=1,
+        supports_progressive_recording=False,
+    )
     ready = RuntimeReady.model_validate(
-        RuntimeReady(ready=True).model_dump(mode="json", by_alias=True)
+        RuntimeReady(ready=True, capabilities=capabilities).model_dump(mode="json", by_alias=True)
         | {"runtimeVersion": "12.34.56"}
     )
     assert ready.runtime_version == "12.34.56"

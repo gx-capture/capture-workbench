@@ -42,10 +42,34 @@ async def _file_operation[**P, T](
 ) -> T:
     # A cancelled coroutine must finish its file IO before its caller releases
     # the cache lock or cleans up the partial download.
-    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    return await _drained(asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs)))
+
+
+async def _cancellable_file_operation[**P, T](
+    stop: asyncio.Event,
+    operation: Callable[P, T],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """A file operation that stops at its next check of the given event.
+
+    A cancelled task sets the event before draining the thread, so a shutdown
+    during an extraction waits for one chunk instead of the whole archive.
+    """
+
+    return await _drained(
+        asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs)),
+        on_cancel=stop.set,
+    )
+
+
+async def _drained[T](task: asyncio.Task[T], *, on_cancel: Callable[[], None] | None = None) -> T:
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
         while not task.done():
             with suppress(asyncio.CancelledError, Exception):
                 await asyncio.shield(task)
@@ -451,7 +475,7 @@ class _Plan:
                 _split_segments(self.total_bytes, count),
             )
         ]
-        _allocate(self.part_path, self.total_bytes)
+        await _file_operation(_allocate, self.part_path, self.total_bytes)
         await self.save()
 
     async def begin_parts(self, parts: tuple[EngineArtifactPart, ...]) -> None:
@@ -464,7 +488,7 @@ class _Plan:
             offset += part.bytes
         self.parts = slots
         self.preallocated = True
-        _allocate(self.part_path, self.total_bytes)
+        await _file_operation(_allocate, self.part_path, self.total_bytes)
         await self.save()
 
     async def rewind(self, part: _PartState) -> None:
@@ -638,6 +662,9 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 def _allocate(path: Path, size: int) -> None:
+    # On Windows the C runtime extends a file by writing its zeros, and the
+    # fsync then flushes them: tens of seconds for a 3 GB archive on a busy
+    # disk, so callers run this in a worker thread.
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
         handle.truncate(size)
@@ -646,14 +673,28 @@ def _allocate(path: Path, size: int) -> None:
 
 
 async def _checkpoint(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
-    """Make the segment's new bytes durable, then record them in the sidecar."""
+    """Make the segment's new bytes durable, then record them in the sidecar.
+
+    A started checkpoint finishes before a cancellation propagates: bytes
+    already flushed are recorded, so the next attempt resumes after them.
+    The receiving loop awaits this before its next write to the handle.
+    """
 
     if segment.saved == segment.received and not plan._progress_stale:
         return
+    await _drained(asyncio.create_task(_record_durable_bytes(writer, plan, segment)))
+
+
+async def _record_durable_bytes(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
+    received = segment.received
+    await _file_operation(_flush_durably, writer)
+    segment.saved = received
+    await plan.save()
+
+
+def _flush_durably(writer: BinaryIO) -> None:
     writer.flush()
     os.fsync(writer.fileno())
-    segment.saved = segment.received
-    await plan.save()
 
 
 @contextmanager

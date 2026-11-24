@@ -9,8 +9,24 @@ import {
   describeAsrDocument,
   describeAsrLiveCapture,
   sortAsrDocumentsOldestFirst,
+  type AsrQueueView,
 } from './asr-queue';
 import { MAX_PLAYBACK_BYTES } from './recording-playback';
+
+interface RowRun {
+  readonly owned?: boolean;
+  readonly cancelling?: boolean;
+  readonly unstored?: boolean;
+  readonly failureReason?: string;
+}
+
+function rowActions(row: AsrQueueView): readonly string[] {
+  return [
+    ...(row.canCancel ? [row.cancelling ? 'cancel (applying)' : 'cancel'] : []),
+    ...(row.canStartAgain ? ['start again'] : []),
+    ...(row.canView ? ['view'] : []),
+  ];
+}
 
 function makeRecording(
   overrides: Partial<DesktopLibrarySummary> = {},
@@ -96,6 +112,100 @@ describe('ASR queue selectors', () => {
     ]);
   });
 
+  // A row is shown from the stored document and "this run owns it" only.
+  // Actions: Cancel, Start again, View (with exports on a finished row).
+  it.each<[string, Partial<DesktopLibrarySummary>, RowRun, string, string, readonly string[], string]>([
+    ['waiting', { status: 'queued' }, {}, 'waiting', '等待中', ['cancel'], ''],
+    ['waiting, its start or cancel not stored in this run', { status: 'queued' }, { unstored: true },
+      'needs-attention', '需要處理', ['start again'], ''],
+    ['waiting, its start not stored because the read of its stored row failed', { status: 'queued' },
+      { unstored: true, failureReason: 'library unreadable' }, 'needs-attention', '需要處理', ['start again'], 'library unreadable'],
+    ['left processing by this run’s failed result write', { status: 'processing', captureId: 'capture-1' },
+      { unstored: true, failureReason: 'the disk is full' }, 'needs-attention', '已中斷', ['start again'], 'the disk is full'],
+    ['started by this run', { status: 'queued' }, { owned: true }, 'processing', '處理中', ['cancel'], ''],
+    ['captured by this run', { status: 'processing', captureId: 'capture-1' }, { owned: true },
+      'processing', '處理中', ['cancel'], ''],
+    ['being cancelled by this run', { status: 'processing', captureId: 'capture-1' }, { owned: true, cancelling: true },
+      'processing', '取消中', ['cancel (applying)'], ''],
+    ['left processing by another run', { status: 'processing', captureId: 'capture-1' }, {},
+      'needs-attention', '已中斷', ['start again'], ''],
+    ['left processing before its link was written', { status: 'processing' }, {},
+      'needs-attention', '已中斷', ['start again'], ''],
+    ['an earlier version’s persisting row', { status: 'persisting', captureId: 'capture-1' }, {},
+      'needs-attention', '已中斷', ['start again'], ''],
+    ['waiting with a link', { status: 'queued', captureId: 'capture-1' }, {},
+      'needs-attention', '已中斷', ['start again'], ''],
+    ['waiting with a raw result', { status: 'queued', hasRaw: true }, {},
+      'needs-attention', '已中斷', ['view'], ''],
+    ['a checkpoint with raw text', { status: 'awaiting_confirmation', hasRaw: true }, {},
+      'needs-attention', '已中斷', ['view'], ''],
+    ['a checkpoint without raw text', { status: 'awaiting_confirmation' }, {},
+      'needs-attention', '已中斷', ['start again'], ''],
+    ['completed', { status: 'completed', hasRaw: true }, {}, 'done', '完成', ['view'], ''],
+    ['failed', { status: 'failed', errorMessage: 'broken' }, {}, 'needs-attention', '需要處理', ['start again'], 'broken'],
+    ['failed with an earlier version’s raw result', { status: 'failed', hasRaw: true }, {},
+      'needs-attention', '需要處理', ['view'], ''],
+    ['an earlier version’s recovery failure', {
+      status: 'failed', recoveryCode: 'capture_recovery_required', errorMessage: 'lost',
+    }, {}, 'needs-attention', '已中斷', ['start again'], ''],
+    ['cancelled', { status: 'canceled' }, {}, 'cancelled', '已取消', ['start again'], ''],
+    ['an earlier version’s recovery row', {
+      status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'capture_recovery_required',
+    }, {}, 'needs-attention', '已中斷', ['start again'], ''],
+    ['an earlier version’s failed cleanup after a failure', {
+      status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage: 'failed',
+      errorMessage: 'broken',
+    }, {}, 'needs-attention', '需要處理', ['start again'], 'broken'],
+    ['an earlier version’s failed cleanup after completion', {
+      status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage: 'completed', hasRaw: true,
+    }, {}, 'done', '完成', ['view'], ''],
+  ])('shows a row %s', (_case, stored, run, userStatus, statusText, actions, errorMessage) => {
+    const described = describeAsrDocument({
+      document: makeRecording(stored),
+      owned: run.owned ?? false,
+      cancelling: run.cancelling,
+      unstored: run.unstored,
+      failureReason: run.failureReason,
+      speechReady: true,
+      installPercent: null,
+    });
+
+    expect([described.userStatus, described.statusText, rowActions(described)]).toEqual([userStatus, statusText, actions]);
+    expect(described.interrupted).toBe(statusText === '已中斷');
+    expect(described.errorMessage).toBe(errorMessage);
+  });
+
+  it.each<[string, Partial<DesktopLibrarySummary>, string, string]>([
+    ['done', { status: 'completed', stage: 'completed', hasRaw: true }, '完成', ''],
+    ['cancelled', { status: 'canceled', stage: 'cancelled' }, '已取消', ''],
+    ['failed as stored', { status: 'failed', errorCode: 'capture_failed', errorMessage: 'broken' }, '需要處理', 'broken'],
+  ])('shows a row shown %s with this run’s reason by what is stored', (_case, stored, statusText, errorMessage) => {
+    const described = describeAsrDocument({
+      document: makeRecording(stored),
+      owned: false,
+      unstored: true,
+      failureReason: 'the disk is full',
+      speechReady: true,
+      installPercent: null,
+    });
+
+    expect([described.statusText, described.failureReason, described.errorMessage])
+      .toEqual([statusText, null, errorMessage]);
+  });
+
+  it('offers the text export of an earlier version’s row whose cleanup failed after completion', () => {
+    const described = describeAsrDocument({
+      document: makeRecording({
+        status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage: 'completed', hasRaw: true,
+      }),
+      owned: false,
+      speechReady: true,
+      installPercent: null,
+    });
+
+    expect(described).toMatchObject({ userStatus: 'done', statusText: '完成', canView: true, canExport: true });
+  });
+
   it('maps user statuses, speaker counts, exportability, and playback unavailability notes', () => {
     const detail = {
       ...makeRecording({ status: 'completed' }),
@@ -124,11 +234,12 @@ describe('ASR queue selectors', () => {
     const doneView = describeAsrDocument({
       document: makeRecording({
         status: 'completed',
+        hasRaw: true,
         durationMs: 3160_000,
         byteLength: MAX_PLAYBACK_BYTES + 1,
       }),
       detail,
-      busy: false,
+      owned: false,
       speechReady: true,
       installPercent: null,
     });
@@ -141,7 +252,7 @@ describe('ASR queue selectors', () => {
 
     const interruptedView = describeAsrDocument({
       document: makeRecording({ status: 'processing', captureId: undefined }),
-      busy: false,
+      owned: false,
       speechReady: true,
       installPercent: null,
     });

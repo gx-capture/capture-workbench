@@ -17,9 +17,9 @@ describe('diagnostics pure functions', () => {
       service: 'capture-runtime',
       runtimeVersion: '0.0.0-test',
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       workerSha256: 'b'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,
@@ -49,7 +49,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: '0.0.0-test',
       apiVersion: '2.0',
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
     });
 
     expect(
@@ -67,7 +67,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: null,
       apiVersion: null,
       contractSetVersion: null,
-      contractSha256: null,
+      contractSetSha256: null,
     });
 
     expect(
@@ -85,7 +85,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: null,
       apiVersion: null,
       contractSetVersion: null,
-      contractSha256: null,
+      contractSetSha256: null,
     });
 
     // The readiness check itself failed: there is no status object at all.
@@ -104,11 +104,23 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: null,
       apiVersion: null,
       contractSetVersion: null,
-      contractSha256: null,
+      contractSetSha256: null,
     });
   });
 
-  it('computes provenance for a document without a structured result and without evidence', () => {
+  it.each([
+    {
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
+      device: 'directml',
+    },
+    {
+      engine: 'windowsml-ocr',
+      model: 'pp-ocrv6-medium-windowsml',
+      device: 'windowsml-dml',
+    },
+  ])('displays recorded $engine provenance from an unstructured document', (identity) => {
+    const extraction = { ...identity, digest: `sha256:${'e'.repeat(64)}` };
     const detail: DesktopLibraryDetail = {
       documentId: 'c'.repeat(32),
       fileName: 'scan.pdf',
@@ -128,34 +140,21 @@ describe('diagnostics pure functions', () => {
         },
         segments: [],
         sourceText: 'hello',
-        extractionEngine: {
-          engine: 'windowsml-ocr',
-          model: 'ocr-test-model',
-          device: 'windowsml-dml',
-          digest: `sha256:${'e'.repeat(64)}`,
-        },
+        extractionEngine: extraction,
         createdAt: '2026-11-16T00:00:00Z',
       } as unknown as DesktopLibraryDetail['raw'],
     };
 
+    // The recorded engine names no device name, and the view says so.
+    const extractionView = { ...extraction, deviceName: null };
     expect(buildDocumentProvenance(detail)).toEqual({
-      extraction: {
-        engine: 'windowsml-ocr',
-        model: 'ocr-test-model',
-        device: 'windowsml-dml',
-        digest: `sha256:${'e'.repeat(64)}`,
-      },
+      extraction: extractionView,
       structuring: null,
     });
     expect(buildDiagnosticsDocumentView(detail)).toEqual({
       documentId: 'c'.repeat(32),
       fileName: 'scan.pdf',
-      extraction: {
-        engine: 'windowsml-ocr',
-        model: 'ocr-test-model',
-        device: 'windowsml-dml',
-        digest: `sha256:${'e'.repeat(64)}`,
-      },
+      extraction: extractionView,
       structuring: null,
       evidence: null,
       canExportJson: true,
@@ -174,7 +173,7 @@ describe('diagnostics pure functions', () => {
       result: {
         targetText: 'structured',
         extractionEngine: {
-          engine: 'windowsml',
+          engine: 'text-recognition',
           model: 'ocr-v1',
           device: 'dml',
           digest: `sha256:${'1'.repeat(64)}`,
@@ -182,6 +181,8 @@ describe('diagnostics pure functions', () => {
         structuringEngine: {
           engine: 'ollama',
           model: 'qwen-test',
+          device: 'cuda',
+          deviceName: 'GPU example',
           digest: `sha256:${'2'.repeat(64)}`,
         },
       } as unknown as DesktopLibraryDetail['result'],
@@ -207,7 +208,7 @@ describe('diagnostics pure functions', () => {
           status: 'resolved',
           runtimeVersion: '0.0.0-test',
           contractSha256: '4'.repeat(64),
-          engine: 'windowsml',
+          engine: 'text-recognition',
           model: 'ocr-v1',
           modelDigest: `sha256:${'1'.repeat(64)}`,
           device: 'dml',
@@ -223,15 +224,17 @@ describe('diagnostics pure functions', () => {
       documentId: 'f'.repeat(32),
       fileName: 'contract.pdf',
       extraction: {
-        engine: 'windowsml',
+        engine: 'text-recognition',
         model: 'ocr-v1',
         device: 'dml',
+        deviceName: null,
         digest: `sha256:${'1'.repeat(64)}`,
       },
       structuring: {
         engine: 'ollama',
         model: 'qwen-test',
-        device: null,
+        device: 'cuda',
+        deviceName: 'GPU example',
         digest: `sha256:${'2'.repeat(64)}`,
       },
       evidence: {

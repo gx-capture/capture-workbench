@@ -69,7 +69,7 @@ def _snapshot(
 
 def _plan(snapshot: OcrGpuCapabilitySnapshot, **kwargs: object):
     return OcrComputePlan(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         worker_sha256=WORKER_SHA256,
         capability_probe=StaticProbe(snapshot),
         **kwargs,
@@ -111,7 +111,7 @@ def test_ordinary_ordinal_is_ort_device_id_when_preference_ranks_are_reversed() 
     selection = _plan(_snapshot(high=high, ordinary=ordinary))
 
     assert selection is not None
-    assert selection.execution_plan.mode is OcrComputeMode.GPU_DML
+    assert selection.execution_plan.mode is OcrComputeMode.GPU
     assert selection.execution_plan.dml_device_id == 1
     assert selection.execution_plan.high_performance_rank == 0
     assert selection.execution_plan.identity is not None
@@ -155,13 +155,13 @@ def test_positive_unavailable_dgpu_selects_usable_igpu() -> None:
     selection = _plan(_snapshot(high=(dgpu, igpu), ordinary=(igpu, dgpu)))
 
     assert selection is not None
-    assert selection.execution_plan.mode is OcrComputeMode.GPU_DML
+    assert selection.execution_plan.mode is OcrComputeMode.GPU
     assert selection.execution_plan.adapter_class is OcrAdapterClass.INTEGRATED
     assert selection.execution_plan.dml_device_id == 0
     assert selection.execution_plan.high_performance_rank == 1
     assert selection.execution_plan.identity is not None
     assert selection.execution_plan.identity.luid == "00000000000000aa"
-    assert selection.readiness.mode is OcrComputeMode.GPU_DML
+    assert selection.readiness.mode is OcrComputeMode.GPU
     assert selection.readiness.adapter_class is OcrAdapterClass.INTEGRATED
     assert selection.readiness.user_notice_required is False
 
@@ -259,7 +259,7 @@ def test_ordinal_override_is_rejected_at_the_canonical_plan_boundary() -> None:
     )
     with pytest.raises(TypeError):
         OcrComputePlan(
-            contract_sha256=CONTRACT_SHA256,
+            contract_set_sha256=CONTRACT_SHA256,
             capability_probe=StaticProbe(
                 _snapshot(high=(gpu, integrated), ordinary=(integrated, gpu))
             ),

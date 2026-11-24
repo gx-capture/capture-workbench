@@ -36,16 +36,16 @@ describe('CaptureWorkbenchComponent', () => {
         (): ReturnType<CaptureClient['getRequirements']> =>
           of([
             {
-              requirementId: 'ollama-runtime',
-              kind: 'runtime',
+              requirementId: 'structuring-runtime',
+              kind: 'structuring-runtime',
               displayName: 'Ollama',
               status: 'installable',
               requiredFor: ['runtime'],
               installStrategy: 'winget',
             },
             {
-              requirementId: 'capture-ollama-model',
-              kind: 'model',
+              requirementId: 'structuring-model',
+              kind: 'structuring-model',
               displayName: 'Capture model',
               status: 'manual_action_required',
               requiredFor: ['runtime'],
@@ -54,10 +54,10 @@ describe('CaptureWorkbenchComponent', () => {
             },
             {
               requirementId: 'speech-recognition',
-              kind: 'stt',
+              kind: 'speech-recognition',
               displayName: 'Speech recognition',
               status: 'unavailable',
-              requiredFor: ['audio'],
+              requiredFor: ['recording'],
               installStrategy: 'none',
               detail: 'Speech recognition is unavailable.',
             },
@@ -91,7 +91,7 @@ describe('CaptureWorkbenchComponent', () => {
         ) as NodeListOf<HTMLElement>,
         (element) => element.dataset['requirementId'],
       ),
-    ).toEqual(['ollama-runtime', 'capture-ollama-model', 'speech-recognition']);
+    ).toEqual(['structuring-runtime', 'structuring-model', 'speech-recognition']);
     const installButton = captureWorkbenchRoot(fixture).querySelector(
       '.runtime-card .primary',
     ) as HTMLButtonElement | null;
@@ -100,7 +100,7 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
     expect(client.startInstallation).toHaveBeenCalledWith(
       expect.objectContaining({
-        requirementId: 'ollama-runtime',
+        requirementId: 'structuring-runtime',
         consent: true,
       }),
       expect.any(AbortSignal),
@@ -122,14 +122,14 @@ describe('CaptureWorkbenchComponent', () => {
       getReady: vi.fn(() => of({ ...READY, ready: false })),
       getRequirements: vi.fn(() =>
         of(
-          (['windowsml-ocr', 'speech-recognition'] as const).map(
+          (['text-recognition', 'speech-recognition'] as const).map(
             (requirementId): RuntimeRequirement => ({
               requirementId,
-              kind: 'model',
+              kind: requirementId,
               displayName: requirementId,
               status: 'unavailable',
               requiredFor:
-                requirementId === 'windowsml-ocr' ? ['pdf'] : ['audio'],
+                requirementId === 'text-recognition' ? ['pdf'] : ['recording'],
               installStrategy: 'runtime-catalog',
               detail,
             }),
@@ -160,10 +160,10 @@ describe('CaptureWorkbenchComponent', () => {
           of([
             {
               requirementId: 'speech-recognition',
-              kind: 'transcription',
+              kind: 'speech-recognition',
               displayName: 'Speech recognition',
               status: 'installable',
-              requiredFor: ['audio'],
+              requiredFor: ['recording'],
               installStrategy: 'runtime-catalog',
               optional: true,
             } satisfies RuntimeRequirement,
@@ -201,36 +201,36 @@ describe('CaptureWorkbenchComponent', () => {
           of([
             {
               requirementId: 'speech-recognition',
-              kind: 'transcription',
+              kind: 'speech-recognition',
               displayName: 'Speech recognition',
               status: 'installable',
-              requiredFor: ['audio'],
+              requiredFor: ['recording'],
               installStrategy: 'runtime-catalog',
               optional: true,
               downloadBytes: 2_800_000_000,
             },
             {
               requirementId: 'speaker-diarization',
-              kind: 'speaker-identification',
+              kind: 'speaker-diarization',
               displayName: 'Speakers',
               status: 'installable',
-              requiredFor: ['audio'],
+              requiredFor: ['recording'],
               installStrategy: 'runtime-catalog',
               optional: true,
               downloadBytes: 0,
             },
             {
-              requirementId: 'windowsml-ocr',
-              kind: 'ocr',
-              displayName: 'WindowsML OCR',
+              requirementId: 'text-recognition',
+              kind: 'text-recognition',
+              displayName: 'Text recognition',
               status: 'installable',
               requiredFor: ['pdf', 'image'],
               installStrategy: 'runtime-catalog',
               downloadBytes: 144_000_000,
             },
             {
-              requirementId: 'ollama-runtime',
-              kind: 'runtime',
+              requirementId: 'structuring-runtime',
+              kind: 'structuring-runtime',
               displayName: 'Ollama',
               status: 'installable',
               requiredFor: ['runtime'],
@@ -250,14 +250,14 @@ describe('CaptureWorkbenchComponent', () => {
         `[data-requirement-id="${requirementId}"] [data-testid="capture-download-size"]`,
       );
     expect(sizeOf('speech-recognition')?.textContent).toBe('約 2.8 GB');
-    expect(sizeOf('windowsml-ocr')?.textContent).toBe('約 144 MB');
+    expect(sizeOf('text-recognition')?.textContent).toBe('約 144 MB');
     expect(
       root.querySelector(
-        '[data-requirement-id="windowsml-ocr"] [data-testid="capture-unit-guide"]',
+        '[data-requirement-id="text-recognition"] [data-testid="capture-unit-guide"]',
       ),
     ).toBeNull();
     expect(sizeOf('speaker-diarization')).toBeNull();
-    expect(sizeOf('ollama-runtime')).toBeNull();
+    expect(sizeOf('structuring-runtime')).toBeNull();
     expect(
       root.querySelector(
         '[data-requirement-id="speaker-diarization"] [data-testid="capture-unit-guide"]',
@@ -270,25 +270,25 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.detectChanges();
 
     expect(sizeOf('speech-recognition')?.textContent).toBe('~2.8 GB');
-    expect(sizeOf('windowsml-ocr')?.textContent).toBe('~144 MB');
+    expect(sizeOf('text-recognition')?.textContent).toBe('~144 MB');
     expect(sizeOf('speaker-diarization')).toBeNull();
-    expect(sizeOf('ollama-runtime')).toBeNull();
+    expect(sizeOf('structuring-runtime')).toBeNull();
   });
 
   it('installs OCR before Whisper even when the runtime lists dependencies in reverse order', async () => {
     const requirements: readonly RuntimeRequirement[] = [
       {
         requirementId: 'speech-recognition',
-        kind: 'stt',
+        kind: 'speech-recognition',
         displayName: 'Speech recognition',
         status: 'installable',
-        requiredFor: ['audio'],
+        requiredFor: ['recording'],
         installStrategy: 'runtime-catalog',
       },
       {
-        requirementId: 'windowsml-ocr',
-        kind: 'ocr',
-        displayName: 'WindowsML OCR',
+        requirementId: 'text-recognition',
+        kind: 'text-recognition',
+        displayName: 'Text recognition',
         status: 'installable',
         requiredFor: ['pdf', 'image'],
         installStrategy: 'runtime-catalog',
@@ -320,21 +320,21 @@ describe('CaptureWorkbenchComponent', () => {
 
     expect(
       startInstallation.mock.calls.map(([request]) => request.requirementId),
-    ).toEqual(['windowsml-ocr', 'speech-recognition']);
+    ).toEqual(['text-recognition', 'speech-recognition']);
   });
 
-  it('retries an uncertain installation once and installs a newly unlocked model', async () => {
+  it('retries an uncertain installation once and leaves the model to model installation', async () => {
     const ollamaRuntime: RuntimeRequirement = {
-      requirementId: 'ollama-runtime',
-      kind: 'runtime',
+      requirementId: 'structuring-runtime',
+      kind: 'structuring-runtime',
       displayName: 'Ollama',
       status: 'installable',
       requiredFor: ['runtime'],
       installStrategy: 'winget',
     };
     const captureModel: RuntimeRequirement = {
-      requirementId: 'capture-ollama-model',
-      kind: 'model',
+      requirementId: 'structuring-model',
+      kind: 'structuring-model',
       displayName: 'Capture model',
       status: 'manual_action_required',
       requiredFor: ['runtime'],
@@ -346,7 +346,8 @@ describe('CaptureWorkbenchComponent', () => {
     ];
     const modelInstallable: readonly RuntimeRequirement[] = [
       // A stale runtime probe must not cause the already-completed ID to be
-      // repeated; the newly unlocked model should still be selected.
+      // repeated. The structuring model is installed with a chosen option
+      // through model installation, never through a general installation.
       ollamaRuntime,
       { ...captureModel, status: 'installable' },
     ];
@@ -384,25 +385,20 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.componentInstance.store.installMissingRequirements();
     await fixture.whenStable();
 
-    expect(startInstallation).toHaveBeenCalledTimes(3);
+    expect(startInstallation).toHaveBeenCalledTimes(2);
     const firstRequest = startInstallation.mock.calls[0]?.[0];
     const retryRequest = startInstallation.mock.calls[1]?.[0];
-    const modelRequest = startInstallation.mock.calls[2]?.[0];
     expect(firstRequest).toBe(retryRequest);
     expect(retryRequest?.clientRequestId).toBe(firstRequest?.clientRequestId);
-    expect(firstRequest?.requirementId).toBe('ollama-runtime');
-    expect(modelRequest?.requirementId).toBe('capture-ollama-model');
-    expect(modelRequest?.clientRequestId).not.toBe(
-      firstRequest?.clientRequestId,
-    );
-    expect(getRequirements).toHaveBeenCalledTimes(3);
+    expect(firstRequest?.requirementId).toBe('structuring-runtime');
+    expect(getRequirements).toHaveBeenCalledTimes(2);
     expect(fixture.componentInstance.installation()).toBeNull();
   });
 
   it('does not retry an installation after an abort response', async () => {
     const requirement: RuntimeRequirement = {
-      requirementId: 'ollama-runtime',
-      kind: 'runtime',
+      requirementId: 'structuring-runtime',
+      kind: 'structuring-runtime',
       displayName: 'Ollama',
       status: 'installable',
       requiredFor: ['runtime'],

@@ -35,18 +35,18 @@ pub(crate) fn terminate_unassigned_child(child: &mut Child) -> Result<(), String
         Ok(None) => {
             if terminate_windows_tree(child.id()).is_err() {
                 child.kill().map_err(|error| {
-                    format!("Unassigned runtime root process could not be stopped: {error}")
+                    format!("Unassigned sidecar root process could not be stopped: {error}")
                 })?;
             }
         }
         Err(error) => {
-            child.kill().map_err(|kill_error| format!("Unassigned runtime root liveness could not be proven ({error}) and its process handle could not be terminated: {kill_error}"))?;
+            child.kill().map_err(|kill_error| format!("Unassigned sidecar root liveness could not be proven ({error}) and its process handle could not be terminated: {kill_error}"))?;
         }
     }
     child
         .wait()
         .map(|_| ())
-        .map_err(|error| format!("Unassigned runtime root process could not be reaped: {error}"))
+        .map_err(|error| format!("Unassigned sidecar root process could not be reaped: {error}"))
 }
 
 #[cfg(windows)]
@@ -56,13 +56,13 @@ pub(crate) fn terminate_assigned_suspended_child(
 ) -> Result<(), String> {
     if job.terminate().is_err() && child.try_wait().ok().flatten().is_none() {
         child.kill().map_err(|error| {
-            format!("Assigned suspended runtime root could not be stopped: {error}")
+            format!("Assigned suspended sidecar root could not be stopped: {error}")
         })?;
     }
     child
         .wait()
         .map(|_| ())
-        .map_err(|error| format!("Assigned suspended runtime root could not be reaped: {error}"))
+        .map_err(|error| format!("Assigned suspended sidecar root could not be reaped: {error}"))
 }
 
 #[cfg(windows)]
@@ -70,7 +70,7 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Err(format!(
-            "The suspended runtime thread snapshot could not be created: {}",
+            "The suspended sidecar thread snapshot could not be created: {}",
             io::Error::last_os_error()
         ));
     }
@@ -81,7 +81,7 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
     };
     if unsafe { Thread32First(snapshot.raw(), &mut entry) } == 0 {
         return Err(format!(
-            "The suspended runtime primary thread could not be enumerated: {}",
+            "The suspended sidecar primary thread could not be enumerated: {}",
             io::Error::last_os_error()
         ));
     }
@@ -94,7 +94,7 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
             let error = unsafe { GetLastError() };
             if error != ERROR_NO_MORE_FILES {
                 return Err(format!(
-                    "The suspended runtime thread enumeration failed with Windows error {error}."
+                    "The suspended sidecar thread enumeration failed with Windows error {error}."
                 ));
             }
             break;
@@ -102,7 +102,7 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
     }
     if owned_thread_ids.len() != 1 {
         return Err(format!(
-            "Expected exactly one suspended runtime primary thread, found {}.",
+            "Expected exactly one suspended sidecar primary thread, found {}.",
             owned_thread_ids.len()
         ));
     }
@@ -115,7 +115,7 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
     };
     if thread.is_null() {
         return Err(format!(
-            "The suspended runtime primary thread could not be opened: {}",
+            "The suspended sidecar primary thread could not be opened: {}",
             io::Error::last_os_error()
         ));
     }
@@ -123,13 +123,13 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
     let thread_owner_pid = unsafe { GetProcessIdOfThread(thread.raw()) };
     if thread_owner_pid == 0 {
         return Err(format!(
-            "The suspended runtime primary thread owner could not be verified: {}",
+            "The suspended sidecar primary thread owner could not be verified: {}",
             io::Error::last_os_error()
         ));
     }
     if thread_owner_pid != child.id() {
         return Err(
-            "The suspended runtime thread ID was reused by an unrelated process before resume."
+            "The suspended sidecar thread ID was reused by an unrelated process before resume."
                 .into(),
         );
     }
@@ -142,12 +142,12 @@ pub(crate) fn resume_suspended_process(child: &Child) -> Result<(), String> {
     let previous_suspend_count = unsafe { ResumeThread(thread.raw()) };
     if previous_suspend_count == u32::MAX {
         return Err(format!(
-            "The owned runtime primary thread could not be resumed: {}",
+            "The owned sidecar primary thread could not be resumed: {}",
             io::Error::last_os_error()
         ));
     }
     if previous_suspend_count != 1 {
-        return Err(format!("The owned runtime primary thread had an unexpected suspend count of {previous_suspend_count}."));
+        return Err(format!("The owned sidecar primary thread had an unexpected suspend count of {previous_suspend_count}."));
     }
     Ok(())
 }
@@ -156,11 +156,11 @@ pub(crate) fn resume_suspended_process(child: &Child) -> Result<(), String> {
 pub(crate) fn terminate_windows_tree(pid: u32) -> Result<(), String> {
     let output = taskkill_command(pid)?
         .output()
-        .map_err(|error| format!("Failed to stop owned runtime process tree: {error}"))?;
+        .map_err(|error| format!("Failed to stop owned sidecar process tree: {error}"))?;
     if output.status.success() {
         Ok(())
     } else {
-        Err("Owned runtime process tree did not stop cleanly.".into())
+        Err("Owned sidecar process tree did not stop cleanly.".into())
     }
 }
 

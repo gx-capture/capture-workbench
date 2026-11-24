@@ -2,22 +2,22 @@
 //!
 //! A host verifies the sidecar manifest and executable with
 //! [`load_manifest`], [`validate_manifest_contract`], and [`verify_sidecar`],
-//! reserves a fresh loopback port with [`reserve_loopback_port`] or
-//! [`reserve_distinct_loopback_port`], generates a fresh bearer token with
+//! picks a free loopback port with [`pick_free_loopback_port`] or
+//! [`pick_distinct_free_loopback_port`], generates a fresh bearer token with
 //! [`generate_bearer_token`], and launches one process with
 //! [`launch_sidecar`] or [`launch_sidecar_with_observer`]. The launch makes up
 //! to 3 attempts within 60 seconds by default ([`LaunchOptions`]) and returns
 //! a [`LaunchedSidecar`] once the authenticated readiness probe accepts the
-//! runtime. A host that runs its own process can use
-//! [`OwnedRuntimeSession::spawn`] or [`OwnedSidecarProcess::spawn`] directly.
+//! sidecar. A host that runs its own process can use
+//! [`OwnedSidecarSession::spawn`] or [`OwnedSidecarProcess::spawn`] directly.
 //!
 //! On Windows every root is created suspended, assigned to a new
 //! kill-on-close Job object, and resumed only after that assignment is
 //! checked. When the host process exits for any reason, the system closes
-//! the Job handle and stops the runtime and its descendants. A live host can
-//! poll [`OwnedRuntimeSession::monitor_root_exit`] and stop the attempt with
-//! [`OwnedRuntimeSession::terminate_and_prove`]. Nothing is written to disk:
-//! the next launch uses a fresh port and token, and the runtime cleans its
+//! the Job handle and stops the sidecar and its descendants. A live host can
+//! poll [`OwnedSidecarSession::monitor_root_exit`] and stop the attempt with
+//! [`OwnedSidecarSession::terminate_and_prove`]. Nothing is written to disk:
+//! the next launch uses a fresh port and token, and the sidecar cleans its
 //! own leftovers when it starts.
 //!
 //! A bearer token is kept in memory, sent on the loopback readiness request,
@@ -25,7 +25,7 @@
 //! environment. This crate does not write the token to a log or to disk.
 //!
 //! Runtime jobs are ephemeral. The host owns durable source and domain data.
-//! Dropping the last [`OwnedRuntimeSession`] clone stops that launch attempt.
+//! Dropping the last [`OwnedSidecarSession`] clone stops that launch attempt.
 
 mod constants;
 mod health;
@@ -37,10 +37,10 @@ use std::fmt;
 
 /// Loopback readiness probe.
 pub use health::{probe_ready_once, ProbeResult, ReadyHandshake};
-/// Single-process launch, loopback port reservation, and token generation.
+/// Single-process launch, loopback port selection, and token generation.
 pub use launcher::{
     generate_bearer_token, launch_sidecar, launch_sidecar_with_observer,
-    reserve_distinct_loopback_port, reserve_loopback_port, LaunchOptions, LaunchedSidecar,
+    pick_distinct_free_loopback_port, pick_free_loopback_port, LaunchOptions, LaunchedSidecar,
     SidecarLaunchSpec,
 };
 /// Manifest loading and executable digest verification.
@@ -50,8 +50,8 @@ pub use manifest::{
 };
 /// Process ownership through a kill-on-close Windows Job object.
 pub use process::{
-    OwnedRuntimeSession, OwnedSidecarProcess, RuntimeCleanupError, RuntimeCleanupErrorKind,
-    RuntimeTerminationProof,
+    OwnedSidecarProcess, OwnedSidecarSession, SidecarCleanupError, SidecarCleanupErrorKind,
+    SidecarTerminationProof,
 };
 
 /// A connection to a ready authenticated sidecar.

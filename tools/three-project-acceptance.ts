@@ -51,6 +51,7 @@ const CAPTURE_ONLY_REQUIRED_ENVIRONMENT_KEYS = [
   'CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE',
   'CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE',
   'CAPTURE_REAL_DESKTOP_TEARDOWN',
+  'CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT',
   'CAPTURE_RUNTIME_CANDIDATE_ROOT',
   'CAPTURE_RUNTIME_CANDIDATE_ID',
   'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN',
@@ -75,7 +76,10 @@ export class CaptureOnlyEnvironmentError extends Error {
     key: CaptureOnlyRequiredEnvironmentKey,
     code: CaptureOnlyEnvironmentErrorCode,
   ) {
-    super(`${key}:${code}`);
+    const guidance = key === 'CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT' && (code === 'missing' || code === 'blank')
+      ? ' Choose a short folder such as C:\\cwr. Engine workers load only from paths shorter than Windows MAX_PATH.'
+      : '';
+    super(`${key}:${code}${guidance}`);
     this.name = 'CaptureOnlyEnvironmentError';
     this.key = key;
     this.code = code;
@@ -166,12 +170,18 @@ function resolveCaptureOnlyEnvironment(
     CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: captureOnlyRequiredExact(
       inheritedEnvironment,
       'CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE',
-      'windowsml-dml',
+      'directml',
     ),
     CAPTURE_REAL_DESKTOP_TEARDOWN: captureOnlyRequiredExact(
       inheritedEnvironment,
       'CAPTURE_REAL_DESKTOP_TEARDOWN',
       'window-close',
+    ),
+    // The app's data lives in this short root: engine workers load only from
+    // paths shorter than Windows MAX_PATH.
+    CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT: captureOnlyRequiredTrimmedPath(
+      inheritedEnvironment,
+      'CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT',
     ),
     CAPTURE_RUNTIME_CANDIDATE_ROOT: captureOnlyRequiredTrimmedPath(
       inheritedEnvironment,

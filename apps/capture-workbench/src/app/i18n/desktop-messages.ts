@@ -55,7 +55,6 @@ export interface DesktopMessages {
   readonly canceled: string;
   readonly desktopOnly: string;
   readonly speechRequirementNeeded: string;
-  readonly speakerRequirementNeeded: string;
   readonly offerInstall: string;
   readonly requirementReady: string;
   readonly requirementUnavailable: string;
@@ -74,9 +73,8 @@ export interface DesktopMessages {
   readonly manualRequirement: (name: string, detail: string) => string;
   readonly finishInstallThenRetry: string;
   readonly requirementFailed: (name: string) => string;
+  readonly installationInterrupted: (name: string) => string;
   readonly recheck: string;
-  readonly cancelBeforeDelete: string;
-  readonly waitBeforeDelete: string;
   readonly confirmDelete: string;
   readonly confirmDeleteCancel: string;
   readonly modelPhase: {
@@ -94,6 +92,7 @@ export interface DesktopMessages {
   readonly installSelectedWithSize: (size?: string | null) => string;
   readonly downloadingProgress: (percent: number) => string;
   readonly installProgressPreparing: string;
+  readonly installProgressRetrying: string;
   readonly installProgressInstalling: string;
   readonly cancel: string;
   readonly cancelInstall: string;
@@ -119,7 +118,6 @@ export interface DesktopMessages {
   readonly firstRunAsrSummary: string;
   readonly firstRunSpeakersLabel: string;
   readonly firstRunSpeakersSummary: string;
-  readonly asrPanelHint: string;
   readonly settingsEnginesTitle: string;
   readonly engineColFeature: string;
   readonly engineColStatus: string;
@@ -145,6 +143,7 @@ export interface DesktopMessages {
   readonly captureStatusDone: string;
   readonly captureStatusNeedsAttention: string;
   readonly captureStatusCancelled: string;
+  readonly captureStatusCancelling: string;
   readonly ocrNeedsRequirement: (size: string | null) => string;
   readonly ocrPageProgress: (done: number, total: number) => string;
   readonly ocrProgressNamed: (name: string) => string;
@@ -152,12 +151,9 @@ export interface DesktopMessages {
   readonly ocrExportTxt: string;
   readonly captureRestart: string;
   readonly captureInterrupted: string;
-  readonly ocrInterruptedHint: string;
-  readonly captureRetry: string;
   readonly ocrPageSelectionInvalid: string;
   readonly ocrInstallNamed: (name: string) => string;
   readonly captureCancelNamed: (name: string) => string;
-  readonly captureRetryNamed: (name: string) => string;
   readonly captureRestartNamed: (name: string) => string;
   readonly captureViewNamed: (name: string) => string;
   readonly ocrExportNamed: (name: string) => string;
@@ -174,7 +170,6 @@ export interface DesktopMessages {
   readonly asrSpokenLanguage: Readonly<Record<'zh' | 'en' | 'ja', string>>;
   readonly asrSpeakersLabel: string;
   readonly asrSpeakersNoPartialHint: string;
-  readonly asrSpeakersOptionalTitle: string;
   readonly asrInstallSpeakers: (size: string | null) => string;
   readonly asrInstallingSpeakers: (percent: number) => string;
   readonly asrPreparingSpeakers: string;
@@ -336,7 +331,6 @@ const ZH_TW: DesktopMessages = {
   canceled: '處理已取消。',
   desktopOnly: 'Capture Workbench 僅能在 Windows 桌面 App 中使用。',
   speechRequirementNeeded: '處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。',
-  speakerRequirementNeeded: '辨識說話者需要額外安裝一個元件。',
   offerInstall: '安裝',
   requirementReady: '已安裝',
   requirementUnavailable: '無法下載',
@@ -355,9 +349,8 @@ const ZH_TW: DesktopMessages = {
   manualRequirement: (name, detail) => `${name} 需要手動處理：${detail}`,
   finishInstallThenRetry: '請完成安裝後再試。',
   requirementFailed: (name) => `${name} 安裝失敗。`,
+  installationInterrupted: (name) => `${name} 的安裝已中斷，請重新檢查這項功能。`,
   recheck: '安裝完成，正在重新檢查。',
-  cancelBeforeDelete: '請先取消處理，再刪除文件。',
-  waitBeforeDelete: '處理尚未結束，請稍候再刪除。',
   confirmDelete: '確定要刪除這份文件嗎？',
   confirmDeleteCancel: '取消',
   modelPhase: {
@@ -397,6 +390,7 @@ const ZH_TW: DesktopMessages = {
   installSelectedWithSize: (size) => (size ? `安裝所選（${size}）` : '安裝所選'),
   downloadingProgress: (percent) => `正在下載 ${percent}%`,
   installProgressPreparing: '正在準備安裝…',
+  installProgressRetrying: '暫時無法取得安裝進度，持續重試中。',
   installProgressInstalling: '下載完成，正在安裝…',
   cancel: '取消',
   cancelInstall: '取消',
@@ -425,20 +419,19 @@ const ZH_TW: DesktopMessages = {
   firstRunAsrSummary: '把錄音轉成逐字稿',
   firstRunSpeakersLabel: '說話者辨識',
   firstRunSpeakersSummary: '標出每段話是誰說的',
-  asrPanelHint: '下載完成後即可將錄音轉為逐字稿；下載期間仍可使用其他功能。',
   settingsEnginesTitle: '辨識功能',
   engineColFeature: '功能',
   engineColStatus: '狀態',
   engineColSize: '大小',
   engineColAction: '動作',
   requirementName: {
-    'windowsml-ocr': '文字辨識',
+    'text-recognition': '文字辨識',
     'speech-recognition': '錄音轉文字',
     'speaker-diarization': '說話者辨識',
     'vertical-japanese-reader': '直書日文',
   },
   requirementPurpose: {
-    'windowsml-ocr': '讀出掃描檔與照片的文字',
+    'text-recognition': '讀出掃描檔與照片的文字',
     'speech-recognition': '台灣華語與中英夾雜語音轉逐字稿',
     'speaker-diarization': '標出每段話是誰說的',
     'vertical-japanese-reader': '讀出直排日文頁面',
@@ -471,6 +464,7 @@ const ZH_TW: DesktopMessages = {
   captureStatusDone: '完成',
   captureStatusNeedsAttention: '需要處理',
   captureStatusCancelled: '已取消',
+  captureStatusCancelling: '取消中',
   ocrNeedsRequirement: (size) => size ? `需要文字辨識（${size}）` : '需要文字辨識',
   ocrPageProgress: (done, total) => `第 ${done}/${total} 頁`,
   ocrProgressNamed: (name) => `${name} 的進度`,
@@ -478,12 +472,9 @@ const ZH_TW: DesktopMessages = {
   ocrExportTxt: '匯出 .txt',
   captureRestart: '重新開始',
   captureInterrupted: '已中斷',
-  ocrInterruptedHint: '上次關閉程式時尚未完成。',
-  captureRetry: '重試',
   ocrPageSelectionInvalid: '頁碼格式不正確，請輸入例如 1-5, 8, 10-12（最多 500 頁）。',
   ocrInstallNamed: (name) => `安裝文字辨識以處理 ${name}`,
   captureCancelNamed: (name) => `取消 ${name}`,
-  captureRetryNamed: (name) => `重試 ${name}`,
   captureRestartNamed: (name) => `重新開始 ${name}`,
   captureViewNamed: (name) => `檢視 ${name}`,
   ocrExportNamed: (name) => `匯出 ${name} 的文字`,
@@ -500,7 +491,6 @@ const ZH_TW: DesktopMessages = {
   asrSpokenLanguage: { zh: '中文', en: '英文', ja: '日文' },
   asrSpeakersLabel: '分辨說話者',
   asrSpeakersNoPartialHint: '分辨說話者時，要整段完成才看得到逐字稿。',
-  asrSpeakersOptionalTitle: '說話者辨識（選用）',
   asrInstallSpeakers: (size) => `安裝說話者辨識${size ? `（${size}）` : ''}`,
   asrInstallingSpeakers: (percent) => `正在安裝說話者辨識 ${percent}%`,
   asrPreparingSpeakers: '正在準備安裝說話者辨識…',
@@ -662,7 +652,6 @@ const EN: DesktopMessages = {
   canceled: 'Processing was canceled.',
   desktopOnly: 'Capture Workbench runs only in the Windows desktop app.',
   speechRequirementNeeded: 'Recordings need Taiwan speech-to-text (TEA-ASR 1.1) downloaded first.',
-  speakerRequirementNeeded: 'Telling speakers apart needs one more component installed.',
   offerInstall: 'Install',
   requirementReady: 'Installed',
   requirementUnavailable: 'Not downloadable',
@@ -681,9 +670,8 @@ const EN: DesktopMessages = {
   manualRequirement: (name, detail) => `${name} needs a manual step: ${detail}`,
   finishInstallThenRetry: 'Finish the installation, then try again.',
   requirementFailed: (name) => `${name} could not be installed.`,
+  installationInterrupted: (name) => `${name}: the installation was interrupted. Check the requirement again.`,
   recheck: 'Installed. Checking again.',
-  cancelBeforeDelete: 'Cancel processing before deleting the document.',
-  waitBeforeDelete: 'Processing has not finished. Delete the document later.',
   confirmDelete: 'Delete this document?',
   confirmDeleteCancel: 'Cancel',
   modelPhase: {
@@ -724,6 +712,7 @@ const EN: DesktopMessages = {
     size ? `Install selected (${size})` : 'Install selected',
   downloadingProgress: (percent) => `Downloading ${percent}%`,
   installProgressPreparing: 'Preparing installation…',
+  installProgressRetrying: 'Installation progress is temporarily unavailable. Still trying.',
   installProgressInstalling: 'Download complete, installing…',
   cancel: 'Cancel',
   cancelInstall: 'Cancel',
@@ -753,21 +742,19 @@ const EN: DesktopMessages = {
   firstRunAsrSummary: 'Turn recordings into transcripts',
   firstRunSpeakersLabel: 'Speaker identification',
   firstRunSpeakersSummary: 'Mark who said each segment',
-  asrPanelHint:
-    'Once downloaded, you can transcribe recordings. The rest of the app stays usable during the download.',
   settingsEnginesTitle: 'Recognition features',
   engineColFeature: 'Feature',
   engineColStatus: 'Status',
   engineColSize: 'Size',
   engineColAction: 'Action',
   requirementName: {
-    'windowsml-ocr': 'Text recognition',
+    'text-recognition': 'Text recognition',
     'speech-recognition': 'Speech to text',
     'speaker-diarization': 'Speaker identification',
     'vertical-japanese-reader': 'Vertical Japanese',
   },
   requirementPurpose: {
-    'windowsml-ocr': 'Read text from scans and photos',
+    'text-recognition': 'Read text from scans and photos',
     'speech-recognition':
       'Taiwan Mandarin and mixed Mandarin-English speech to transcript',
     'speaker-diarization': 'Mark who said each segment',
@@ -801,6 +788,7 @@ const EN: DesktopMessages = {
   captureStatusDone: 'Done',
   captureStatusNeedsAttention: 'Needs attention',
   captureStatusCancelled: 'Canceled',
+  captureStatusCancelling: 'Canceling',
   ocrNeedsRequirement: (size) => size ? `Text recognition is required (${size})` : 'Text recognition is required',
   ocrPageProgress: (done, total) => `Page ${done}/${total}`,
   ocrProgressNamed: (name) => `Progress for ${name}`,
@@ -808,12 +796,9 @@ const EN: DesktopMessages = {
   ocrExportTxt: 'Export .txt',
   captureRestart: 'Start again',
   captureInterrupted: 'Interrupted',
-  ocrInterruptedHint: 'Not finished before the app was last closed.',
-  captureRetry: 'Retry',
   ocrPageSelectionInvalid: 'Invalid page selection. Enter pages such as 1-5, 8, 10-12 (up to 500 pages).',
   ocrInstallNamed: (name) => `Install text recognition for ${name}`,
   captureCancelNamed: (name) => `Cancel ${name}`,
-  captureRetryNamed: (name) => `Retry ${name}`,
   captureRestartNamed: (name) => `Start ${name} again`,
   captureViewNamed: (name) => `View ${name}`,
   ocrExportNamed: (name) => `Export text for ${name}`,
@@ -830,7 +815,6 @@ const EN: DesktopMessages = {
   asrSpokenLanguage: { zh: 'Chinese', en: 'English', ja: 'Japanese' },
   asrSpeakersLabel: 'Identify speakers',
   asrSpeakersNoPartialHint: 'When identifying speakers, the transcript appears once the full recording finishes.',
-  asrSpeakersOptionalTitle: 'Speaker identification (optional)',
   asrInstallSpeakers: (size) => `Install speaker identification${size ? ` (${size})` : ''}`,
   asrInstallingSpeakers: (percent) => `Installing speaker identification ${percent}%`,
   asrPreparingSpeakers: 'Preparing speaker identification…',

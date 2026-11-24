@@ -81,7 +81,10 @@ def contract_concept_values() -> dict[str, set[str]]:
     from typing import get_args
 
     from capture_runtime import contracts
-    from capture_runtime.problem_registry import DEFAULT_PROBLEM_REGISTRY
+    from capture_runtime.problem_registry import (
+        DEFAULT_FAILURE_CODE_REGISTRY,
+        DEFAULT_PROBLEM_REGISTRY,
+    )
 
     expected = {
         name: {str(member.value) for member in value}
@@ -91,7 +94,7 @@ def contract_concept_values() -> dict[str, set[str]]:
         and value.__module__ == contracts.__name__
     }
     expected["CaptureRequirementId"] = set(get_args(contracts.CaptureRequirementId))
-    for model in (contracts.CaptureBlock, contracts.StructuringSemanticBlockV2):
+    for model in (contracts.CaptureBlock, contracts.StructuringSemanticBlock):
         expected[f"{model.__name__}.type"] = set(get_args(model.model_fields["type"].annotation))
     policy = json.loads(
         (SOURCE_ROOT / "assets" / "worker-stage-policy.json").read_text(encoding="utf-8")
@@ -99,4 +102,5 @@ def contract_concept_values() -> dict[str, set[str]]:
     expected["WorkerStage"] = set(policy["exactStages"])
     expected["WorkerStageFamily"] = set(policy["familyPatterns"])
     expected["ProblemCode"] = set(DEFAULT_PROBLEM_REGISTRY.definitions)
+    expected["FailureCode"] = set(DEFAULT_FAILURE_CODE_REGISTRY.definitions)
     return expected

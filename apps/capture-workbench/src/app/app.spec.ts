@@ -15,7 +15,7 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { defer, EMPTY, of, Subject, type Observable } from 'rxjs';
+import { defer, EMPTY, NEVER, of, Subject, throwError, type Observable } from 'rxjs';
 import { App } from './app';
 import { appRoutes } from './app.routes';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from './contracts';
@@ -91,7 +91,7 @@ describe('App shell and recognition pages', () => {
   it('shows the first-run recognition card on /ocr with nested speaker option, combined download size, and dismiss action', async () => {
     const { fixture, features } = await renderShell('/ocr', {
       requirements: [
-        makeRequirement('windowsml-ocr', 'installable', 144_000_000),
+        makeRequirement('text-recognition', 'installable', 144_000_000),
         makeRequirement('speech-recognition', 'installable', 2_800_000_000),
         makeRequirement('speaker-diarization', 'installable', 300_000_000),
       ],
@@ -129,7 +129,7 @@ describe('App shell and recognition pages', () => {
     installBtn.click();
     expect(features.installFirstRunSelection).toHaveBeenCalledWith(
       expect.arrayContaining([
-        'windowsml-ocr',
+        'text-recognition',
         'speech-recognition',
         'speaker-diarization',
       ]),
@@ -194,7 +194,7 @@ describe('App shell and recognition pages', () => {
   it('redirects /settings to /settings/engines and renders expandable recognition engine rows with install, cancel, and retry actions', async () => {
     const { fixture, features } = await renderShell('/settings', {
       requirements: [
-        makeRequirement('windowsml-ocr', 'ready', 144_000_000),
+        makeRequirement('text-recognition', 'ready', 144_000_000),
         makeRequirement('speech-recognition', 'installable', 2_800_000_000),
         makeRequirement('speaker-diarization', 'installable', 300_000_000),
       ],
@@ -207,7 +207,7 @@ describe('App shell and recognition pages', () => {
     expect(page.querySelector('h1')?.textContent).toContain('設定');
     expect(page.querySelector('h2')?.textContent).toContain('辨識功能');
     const ocrRow = page.querySelector(
-      '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]',
+      '[data-testid="engine-row"][data-requirement-id="text-recognition"]',
     ) as HTMLElement;
     expect(
       ocrRow.querySelector('[data-testid="engine-row-remove"]')?.textContent?.trim(),
@@ -326,7 +326,7 @@ describe('App shell and recognition pages', () => {
 });
 
 const FIRST_RUN_REQUIREMENT_IDS: readonly CaptureRequirementId[] = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
 ];
@@ -340,7 +340,7 @@ function makeRequirement(
     requirementId,
     displayName: requirementId,
     status,
-    kind: 'runtime',
+    kind: requirementId,
     requiredFor: ['capture'],
     installStrategy: 'runtime-catalog',
     detail: null,
@@ -354,7 +354,7 @@ async function renderShell(
 ) {
   const requirements = signal<readonly RuntimeRequirement[]>(
     options.requirements ?? [
-      makeRequirement('windowsml-ocr', 'ready', 144_000_000),
+      makeRequirement('text-recognition', 'ready', 144_000_000),
       makeRequirement('speech-recognition', 'ready', 2_800_000_000),
       makeRequirement('speaker-diarization', 'ready', 300_000_000),
     ],
@@ -382,6 +382,7 @@ async function renderShell(
         selectInstallableRequirements(requirements(), FIRST_RUN_REQUIREMENT_IDS).length > 0,
     ),
     startingRequirementId: signal<CaptureRequirementId | null>(null),
+    isProgressUnavailable: () => false,
     activeInstallation: computed(() => {
       const values = Object.values(installations()).filter(
         (item): item is RuntimeInstallation => item !== undefined,
@@ -426,7 +427,7 @@ async function renderShell(
           selectedId: signal<string | null>(null),
           selected: signal(null),
           refreshDocuments: vi.fn(),
-          reloadDocumentState: vi.fn(),
+          applyDocumentState: vi.fn(),
         },
       },
       { provide: RecognitionFeaturesStore, useValue: features },
@@ -455,18 +456,18 @@ describe('App native drops', () => {
         startModelInstallation,
         getRequirements: vi.fn(() => of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'ready',
-            kind: 'engine',
+            kind: 'text-recognition',
             requiredFor: ['capture'],
             installStrategy: 'none',
           },
           {
-            requirementId: 'ollama-runtime',
+            requirementId: 'structuring-runtime',
             displayName: 'Ollama',
             status: 'unavailable',
-            kind: 'runtime',
+            kind: 'structuring-runtime',
             requiredFor: ['structuring'],
             installStrategy: 'none',
           },
@@ -476,8 +477,8 @@ describe('App native drops', () => {
           displayName: 'Qwen 3.5 0.8B',
           modelReference: 'qwen3.5:0.8b',
           expectedDigest: null,
-          expectedBytes: null,
-          profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+          downloadBytes: null,
+          profileId: 'qwen3.5-0.8b-structure-v1',
           profileSpecSha256: 'b'.repeat(64),
           status: 'not-installed' as const,
         }])),
@@ -497,22 +498,28 @@ describe('App native drops', () => {
   });
 
   it('asks for Whisper only when an allowed audio source is selected', () => {
+    const voiceDoc: DesktopLibrarySummary = {
+      ...summary,
+      fileName: 'voice.wav',
+      mediaType: 'audio/wav',
+    };
+    // The host lists a document once its import has answered; the batch's
+    // turn reads the stored document before it checks the requirements.
+    let imported: readonly DesktopLibrarySummary[] = [];
     const library = libraryStub({
-      importSelection: vi.fn(() =>
-        of({
-          ...summary,
-          fileName: 'voice.wav',
-          mediaType: 'audio/wav',
-        }),
-      ),
+      importSelection: vi.fn(() => defer(() => {
+        imported = [voiceDoc];
+        return of(voiceDoc);
+      })),
+      list: vi.fn(() => defer(() => of(imported))),
     });
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([{
         requirementId: 'speech-recognition',
         displayName: 'Speech recognition',
         status: 'missing',
-        kind: 'model',
-        requiredFor: ['audio'],
+        kind: 'speech-recognition',
+        requiredFor: ['recording'],
         installStrategy: 'runtime-catalog',
       }])),
     });
@@ -537,15 +544,17 @@ describe('App native drops', () => {
       fileName: 'interview.wav',
       mediaType: 'audio/wav',
     };
-    const startStreamingCapture = vi.fn(() => of(completedOperation));
-    const getStreamingResult = vi.fn(() =>
+    const startRecordingCapture = vi.fn(() => of(completedOperation));
+    const getResult = vi.fn(() =>
       of({ operation: completedOperation, raw, result }),
     );
-    const deleteStreamingCapture = vi.fn(() => of(undefined));
+    const deleteCapture = vi.fn(() => of(undefined));
     const startInstallation = vi.fn();
+    const stored = storedDocuments([]);
     const library = libraryStub({
-      importSelection: vi.fn(() => of(audioDoc)),
-      list: vi.fn(() => of([audioDoc])),
+      importSelection: vi.fn(() => stored.import(audioDoc)),
+      list: stored.list,
+      updateCapture: stored.updateCapture,
       get: vi.fn(() => of<DesktopLibraryDetail>(audioDoc)),
     });
     const client = runtimeStub({
@@ -553,10 +562,10 @@ describe('App native drops', () => {
       getRequirements: vi.fn(() =>
         of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'installable',
-            kind: 'engine',
+            kind: 'text-recognition',
             requiredFor: ['capture'],
             installStrategy: 'runtime-catalog',
             downloadBytes: 144_000_000,
@@ -565,17 +574,17 @@ describe('App native drops', () => {
             requirementId: 'speech-recognition',
             displayName: 'Speech recognition',
             status: 'ready',
-            kind: 'engine',
-            requiredFor: ['audio'],
+            kind: 'speech-recognition',
+            requiredFor: ['recording'],
             installStrategy: 'runtime-catalog',
             downloadBytes: 2_800_000_000,
           },
         ]),
       ),
       startInstallation,
-      startStreamingCapture,
-      getStreamingResult,
-      deleteStreamingCapture,
+      startRecordingCapture,
+      getResult,
+      deleteCapture,
     });
     const { store, drop } = renderDropShell(library, client);
 
@@ -587,22 +596,36 @@ describe('App native drops', () => {
     TestBed.tick();
 
     expect(startInstallation).not.toHaveBeenCalled();
-    expect(TestBed.inject(RecognitionFeaturesStore).requestedRequirements().has('windowsml-ocr')).toBe(false);
-    expect(startStreamingCapture).toHaveBeenCalledOnce();
-    expect(getStreamingResult).toHaveBeenCalledWith(completedOperation.captureId);
+    expect(TestBed.inject(RecognitionFeaturesStore).requestedRequirements().has('text-recognition')).toBe(false);
+    expect(startRecordingCapture).toHaveBeenCalledOnce();
+    expect(getResult).toHaveBeenCalledWith(completedOperation.captureId);
   });
 
-  it('streams a newly imported recording before the library list includes it', () => {
+  it('streams a newly imported recording before the cached library list includes it', () => {
     const audioDoc: DesktopLibrarySummary = {
       ...summary,
       fileName: 'interview.wav',
       mediaType: 'audio/wav',
     };
-    const startStreamingCapture = vi.fn(() => of(completedOperation));
+    const startRecordingCapture = vi.fn(() => of(completedOperation));
     const createCapture = vi.fn(() => of(completedOperation));
+    // The host lists the document once its import has answered, but the
+    // Workbench's cached list (the library store's read, which passes an
+    // abort signal) has not reloaded since: its reloads stay unanswered, and
+    // only the admission's reads of the stored documents see the recording.
+    let imported = false;
+    const stored = storedDocuments([]);
     const library = libraryStub({
-      importSelection: vi.fn(() => of(audioDoc)),
-      list: vi.fn(() => of([])),
+      importSelection: vi.fn(() => defer(() => {
+        imported = true;
+        return stored.import(audioDoc);
+      })),
+      list: vi.fn((...args: [query?: string, status?: string, abortSignal?: AbortSignal]):
+        Observable<readonly DesktopLibrarySummary[]> => {
+        if (!imported) return of([]);
+        return args[2] ? NEVER : stored.list();
+      }),
+      updateCapture: stored.updateCapture,
       get: vi.fn(() => of<DesktopLibraryDetail>(audioDoc)),
     });
     const client = runtimeStub({
@@ -612,26 +635,27 @@ describe('App native drops', () => {
             requirementId: 'speech-recognition',
             displayName: 'Speech recognition',
             status: 'ready',
-            kind: 'engine',
-            requiredFor: ['audio'],
+            kind: 'speech-recognition',
+            requiredFor: ['recording'],
             installStrategy: 'runtime-catalog',
             downloadBytes: 2_800_000_000,
           },
         ]),
       ),
-      startStreamingCapture,
+      startRecordingCapture,
       createCapture,
-      getStreamingResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
-      deleteStreamingCapture: vi.fn(() => of(undefined)),
+      getResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
+      deleteCapture: vi.fn(() => of(undefined)),
     });
     const { drop } = renderDropShell(library, client);
 
     drop({ rejected: [], selections: [selection('interview.wav')] });
     TestBed.tick();
 
-    expect(startStreamingCapture).toHaveBeenCalledOnce();
-    expect(startStreamingCapture).toHaveBeenCalledWith(expect.objectContaining({ documentId: audioDoc.documentId }));
-    expect(TestBed.inject(LibraryStore).allDocuments()).toEqual([]);
+    expect(startRecordingCapture).toHaveBeenCalledOnce();
+    expect(startRecordingCapture).toHaveBeenCalledWith(expect.objectContaining({ documentId: audioDoc.documentId }));
+    // No reload answered: the list shows the row from what the capture's writes returned.
+    expect(TestBed.inject(LibraryStore).allDocuments().map((item) => item.documentId)).toEqual([audioDoc.documentId]);
     expect(createCapture).not.toHaveBeenCalled();
   });
 
@@ -677,6 +701,58 @@ describe('App native drops', () => {
     expect(library.importSelection).toHaveBeenCalledWith(batch.selections[0]);
     fixture.destroy();
     expect(dropped.observed).toBe(false);
+  });
+
+  it('starts the documents imported before the restart one at a time, without any page visit', () => {
+    const waiting = (documentId: string, fileName: string, mediaType: string, createdAtMs: number) =>
+      ({ ...summary, documentId, fileName, mediaType, createdAtMs }) satisfies DesktopLibrarySummary;
+    const stored = storedDocuments([
+      waiting('1'.repeat(32), 'first.pdf', 'application/pdf', 1),
+      waiting('2'.repeat(32), 'second.wav', 'audio/wav', 2),
+      waiting('3'.repeat(32), 'third.pdf', 'application/pdf', 3),
+    ]);
+    const library = libraryStub({ list: stored.list, updateCapture: stored.updateCapture });
+    const createCapture = vi.fn(() => new Subject<CaptureOperation>());
+    const startRecordingCapture = vi.fn(() => new Subject<CaptureOperation>());
+    const runtime = runtimeStub({
+      createCapture,
+      startRecordingCapture,
+      getRequirements: vi.fn(() => of(['text-recognition', 'speech-recognition'].map((requirementId) => ({
+        requirementId, displayName: requirementId, status: 'ready', kind: requirementId,
+        requiredFor: ['capture'], installStrategy: 'runtime-catalog',
+      })))),
+    });
+
+    renderDropShell(library, runtime);
+
+    expect(createCapture.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['1'.repeat(32)]);
+    expect(startRecordingCapture).not.toHaveBeenCalled();
+
+    // Visiting both queue pages starts nothing more.
+    TestBed.inject(OcrQueueStore).attach();
+    TestBed.inject(AsrQueueStore).attach();
+    TestBed.tick();
+
+    expect(createCapture).toHaveBeenCalledOnce();
+    expect(startRecordingCapture).not.toHaveBeenCalled();
+  });
+
+  it('asks the runtime once, when it is first ready, to delete the capture of every linked row', () => {
+    const linked = { ...summary, status: 'processing', captureId: 'capture-earlier-run' } satisfies DesktopLibrarySummary;
+    const library = libraryStub({ list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([linked, summary])) });
+    const runtime = runtimeStub({ ready: signal(false) });
+    renderDropShell(library, runtime);
+    expect(runtime.deleteCapture).not.toHaveBeenCalled();
+
+    runtime.ready.set(true);
+    TestBed.tick();
+    runtime.ready.set(false);
+    TestBed.tick();
+    runtime.ready.set(true);
+    TestBed.tick();
+
+    expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-earlier-run');
+    expect(library.updateCapture).not.toHaveBeenCalled();
   });
 
   it('discards a refused batch when the runtime is unavailable', () => {
@@ -756,6 +832,7 @@ const completedOperation: CaptureOperation = {
   status: 'completed',
   protocolVersion: '2',
   ingestionId: 'ingestion-1',
+  kind: 'pdf',
   partialRevision: 0,
   lastEventSequence: 0,
   createdAt: '2026-07-20T00:00:00Z',
@@ -769,6 +846,32 @@ const completedOperation: CaptureOperation = {
 };
 const raw = { sourceText: 'OCR text' };
 const result = { targetText: 'translated text' };
+
+/** The library as the host stores it, as far as the admission reads it: status, stage and link. */
+function storedDocuments(initial: readonly DesktopLibrarySummary[]) {
+  const rows = new Map(initial.map((row) => [row.documentId, row]));
+  return {
+    rows,
+    import: (row: DesktopLibrarySummary) => defer(() => {
+      rows.set(row.documentId, row);
+      return of(row);
+    }),
+    list: vi.fn(() => defer(() => of<readonly DesktopLibrarySummary[]>([...rows.values()].reverse()))),
+    updateCapture: vi.fn((update: Parameters<DesktopLibraryService['updateCapture']>[0]) => defer(() => {
+      const current = rows.get(update.documentId);
+      if (!current) return throwError(() => new Error('Capture library document was not found.'));
+      const next: DesktopLibrarySummary = {
+        ...current,
+        status: update.status,
+        stage: update.stage,
+        captureId: update.clearCaptureId ? undefined : update.captureId ?? current.captureId,
+        hasRaw: current.hasRaw === true || update.raw !== undefined,
+      };
+      rows.set(update.documentId, next);
+      return of(next);
+    })),
+  };
+}
 
 function libraryStub(overrides: Record<string, unknown> = {}) {
   return Object.assign({
@@ -792,9 +895,9 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       service: 'capture-runtime',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,
@@ -809,19 +912,18 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     createCapture: vi.fn(() => of(completedOperation)),
     getCapture: vi.fn(() => of(completedOperation)),
     getRaw: vi.fn(() => of(raw)),
-    getResult: vi.fn(() => of(result)),
+    getResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
     getOcr: vi.fn((captureId: string) => of(ocrProjection(captureId))),
     deleteCapture: vi.fn(() => of(undefined)),
-    getStreamingEvents: vi.fn(() => of([])),
-    getStreamingPartial: vi.fn(() => of(null)),
-    getStreamingCapture: vi.fn(() => of(completedOperation)),
+    getCaptureEvents: vi.fn(() => of([])),
+    getPartial: vi.fn(() => of(null)),
   }, overrides);
 }
 
 function ocrProjection(captureId: string): CaptureOcrProjection {
   const provenance = {
     status: 'resolved' as const,
-    engine: 'windowsml-ocr' as const,
+    engine: 'text-recognition' as const,
     model: 'ppocrv6-traditional-multilingual',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'RTX4060',
@@ -857,9 +959,9 @@ function ocrProjection(captureId: string): CaptureOcrProjection {
       confidence: 0.875,
       provenance,
     }],
-    pageCount: 1,
+    processedPageCount: 1,
     runtimeVersion: RUNTIME_VERSION,
-    contractSha256: 'a'.repeat(64),
+    contractSetSha256: 'a'.repeat(64),
     provenance,
     createdAt: '2026-07-20T00:00:00Z',
   };

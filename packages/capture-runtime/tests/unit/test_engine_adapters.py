@@ -15,8 +15,8 @@ from PIL import Image
 
 import capture_runtime.ocr.domain.page.models as page_models
 import capture_runtime.ocr.infrastructure.ocr_execution_evidence as execution_evidence
+import capture_runtime.ocr.infrastructure.ocr_onnx_adapter as onnx_adapter
 import capture_runtime.ocr.infrastructure.ocr_paddle_normalization as paddle_normalization
-import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter as windowsml_adapter
 from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment
 from capture_runtime.capture.infrastructure.capture_extraction import (
     OcrExtractionFailure,
@@ -27,10 +27,11 @@ from capture_runtime.capture.infrastructure.capture_extraction import (
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
+from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenance
 from capture_runtime.ocr.infrastructure.image_normalization import normalize_image_png
 from capture_runtime.ocr.infrastructure.ocr_execution_evidence import OcrExecutionEvidence
 from capture_runtime.ocr.infrastructure.ocr_offline_stubs import install_offline_huggingface_stubs
+from capture_runtime.ocr.infrastructure.ocr_onnx_adapter import OnnxOcrAdapter
 from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
     PaddleResultNormalizationError,
 )
@@ -43,13 +44,12 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
 )
 from capture_runtime.ocr.infrastructure.ocr_profile import (
     CANONICAL_PROFILE_PATH,
-    WINDOWSML_REQUIRED_MODEL_FILES,
+    TEXT_RECOGNITION_REQUIRED_MODEL_FILES,
     canonical_json_bytes,
     load_profile_spec,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput
 from capture_runtime.ocr.infrastructure.ocr_vertical_routing import VerticalLayoutError
-from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import WindowsMLOcrAdapter
 from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerFailure,
     OcrWorkerRunResult,
@@ -66,7 +66,7 @@ from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineProbe, EngineRuntimeUnavailableError
 
 
-def _write_windowsml_models(root: Path) -> None:
+def _write_ocr_models(root: Path) -> None:
     for relative in (
         "det/inference.onnx",
         "det/inference.yml",
@@ -99,7 +99,7 @@ class _StaticGpuProbe:
 
 def _cpu_plan() -> OcrExecutionPlan:
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_StaticGpuProbe(OcrGpuCapabilitySnapshot()),
     ).select()
@@ -122,7 +122,7 @@ def _gpu_plan_kwargs() -> dict[str, object]:
         assessment="positive-usable",
     )
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_StaticGpuProbe(
             OcrGpuCapabilitySnapshot(
@@ -150,14 +150,14 @@ def _worker_ocr_plan_selection() -> SimpleNamespace:
     )
 
 
-def _resolved_ocr_provenance() -> OcrProvenanceV3:
-    return OcrProvenanceV3(
+def _resolved_ocr_provenance() -> OcrProvenance:
+    return OcrProvenance(
         status="resolved",
-        engine="windowsml-ocr",
-        model="pp-ocrv6-medium-windowsml",
+        engine="text-recognition",
+        model="pp-ocrv6-medium",
         model_digest="sha256:" + "1" * 64,
-        device="windowsml-dml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        device="directml",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -168,13 +168,13 @@ def test_offline_huggingface_stub_blocks_model_downloads() -> None:
         "huggingface_hub.logging",
         "huggingface_hub.utils",
     )
-    original = {name: windowsml_adapter.sys.modules.get(name) for name in module_names}
+    original = {name: onnx_adapter.sys.modules.get(name) for name in module_names}
     try:
         for name in module_names:
-            windowsml_adapter.sys.modules.pop(name, None)
+            onnx_adapter.sys.modules.pop(name, None)
         install_offline_huggingface_stubs()
-        package = windowsml_adapter.sys.modules["huggingface_hub"]
-        utils = windowsml_adapter.sys.modules["huggingface_hub.utils"]
+        package = onnx_adapter.sys.modules["huggingface_hub"]
+        utils = onnx_adapter.sys.modules["huggingface_hub.utils"]
 
         package.logging.set_verbosity_error()
         with pytest.raises(
@@ -185,14 +185,13 @@ def test_offline_huggingface_stub_blocks_model_downloads() -> None:
         assert issubclass(utils.RepositoryNotFoundError, utils.HfHubHTTPError)
     finally:
         for name in module_names:
-            windowsml_adapter.sys.modules.pop(name, None)
+            onnx_adapter.sys.modules.pop(name, None)
             if original[name] is not None:
-                windowsml_adapter.sys.modules[name] = original[name]
+                onnx_adapter.sys.modules[name] = original[name]
 
 
 def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
     return ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -202,11 +201,11 @@ def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
     )
 
 
-def test_windowsml_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_digest(
+def test_onnx_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_digest(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     configurations: list[dict[str, object]] = []
     stages: list[str] = []
 
@@ -228,7 +227,7 @@ def test_windowsml_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_dig
         configurations.append(kwargs["engine_config"])
         return Pipeline()
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=factory,
@@ -240,10 +239,10 @@ def test_windowsml_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_dig
     )
     result = adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
     assert result.text == "First\nSecond"
-    assert result.device == "windowsml-dml"
+    assert result.device == "directml"
     assert result.digest.startswith("sha256:")
     expected_digest = hashlib.sha256()
-    for relative in WINDOWSML_REQUIRED_MODEL_FILES:
+    for relative in TEXT_RECOGNITION_REQUIRED_MODEL_FILES:
         expected_digest.update(relative.encode("utf-8"))
         expected_digest.update(b"\0")
         expected_digest.update((model_dir / relative).read_bytes())
@@ -282,9 +281,9 @@ def test_windowsml_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_dig
 
 
 def test_planless_dml_pipeline_construction_fails_closed(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
-    adapter = WindowsMLOcrAdapter(
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
+    adapter = OnnxOcrAdapter(
         model_dir,
         pipeline_factory=lambda **_kwargs: object(),
         provider_resolver=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
@@ -297,8 +296,8 @@ def test_planless_dml_pipeline_construction_fails_closed(tmp_path: Path) -> None
 def test_native_map_bracket_rejects_stale_factory_even_when_map_is_unchanged(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     plan = _gpu_plan_kwargs()["execution_plan"]
     assert isinstance(plan, OcrExecutionPlan)
 
@@ -321,7 +320,7 @@ def test_native_map_bracket_rejects_stale_factory_even_when_map_is_unchanged(
             self.closed = True
 
     lease = Lease()
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=plan,
         adapter_map_lease_factory=lambda: lease,  # type: ignore[arg-type]
@@ -339,8 +338,8 @@ def test_native_map_bracket_rejects_stale_factory_even_when_map_is_unchanged(
 
 
 def test_native_map_bracket_rejects_factory_current_query_exception(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     plan = _gpu_plan_kwargs()["execution_plan"]
     assert isinstance(plan, OcrExecutionPlan)
     factory_calls = 0
@@ -360,7 +359,7 @@ def test_native_map_bracket_rejects_factory_current_query_exception(tmp_path: Pa
         factory_calls += 1
         return object()
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=plan,
         adapter_map_lease_factory=lambda: Lease(),  # type: ignore[arg-type]
@@ -373,9 +372,9 @@ def test_native_map_bracket_rejects_factory_current_query_exception(tmp_path: Pa
     assert factory_calls == 0
 
 
-def test_windowsml_adapter_uses_cpu_only_when_dml_is_unavailable(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+def test_onnx_adapter_uses_cpu_only_when_dml_is_unavailable(tmp_path: Path) -> None:
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     configurations: list[dict[str, object]] = []
 
     class Result:
@@ -396,7 +395,7 @@ def test_windowsml_adapter_uses_cpu_only_when_dml_is_unavailable(tmp_path: Path)
         configurations.append(kwargs["engine_config"])
         return Pipeline()
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=factory,
@@ -418,11 +417,11 @@ def test_windowsml_adapter_uses_cpu_only_when_dml_is_unavailable(tmp_path: Path)
     ]
 
 
-def test_windowsml_adapter_hands_paddle_only_profile_derived_kwargs(
+def test_onnx_adapter_hands_paddle_only_profile_derived_kwargs(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     received: dict[str, object] = {}
 
     class Result:
@@ -442,7 +441,7 @@ def test_windowsml_adapter_hands_paddle_only_profile_derived_kwargs(
         received.update(kwargs)
         return Pipeline()
 
-    WindowsMLOcrAdapter(
+    OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=factory,
@@ -459,11 +458,11 @@ def test_windowsml_adapter_hands_paddle_only_profile_derived_kwargs(
     assert "ocrLanguage" not in received
 
 
-def test_windowsml_adapter_applies_reading_order_to_text_regions_and_scores(
+def test_onnx_adapter_applies_reading_order_to_text_regions_and_scores(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     texts = ["文章を読んでください。", "次の欄。", "最初の欄。", "さいしょ", "問1 内容はどれか。"]
     rectangles = [
         (0, 0, 300, 20),
@@ -483,7 +482,7 @@ def test_windowsml_adapter_applies_reading_order_to_text_regions_and_scores(
 
     image = BytesIO()
     Image.new("RGB", (400, 320), "white").save(image, format="PNG")
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -512,9 +511,9 @@ def test_windowsml_adapter_applies_reading_order_to_text_regions_and_scores(
     )
 
 
-def test_windowsml_adapter_horizontal_page_preserves_normalized_identity(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+def test_onnx_adapter_horizontal_page_preserves_normalized_identity(tmp_path: Path) -> None:
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     # Deliberately not geometric order: all-horizontal identity is the contract.
     payload = {
         "rec_texts": [" 下段。 ", "上段。", "右の段。"],
@@ -528,7 +527,7 @@ def test_windowsml_adapter_horizontal_page_preserves_normalized_identity(tmp_pat
 
     image = BytesIO()
     Image.new("RGB", (400, 200), "white").save(image, format="PNG")
-    result = WindowsMLOcrAdapter(
+    result = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -594,10 +593,10 @@ def _composite_adapter_observations():
     return payload, tuple(records)
 
 
-def test_windowsml_adapter_composite_uses_one_prediction_and_retains_parent_span_identity(tmp_path):
+def test_onnx_adapter_composite_uses_one_prediction_and_retains_parent_span_identity(tmp_path):
     payload, observations = _composite_adapter_observations()
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     events = []
 
     class Collector:
@@ -620,7 +619,7 @@ def test_windowsml_adapter_composite_uses_one_prediction_and_retains_parent_span
 
     image = BytesIO()
     Image.new("RGB", (1000, 1000), "white").save(image, format="PNG")
-    result = WindowsMLOcrAdapter(
+    result = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_: Pipeline(),
@@ -649,12 +648,12 @@ def test_windowsml_adapter_composite_uses_one_prediction_and_retains_parent_span
 
 
 @pytest.mark.parametrize("stage", ["attach", "exit", "mismatch"])
-def test_windowsml_adapter_does_not_turn_alignment_failure_into_unsplit_success(tmp_path, stage):
+def test_onnx_adapter_does_not_turn_alignment_failure_into_unsplit_success(tmp_path, stage):
     from dataclasses import replace
 
     payload, observations = _composite_adapter_observations()
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     calls = []
 
     class Collector:
@@ -683,7 +682,7 @@ def test_windowsml_adapter_does_not_turn_alignment_failure_into_unsplit_success(
 
     image = BytesIO()
     Image.new("RGB", (1000, 1000), "white").save(image, format="PNG")
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_: Pipeline(),
@@ -756,9 +755,9 @@ def _vertical_page_adapter(
     horizontal_lines: int = 0,
     column_text: str = "縦書きの本文の第{index}行です。",
     score: float = 0.9,
-) -> tuple[WindowsMLOcrAdapter, bytes, list[str], list[int]]:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+) -> tuple[OnnxOcrAdapter, bytes, list[str], list[int]]:
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     texts = [column_text.format(index=index) for index in range(5)]
     rectangles = [(360 - 40 * index, 20, 380 - 40 * index, 300) for index in range(5)]
     texts += [f"横書きの設問文の第{index}行です。" for index in range(horizontal_lines)]
@@ -784,7 +783,7 @@ def _vertical_page_adapter(
 
     image = BytesIO()
     Image.new("RGB", (400, 480), "white").save(image, format="PNG")
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -903,9 +902,9 @@ def test_missing_vertical_reader_is_not_offered_for_a_page_it_would_not_read(
 
 def test_vertical_reader_is_loaded_from_its_own_install_directory(tmp_path: Path) -> None:
     _adapter, png, texts, _created = _vertical_page_adapter(tmp_path, None)
-    model_dir = tmp_path / "windowsml"
+    model_dir = tmp_path / "ocr"
 
-    def adapter(reader_dir: Path) -> WindowsMLOcrAdapter:
+    def adapter(reader_dir: Path) -> OnnxOcrAdapter:
         payload = {
             "rec_texts": texts,
             "rec_polys": [
@@ -919,7 +918,7 @@ def test_vertical_reader_is_loaded_from_its_own_install_directory(tmp_path: Path
             def predict(self, _source: str) -> list[dict[str, object]]:
                 return [{"res": payload}]
 
-        return WindowsMLOcrAdapter(
+        return OnnxOcrAdapter(
             model_dir,
             execution_plan=_cpu_plan(),
             pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -996,7 +995,7 @@ def test_vertical_reader_inference_failure_fails_the_page(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize(
     ("device", "device_id", "expected"),
-    [("cpu", None, None), ("cpu", 1, None), ("windowsml-dml", 1, 1), ("windowsml-dml", 0, 0)],
+    [("cpu", None, None), ("cpu", 1, None), ("directml", 1, 1), ("directml", 0, 0)],
 )
 def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
     tmp_path: Path,
@@ -1007,10 +1006,10 @@ def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
 ) -> None:
     reader_module = pytest.importorskip(
         "capture_runtime.ocr.infrastructure.ocr_vertical_reader",
-        reason="The vertical reader requires the WindowsML extras.",
+        reason="The vertical reader requires the OCR extras.",
     )
     adapter, _png, _texts, _created = _vertical_page_adapter(tmp_path, None)
-    (tmp_path / "windowsml" / "vertical").mkdir()
+    (tmp_path / "ocr" / "vertical").mkdir()
     seen: list[tuple[Path, int | None, Path | None]] = []
 
     class Loaded:
@@ -1029,7 +1028,7 @@ def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
     adapter.device_id = device_id
 
     assert isinstance(adapter._create_vertical_reader(), Loaded)
-    assert seen == [(tmp_path / "windowsml" / "vertical", expected, tmp_path / "cache")]
+    assert seen == [(tmp_path / "ocr" / "vertical", expected, tmp_path / "cache")]
 
 
 def test_recognizer_refused_by_directml_fails_the_page(
@@ -1037,10 +1036,10 @@ def test_recognizer_refused_by_directml_fails_the_page(
 ) -> None:
     reader_module = pytest.importorskip(
         "capture_runtime.ocr.infrastructure.ocr_vertical_reader",
-        reason="The vertical reader requires the WindowsML extras.",
+        reason="The vertical reader requires the OCR extras.",
     )
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
-    (tmp_path / "windowsml" / "vertical").mkdir()
+    (tmp_path / "ocr" / "vertical").mkdir()
 
     def refuse(_directory: Path, **_kwargs: object) -> object:
         raise reader_module.VerticalReaderDeviceError("not placed on DirectML")
@@ -1056,10 +1055,10 @@ def test_vertical_reader_that_cannot_be_loaded_fails_the_page_with_a_runtime_err
 ) -> None:
     reader_module = pytest.importorskip(
         "capture_runtime.ocr.infrastructure.ocr_vertical_reader",
-        reason="The vertical reader requires the WindowsML extras.",
+        reason="The vertical reader requires the OCR extras.",
     )
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
-    (tmp_path / "windowsml" / "vertical").mkdir()
+    (tmp_path / "ocr" / "vertical").mkdir()
 
     def broken(_directory: Path, **_kwargs: object) -> object:
         raise KeyError("names")
@@ -1071,12 +1070,12 @@ def test_vertical_reader_that_cannot_be_loaded_fails_the_page_with_a_runtime_err
 
 
 def test_altered_vertical_reader_files_fail_the_page(tmp_path: Path) -> None:
-    # Loading the reader needs the whole WindowsML extra (onnxruntime, PyYAML),
+    # Loading the reader needs the whole OCR extra (onnxruntime, PyYAML),
     # which the ordinary test environment does not install: see issue #383.
-    pytest.importorskip("onnxruntime", reason="The vertical reader requires the WindowsML extra.")
-    pytest.importorskip("yaml", reason="The vertical reader requires the WindowsML extra.")
+    pytest.importorskip("onnxruntime", reason="The vertical reader requires the OCR extra.")
+    pytest.importorskip("yaml", reason="The vertical reader requires the OCR extra.")
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
-    (tmp_path / "windowsml" / "vertical").mkdir()
+    (tmp_path / "ocr" / "vertical").mkdir()
 
     with pytest.raises(
         EngineRuntimeUnavailableError, match="Vertical reader file is missing or altered"
@@ -1085,11 +1084,11 @@ def test_altered_vertical_reader_files_fail_the_page(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_windowsml_adapter_reading_order_failure_does_not_return_original_success(
+def test_onnx_adapter_reading_order_failure_does_not_return_original_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Pipeline:
         def predict(self, _source: str) -> list[dict[str, object]]:
@@ -1107,7 +1106,7 @@ def test_windowsml_adapter_reading_order_failure_does_not_return_original_succes
         raise RuntimeError("reading-order invariant failed")
 
     monkeypatch.setattr(page_models, "plan_reading_order", broken_policy)
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1130,8 +1129,8 @@ def test_windowsml_adapter_reading_order_failure_does_not_return_original_succes
 def test_paddle_adapter_preserves_predictor_polygon_order_and_coordinates(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     polygon = [[11.25, 20.5], [91.75, 18.0], [104.0, 61.25], [4.5, 64.0]]
 
     class Result:
@@ -1151,7 +1150,7 @@ def test_paddle_adapter_preserves_predictor_polygon_order_and_coordinates(
     image = BytesIO()
     Image.new("RGB", (120, 80), "white").save(image, format="PNG")
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1166,8 +1165,8 @@ def test_paddle_adapter_preserves_predictor_polygon_order_and_coordinates(
 def test_paddle_adapter_converts_xyxy_rectangle_to_four_point_polygon(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {
@@ -1185,7 +1184,7 @@ def test_paddle_adapter_converts_xyxy_rectangle_to_four_point_polygon(
     image = BytesIO()
     Image.new("RGB", (120, 80), "white").save(image, format="PNG")
 
-    result = WindowsMLOcrAdapter(
+    result = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1203,8 +1202,8 @@ def test_paddle_adapter_converts_xyxy_rectangle_to_four_point_polygon(
 def test_paddle_adapter_uses_detection_polygon_when_recognition_polygon_is_empty(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {
@@ -1223,7 +1222,7 @@ def test_paddle_adapter_uses_detection_polygon_when_recognition_polygon_is_empty
     image = BytesIO()
     Image.new("RGB", (120, 80), "white").save(image, format="PNG")
 
-    result = WindowsMLOcrAdapter(
+    result = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1251,8 +1250,8 @@ def test_paddle_adapter_rejects_malformed_or_out_of_raster_polygon(
     tmp_path: Path,
     polygon: list[list[float]],
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {
@@ -1270,7 +1269,7 @@ def test_paddle_adapter_rejects_malformed_or_out_of_raster_polygon(
     image = BytesIO()
     Image.new("RGB", (100, 80), "white").save(image, format="PNG")
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1281,9 +1280,9 @@ def test_paddle_adapter_rejects_malformed_or_out_of_raster_polygon(
         adapter.extract_png(image.getvalue())
 
 
-def test_windowsml_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+def test_onnx_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: Path) -> None:
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     configurations: list[dict[str, object]] = []
 
     class Pipeline:
@@ -1294,7 +1293,7 @@ def test_windowsml_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: 
         configurations.append(kwargs["engine_config"])
         return Pipeline()
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=factory,
@@ -1314,18 +1313,18 @@ def test_windowsml_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: 
     ]
 
 
-def test_windowsml_adapter_dml_initialization_failure_fails_closed_without_cpu_retry(
+def test_onnx_adapter_dml_initialization_failure_fails_closed_without_cpu_retry(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     configurations: list[dict[str, object]] = []
 
     def factory(**kwargs: object) -> object:
         configurations.append(kwargs["engine_config"])
         raise RuntimeError("DML session initialization failed")
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=factory,
@@ -1369,10 +1368,10 @@ def test_default_paddle_factory_does_not_patch_onnxruntime_globals(
 
     paddleocr_module = ModuleType("paddleocr")
     paddleocr_module.PaddleOCR = FakePaddleOCR  # type: ignore[attr-defined]
-    monkeypatch.setitem(windowsml_adapter.sys.modules, "onnxruntime", ort_module)
-    monkeypatch.setitem(windowsml_adapter.sys.modules, "paddleocr", paddleocr_module)
+    monkeypatch.setitem(onnx_adapter.sys.modules, "onnxruntime", ort_module)
+    monkeypatch.setitem(onnx_adapter.sys.modules, "paddleocr", paddleocr_module)
 
-    result = windowsml_adapter._default_paddle_pipeline(engine="onnxruntime")
+    result = onnx_adapter._default_paddle_pipeline(engine="onnxruntime")
 
     assert isinstance(result, FakePaddleOCR)
     assert observed == [(InferenceSession, SessionOptions, {"engine": "onnxruntime"})]
@@ -1394,7 +1393,7 @@ def test_each_ocr_model_session_gets_its_own_profile_prefix() -> None:
         },
     }
 
-    config = windowsml_adapter._per_session_profile_config(
+    config = onnx_adapter._per_session_profile_config(
         {"engine_config": _profiling_engine_config("C:/work/ocr-profile")},
         load_config=lambda name: pipeline_config,
     )
@@ -1436,7 +1435,7 @@ def test_ocr_models_share_the_pipeline_config_without_profiling(
     def load_config(name: str) -> dict[str, object]:
         raise AssertionError("the PaddleX config is only needed when profiling")
 
-    assert windowsml_adapter._per_session_profile_config(kwargs, load_config=load_config) is None
+    assert onnx_adapter._per_session_profile_config(kwargs, load_config=load_config) is None
 
 
 def test_default_paddle_factory_passes_per_model_profile_prefixes(
@@ -1454,11 +1453,11 @@ def test_default_paddle_factory_passes_per_model_profile_prefixes(
     paddlex_inference.load_pipeline_config = lambda name: {  # type: ignore[attr-defined]
         "SubModules": {"TextDetection": {}, "TextRecognition": {}}
     }
-    monkeypatch.setitem(windowsml_adapter.sys.modules, "paddleocr", paddleocr_module)
-    monkeypatch.setitem(windowsml_adapter.sys.modules, "paddlex.inference", paddlex_inference)
+    monkeypatch.setitem(onnx_adapter.sys.modules, "paddleocr", paddleocr_module)
+    monkeypatch.setitem(onnx_adapter.sys.modules, "paddlex.inference", paddlex_inference)
     engine_config = _profiling_engine_config("C:/work/ocr-profile")
 
-    windowsml_adapter._default_paddle_pipeline(engine="onnxruntime", engine_config=engine_config)
+    onnx_adapter._default_paddle_pipeline(engine="onnxruntime", engine_config=engine_config)
 
     assert len(observed) == 1
     assert observed[0]["engine_config"] == engine_config
@@ -1509,8 +1508,8 @@ def test_ort_session_identity_rejects_non_dml_first_session_before_inference(
 
 
 def test_constructor_cpu_retry_identity_fails_before_predict(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     predict_calls: list[str] = []
 
     class Session:
@@ -1531,7 +1530,7 @@ def test_constructor_cpu_retry_identity_fails_before_predict(tmp_path: Path) -> 
             predict_calls.append(_source)
             return []
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1544,11 +1543,11 @@ def test_constructor_cpu_retry_identity_fails_before_predict(tmp_path: Path) -> 
     assert predict_calls == []
 
 
-def test_windowsml_adapter_rejects_registered_dml_with_zero_assigned_nodes(
+def test_onnx_adapter_rejects_registered_dml_with_zero_assigned_nodes(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {"res": {"rec_texts": ["must not be trusted"]}}
@@ -1557,7 +1556,7 @@ def test_windowsml_adapter_rejects_registered_dml_with_zero_assigned_nodes(
         def predict(self, _source: str) -> list[Result]:
             return [Result()]
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1571,11 +1570,11 @@ def test_windowsml_adapter_rejects_registered_dml_with_zero_assigned_nodes(
         adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
 
 
-def test_windowsml_adapter_fails_closed_without_dml_execution_evidence(
+def test_onnx_adapter_fails_closed_without_dml_execution_evidence(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {"res": {"rec_texts": ["must not be trusted"]}}
@@ -1584,7 +1583,7 @@ def test_windowsml_adapter_fails_closed_without_dml_execution_evidence(
         def predict(self, _source: str) -> list[Result]:
             return [Result()]
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1595,11 +1594,11 @@ def test_windowsml_adapter_fails_closed_without_dml_execution_evidence(
         adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
 
 
-def test_windowsml_adapter_accepts_dml_nodes_with_cpu_fallback_nodes(
+def test_onnx_adapter_accepts_dml_nodes_with_cpu_fallback_nodes(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {
@@ -1614,7 +1613,7 @@ def test_windowsml_adapter_accepts_dml_nodes_with_cpu_fallback_nodes(
         def predict(self, _source: str) -> list[Result]:
             return [Result()]
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1626,20 +1625,20 @@ def test_windowsml_adapter_accepts_dml_nodes_with_cpu_fallback_nodes(
 
     result = adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
 
-    assert result.device == "windowsml-dml"
+    assert result.device == "directml"
 
 
-def test_windowsml_provenance_requires_evidence_not_provider_configuration(
+def test_ocr_provenance_requires_evidence_not_provider_configuration(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Pipeline:
         def predict(self, _source: str) -> list[object]:
             return []
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1653,11 +1652,11 @@ def test_windowsml_provenance_requires_evidence_not_provider_configuration(
         adapter.provenance()
 
 
-def test_windowsml_dml_provenance_is_finalized_after_prediction(
+def test_ocr_dml_provenance_is_finalized_after_prediction(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     events: list[str] = []
 
     class Result:
@@ -1685,7 +1684,7 @@ def test_windowsml_dml_provenance_is_finalized_after_prediction(
             events.append("finalize")
             return OcrExecutionEvidence(dml_node_count=1, cpu_node_count=2)
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1699,14 +1698,14 @@ def test_windowsml_dml_provenance_is_finalized_after_prediction(
 
     assert events == ["prepare", "predict", "finalize"]
     assert result.provenance is not None and result.provenance.is_resolved
-    assert result.device == "windowsml-dml"
+    assert result.device == "directml"
 
 
-def test_windowsml_adapter_preserves_typed_profile_cleanup_failure(
+def test_onnx_adapter_preserves_typed_profile_cleanup_failure(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = {
@@ -1732,7 +1731,7 @@ def test_windowsml_adapter_preserves_typed_profile_cleanup_failure(
                 cleanup_verified=False,
             )
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1746,11 +1745,11 @@ def test_windowsml_adapter_preserves_typed_profile_cleanup_failure(
     assert raised.value.profile_paths_absent is False
 
 
-def test_windowsml_prediction_failure_aborts_all_ort_profiles(
+def test_ocr_prediction_failure_aborts_all_ort_profiles(
     tmp_path: Path,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     end_calls: list[int] = []
 
     class Session:
@@ -1786,7 +1785,7 @@ def test_windowsml_prediction_failure_aborts_all_ort_profiles(
         def predict(self, _source: str) -> list[object]:
             raise RuntimeError("predict failed at a private source path")
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -1804,12 +1803,12 @@ def test_windowsml_prediction_failure_aborts_all_ort_profiles(
         adapter.provenance()
 
 
-def test_windowsml_prediction_failure_preserves_primary_kind_when_cleanup_fails(
+def test_ocr_prediction_failure_preserves_primary_kind_when_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     profile_paths: list[Path] = []
 
     class Session:
@@ -1845,7 +1844,7 @@ def test_windowsml_prediction_failure_preserves_primary_kind_when_cleanup_fails(
         def predict(self, _source: str) -> list[object]:
             raise RuntimeError("prediction failed")
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         **_gpu_plan_kwargs(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -2864,8 +2863,8 @@ class _StaticOcrEvidenceAdapter:
 
 
 def _warm_ocr_adapters(tmp_path: Path):
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     plan = _gpu_plan_kwargs()["execution_plan"]
     assert isinstance(plan, OcrExecutionPlan)
     built: list[object] = []
@@ -2888,7 +2887,7 @@ def _warm_ocr_adapters(tmp_path: Path):
         return adapter_map[0]  # type: ignore[return-value]
 
     def make(reusable=None, evidence=None, **options):  # type: ignore[no-untyped-def]
-        return WindowsMLOcrAdapter(
+        return OnnxOcrAdapter(
             model_dir,
             execution_plan=plan,
             adapter_map_resolver=resolver,
@@ -2917,11 +2916,11 @@ def test_a_warm_ocr_worker_reuses_the_evidenced_pipeline_and_still_checks_the_ad
     second = make(reusable, evidence)
     result = second.extract_png(b"page")
 
-    assert (result.text, result.device) == ("Warm", "windowsml-dml")
+    assert (result.text, result.device) == ("Warm", "directml")
     assert len(built) == 1
     assert (evidence.prepare_calls, evidence.finalize_calls) == (0, 0)
     assert len(map_checks) == checks + 1
-    assert second.provenance().device == "windowsml-dml"
+    assert second.provenance().device == "directml"
 
     adapter_map[0] = ("0" * 64, adapter_map[0][1], True)
     with pytest.raises(EngineRuntimeUnavailableError, match="identity drifted"):
@@ -2940,11 +2939,11 @@ def test_an_ocr_run_with_an_execution_proof_never_reuses_a_pipeline(tmp_path: Pa
     assert len(built) == 1
 
 
-def test_windowsml_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+def test_onnx_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> None:
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     stages: list[str] = []
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         pipeline_factory=lambda **_kwargs: object(),
         provider_resolver=lambda: [],
@@ -3011,10 +3010,36 @@ def test_runtime_settings_reject_an_unknown_speech_recognition_variant(variant: 
         )
 
 
-def test_runtime_settings_rejects_retired_windowsml_device_override() -> None:
+def test_runtime_settings_rejects_removed_ocr_model_directory() -> None:
+    with pytest.raises(ValueError, match="CAPTURE_WINDOWSML_MODEL_DIR is no longer supported"):
+        RuntimeSettings.from_env({"CAPTURE_WINDOWSML_MODEL_DIR": ""})
+
+
+def test_runtime_settings_rejects_removed_ollama_profile_id() -> None:
+    with pytest.raises(ValueError, match="CAPTURE_OLLAMA_PROFILE_ID is no longer supported"):
+        RuntimeSettings.from_env(
+            {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_OLLAMA_PROFILE_ID": "qwen3.5-4b-structure-v1"}
+        )
+
+
+def test_runtime_settings_rejects_retired_ocr_device_override() -> None:
     with pytest.raises(ValueError, match="CAPTURE_WINDOWSML_DEVICE_ID is retired"):
         RuntimeSettings.from_env(
             {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_WINDOWSML_DEVICE_ID": "0"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("old_name", "new_name"),
+    [
+        ("CAPTURE_WHISPER_PREFER_GPU", "CAPTURE_SPEECH_PREFER_GPU"),
+        ("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK", "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK"),
+    ],
+)
+def test_runtime_settings_reject_retired_speech_variables(old_name: str, new_name: str) -> None:
+    with pytest.raises(ValueError, match=f"{old_name} is retired; use {new_name}"):
+        RuntimeSettings.from_env(
+            {"CAPTURE_API_TOKEN": "a" * 32, old_name: "false", new_name: "true"}
         )
 
 
@@ -3022,7 +3047,7 @@ def test_runtime_settings_allows_explicit_speech_gpu_opt_in() -> None:
     settings = RuntimeSettings.from_env(
         {
             "CAPTURE_API_TOKEN": "a" * 32,
-            "CAPTURE_WHISPER_PREFER_GPU": "true",
+            "CAPTURE_SPEECH_PREFER_GPU": "true",
         }
     )
 
@@ -3033,7 +3058,7 @@ def test_runtime_settings_can_disable_speech_cpu_fallback() -> None:
     settings = RuntimeSettings.from_env(
         {
             "CAPTURE_API_TOKEN": "a" * 32,
-            "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK": "false",
+            "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK": "false",
         }
     )
 
@@ -3052,8 +3077,8 @@ class FakeOcrAdapter:
         self.images.append(image_png)
         return OcrTextResult(
             text=self.text,
-            device="windowsml-dml",
-            model="pp-ocrv6-medium-windowsml",
+            device="directml",
+            model="pp-ocrv6-medium",
             digest=f"sha256:{'1' * 64}",
             raster_width=1,
             raster_height=1,
@@ -3185,8 +3210,8 @@ class _RasterWidthOcrAdapter(FakeOcrAdapter):
             width = image.width
         return OcrTextResult(
             text=f"raster {width}",
-            device="windowsml-dml",
-            model="pp-ocrv6-medium-windowsml",
+            device="directml",
+            model="pp-ocrv6-medium",
             digest=f"sha256:{'1' * 64}",
             raster_width=1,
             raster_height=1,
@@ -3511,8 +3536,8 @@ def _stub_pdf_source(
 def _tracked_result(text: str) -> OcrTextResult:
     return OcrTextResult(
         text=text,
-        device="windowsml-dml",
-        model="pp-ocrv6-medium-windowsml",
+        device="directml",
+        model="pp-ocrv6-medium",
         digest=f"sha256:{'1' * 64}",
         raster_width=1,
         raster_height=1,
@@ -3725,7 +3750,7 @@ def test_standalone_image_normalization_and_audio_provenance(tmp_path: Path) -> 
         )
     ).raw
     assert image_raw.segments[0].locator.page == 1
-    assert image_raw.extraction_engine.engine == "windowsml-ocr"
+    assert image_raw.extraction_engine.engine == "text-recognition"
     with Image.open(BytesIO(ocr.images[0])) as normalized:
         assert normalized.format == "PNG"
         assert normalized.mode == "RGB"
@@ -3810,8 +3835,8 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -3911,7 +3936,7 @@ def test_worker_runtime_unavailable_preserves_complete_pdf_manifest(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 3
+    assert projection.processed_page_count == 3
     assert [page.page for page in projection.pages] == [1, 2, 3]
     assert [page.status.value for page in projection.pages] == ["failed"] * 3
     assert all(page.text == "" and page.boxes == [] for page in projection.pages)
@@ -3954,7 +3979,7 @@ def test_worker_runtime_unavailable_preserves_image_manifest(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 1
+    assert projection.processed_page_count == 1
     assert projection.pages[0].status.value == "failed"
     assert projection.pages[0].raster.width == 24
     assert projection.pages[0].raster.height == 16
@@ -3992,7 +4017,7 @@ def test_sync_runtime_unavailable_preserves_pdf_manifest_without_adapter(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 3
+    assert projection.processed_page_count == 3
     assert [page.status.value for page in projection.pages] == ["failed"] * 3
     assert projection.failure is not None
     assert projection.failure.code == "ocr_runtime_unavailable"
@@ -4029,7 +4054,7 @@ def test_sync_ocr_runtime_initialization_failure_preserves_page_manifest(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 2
+    assert projection.processed_page_count == 2
     assert [page.status.value for page in projection.pages] == ["failed"] * 2
     assert projection.failure is not None
     assert projection.failure.code == "ocr_runtime_unavailable"
@@ -4040,9 +4065,9 @@ def test_sync_ocr_runtime_initialization_failure_preserves_page_manifest(
 def test_sync_malformed_paddle_result_preserves_diagnostics_and_public_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
 ) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
-    adapter = WindowsMLOcrAdapter(
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: object(),
@@ -4216,13 +4241,13 @@ def test_worker_backed_image_is_enlarged_as_its_manifest_says(
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4259,10 +4284,10 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
             self.options = kwargs["options"]  # type: ignore[assignment]
             return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -4292,13 +4317,13 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4354,7 +4379,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
     }
     assert [segment.text for segment in raw.segments] == ["Rendered page one"]
     assert raw.source_text == extraction.ocr_projection.pages[0].text
-    assert raw.extraction_engine.engine == "windowsml-ocr"
+    assert raw.extraction_engine.engine == "text-recognition"
     assert extraction.ocr_projection is not None
     assert [page.status.value for page in extraction.ocr_projection.pages] == [
         "recognized",
@@ -4376,10 +4401,10 @@ def test_worker_backed_pdf_page_scope_dispatches_only_page_one_and_records_scope
             self.options = kwargs["options"]  # type: ignore[assignment]
             return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -4398,13 +4423,13 @@ def test_worker_backed_pdf_page_scope_dispatches_only_page_one_and_records_scope
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4484,10 +4509,10 @@ def test_worker_ocr_segments_must_match_canonical_projection(
         async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             return OcrWorkerRunResult(
                 segments=segments,
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -4516,13 +4541,13 @@ def test_worker_ocr_segments_must_match_canonical_projection(
     class EngineManager:
         worker_client = DivergingWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4568,10 +4593,10 @@ def test_worker_ocr_projection_drives_raw_segments_for_perspective_boxes(
         async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Perspective page one", page=1),),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -4591,13 +4616,13 @@ def test_worker_ocr_projection_drives_raw_segments_for_perspective_boxes(
     class EngineManager:
         worker_client = PerspectiveWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4708,10 +4733,10 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
         async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             return OcrWorkerRunResult(
                 segments=segments,
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=terminal_pages,
             )
@@ -4719,13 +4744,13 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
     class EngineManager:
         worker_client = MalformedWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4781,10 +4806,10 @@ def test_worker_projection_cancellation_does_not_become_success_or_protocol(
         async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -4804,13 +4829,13 @@ def test_worker_projection_cancellation_does_not_become_success_or_protocol(
     class EngineManager:
         worker_client = ValidWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4847,10 +4872,10 @@ def test_worker_all_empty_terminal_is_failed_with_readable_no_text_projection(
         async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             return OcrWorkerRunResult(
                 segments=(),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -4869,13 +4894,13 @@ def test_worker_all_empty_terminal_is_failed_with_readable_no_text_projection(
     class EngineManager:
         worker_client = EmptyWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -4951,13 +4976,13 @@ def test_worker_provenance_mismatch_discards_untrusted_progress_prefix(
     class EngineManager:
         worker_client = MismatchedWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -5060,13 +5085,13 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
     class EngineManager:
         worker_client = FailingWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -5118,13 +5143,13 @@ def test_worker_failure_preserves_cancellation_priority(tmp_path: Path) -> None:
     class EngineManager:
         worker_client = FailingWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -5158,8 +5183,8 @@ def test_sync_ocr_manifest_raster_authority_ignores_adapter_dimensions(
         def extract_png(self, _image_png: bytes) -> OcrTextResult:
             return OcrTextResult(
                 text="Manifest raster wins",
-                device="windowsml-dml",
-                model="pp-ocrv6-medium-windowsml",
+                device="directml",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
                 regions=(
                     OcrRegion(
@@ -5216,8 +5241,8 @@ def test_sync_ocr_cancellation_after_inference_stops_before_next_page(
             cancel_event.set()
             return OcrTextResult(
                 text="Cancelled after inference",
-                device="windowsml-dml",
-                model="pp-ocrv6-medium-windowsml",
+                device="directml",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
                 raster_width=120,
                 raster_height=80,
@@ -5262,10 +5287,10 @@ def test_worker_ocr_manifest_dimensions_remain_strict(
         async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -5285,13 +5310,13 @@ def test_worker_ocr_manifest_dimensions_remain_strict(
     class EngineManager:
         worker_client = MismatchedWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -5353,7 +5378,7 @@ def test_pdf_pages_always_use_ocr_and_preserve_page_provenance(
     assert ocr.images == [page_png.getvalue(), page_png.getvalue()]
     assert [segment.text for segment in raw.segments] == ["Rendered OCR", "Rendered OCR"]
     assert [segment.locator.page for segment in raw.segments] == [1, 2]
-    assert raw.extraction_engine.engine == "windowsml-ocr"
+    assert raw.extraction_engine.engine == "text-recognition"
     assert raw.source_text == "Rendered OCR\nRendered OCR"
 
 
@@ -5383,10 +5408,10 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
             received.append(kwargs.get("vertical_reader_dir"))
             return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
-                engine="windowsml-ocr",
-                model="pp-ocrv6-medium-windowsml",
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
                 digest=f"sha256:{'1' * 64}",
-                device="windowsml-dml",
+                device="directml",
                 warnings=(),
                 pages=(
                     WorkerOcrPage(
@@ -5401,17 +5426,17 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
                         raster_scale=1,
                     ),
                 ),
-                suggested_units=() if installed else ("vertical-japanese-reader",),
+                suggested_requirement_ids=() if installed else ("vertical-japanese-reader",),
             )
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
@@ -5441,4 +5466,4 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
     ).raw
 
     assert received == [unit_dir / "vertical" if installed else None]
-    assert raw.suggested_units == ([] if installed else ["vertical-japanese-reader"])
+    assert raw.suggested_requirement_ids == ([] if installed else ["vertical-japanese-reader"])

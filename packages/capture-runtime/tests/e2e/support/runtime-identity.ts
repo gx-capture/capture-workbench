@@ -22,7 +22,7 @@ export type RuntimeProbeIdentity = {
 export type RuntimeIdentityObservation = {
   readonly apiVersion: unknown;
   readonly ocrSchemaVersion: unknown;
-  readonly contractSha256: unknown;
+  readonly contractSetSha256: unknown;
   readonly loadedRuntimeSha256: unknown;
   readonly loadedOcrWorkerSha256?: unknown;
   readonly runtimeVersion?: unknown;
@@ -52,7 +52,7 @@ export type RuntimePackageIdentityInput = {
   readonly packageRoot: string;
   readonly runtimeExecutablePath: string;
   readonly ocrWorkerArchivePath?: string;
-  readonly expectedContractSha256: string;
+  readonly expectedContractSetSha256: string;
   readonly expectedRuntimeVersion?: string;
   readonly expectedRuntimeSha256?: string;
   readonly probe: RuntimeProbeIdentity;
@@ -69,7 +69,7 @@ export type RuntimePackageIdentityReport = {
   readonly hardGates: {
     readonly apiVersion: '2.0';
     readonly ocrSchemaVersion: '3';
-    readonly contractSha256: string;
+    readonly contractSetSha256: string;
     readonly archiveBoundary: 'verified';
     readonly runtimeExecutableSha256: 'verified';
     readonly ocrWorkerSha256: 'verified' | 'not-applicable';
@@ -235,10 +235,10 @@ function assertObservation(input: RuntimePackageIdentityInput): void {
   if (input.observed.ocrSchemaVersion !== '3') {
     throw new Error('Runtime identity requires OCR schema version 3.');
   }
-  if (input.observed.contractSha256 !== input.expectedContractSha256) {
+  if (input.observed.contractSetSha256 !== input.expectedContractSetSha256) {
     throw new Error('Runtime identity contract hash does not match the probe.');
   }
-  assertDigest(input.expectedContractSha256, 'Expected contract SHA-256');
+  assertDigest(input.expectedContractSetSha256, 'Expected contract SHA-256');
   assertDigest(
     input.probe.runtimeExecutableSha256,
     'Probed runtime executable SHA-256',
@@ -320,7 +320,7 @@ export async function verifyRuntimePackageIdentity(
     hardGates: {
       apiVersion: '2.0',
       ocrSchemaVersion: '3',
-      contractSha256: input.expectedContractSha256,
+      contractSetSha256: input.expectedContractSetSha256,
       archiveBoundary: 'verified',
       runtimeExecutableSha256: 'verified',
       ocrWorkerSha256,

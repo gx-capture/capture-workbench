@@ -160,7 +160,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         ],
       }),
     );
-    const output = join(root, 'capture-release-manifest-v1.json');
+    const output = join(root, 'capture-release-manifest-v2.json');
     const manifestArguments = [
       resolve(import.meta.dirname, 'create-release-manifest.ts'),
       '--candidate',
@@ -181,6 +181,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
     });
     assert.equal(result.status, 0, result.stderr);
     const manifest = JSON.parse(await readFile(output, 'utf8'));
+    assert.equal(manifest.schemaVersion, '2');
     assert.equal(manifest.status, 'released');
     assert.equal(manifest.candidateId, candidateId);
     assert.equal(manifest.releaseTag, ("v" + RELEASE_VERSION));
@@ -197,19 +198,23 @@ test('release manifest is immutable, candidate-bound, and records registry and g
     );
     assert.equal(manifest.consumerGates.gates[0].verdict, 'passed');
     assert.deepEqual(
-      manifest.runtimeAssets.map((item: { path: string }) => item.path),
+      manifest.releaseAssets.map((item: { path: string }) => item.path),
       ['desktop/installer.exe', 'runtime/runtime.bin'],
     );
     assert.match(
       await readFile(`${output}.sha256`, 'utf8'),
-      /^[0-9a-f]{64} {2}capture-release-manifest-v1\.json\n$/u,
+      /^[0-9a-f]{64} {2}capture-release-manifest-v2\.json\n$/u,
     );
     assert.deepEqual(
-      JSON.parse(
-        await readFile(join(candidate, 'candidate-manifest.json'), 'utf8'),
-      ),
-      JSON.parse(candidateManifest.toString('utf8')),
+      await readFile(join(candidate, 'candidate-manifest.json')),
+      candidateManifest,
     );
+    assert.deepEqual(
+      await readFile(join(candidate, 'contracts', 'contract-snapshot.json')),
+      snapshot,
+    );
+    assert.deepEqual(await readFile(join(runtime, 'runtime.bin')), Buffer.from('runtime'));
+    assert.deepEqual(await readFile(join(desktop, 'installer.exe')), Buffer.from('installer'));
     for (const name of ['runtime-size-report.json', 'runtime.bin.sha256']) {
       const extra = join(runtime, name);
       await writeFile(extra, '{}\n');

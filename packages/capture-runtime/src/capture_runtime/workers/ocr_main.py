@@ -1,4 +1,4 @@
-"""Separately packaged WindowsML OCR worker."""
+"""Separately packaged Text recognition worker."""
 
 # Imports are deliberately staged below so the packaged worker can report the
 # exact failing import boundary before loading heavyweight model dependencies.
@@ -52,9 +52,9 @@ from capture_runtime.ocr.infrastructure.ocr_offline_stubs import (
     install_offline_aistudio_stubs,
     install_offline_huggingface_stubs,
 )
-from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import (
+from capture_runtime.ocr.infrastructure.ocr_onnx_adapter import (
     ReusableOcrSession,
-    WindowsMLOcrAdapter,
+    OnnxOcrAdapter,
 )
 from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import CaptureSource
@@ -90,7 +90,7 @@ class _PaddlePageOcrEngine:
 
     def __init__(
         self,
-        adapter: WindowsMLOcrAdapter,
+        adapter: OnnxOcrAdapter,
         images: Iterable[tuple[int, bytes]],
     ) -> None:
         self._adapter = adapter
@@ -211,7 +211,7 @@ def _probe(request: WorkerRequest) -> dict[str, Any]:
     if payload_fields not in {frozenset(base_fields), frozenset(base_fields | {"options"})}:
         raise ValueError("OCR worker payload fields are invalid")
     payload = request.payload
-    if payload["requirementId"] != "windowsml-ocr":
+    if payload["requirementId"] != "text-recognition":
         raise ValueError("OCR requirementId is invalid")
     options = payload.get("options", {})
     if not isinstance(options, dict) or set(options):
@@ -236,12 +236,12 @@ def _probe(request: WorkerRequest) -> dict[str, Any]:
             ),
             "device": None,
         }
-    adapter = WindowsMLOcrAdapter(model_path)
+    adapter = OnnxOcrAdapter(model_path)
     probe = adapter.probe()
     device = None
     if probe.ready:
         providers = adapter._providers()
-        device = "windowsml-dml" if "DmlExecutionProvider" in providers else "cpu"
+        device = "directml" if "DmlExecutionProvider" in providers else "cpu"
     return {
         "ready": probe.ready,
         "codeReady": probe.code_ready,
@@ -258,7 +258,7 @@ def _preflight(request: WorkerRequest) -> dict[str, Any]:
         "requirementId",
         "artifactVersion",
         "modelPath",
-        "contractSha256",
+        "contractSetSha256",
         "options",
     }
     payload = request.payload
@@ -267,12 +267,12 @@ def _preflight(request: WorkerRequest) -> dict[str, Any]:
         expected | {"expectedWorkerSha256"}
     ):
         raise ValueError("OCR compute preflight payload fields are invalid")
-    if payload["requirementId"] != "windowsml-ocr" or payload["modelPath"] is not None:
+    if payload["requirementId"] != "text-recognition" or payload["modelPath"] is not None:
         raise ValueError("OCR compute preflight worker identity is invalid")
-    contract_sha256 = payload["contractSha256"]
+    contract_set_sha256 = payload["contractSetSha256"]
     if (
-        not isinstance(contract_sha256, str)
-        or re.fullmatch(r"[0-9a-f]{64}", contract_sha256) is None
+        not isinstance(contract_set_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", contract_set_sha256) is None
     ):
         raise ValueError("OCR compute preflight contract SHA-256 is invalid")
     options = payload["options"]
@@ -289,7 +289,7 @@ def _preflight(request: WorkerRequest) -> dict[str, Any]:
         raise ValueError("OCR compute preflight worker executable identity mismatch")
     capability_probe = NativeOcrGpuCapabilityProbe()
     selection = OcrComputePlan(
-        contract_sha256=contract_sha256,
+        contract_set_sha256=contract_set_sha256,
         worker_sha256=worker_sha256,
         capability_probe=capability_probe,
     ).select()
@@ -496,7 +496,7 @@ def _run(
         "options",
     }:
         raise ValueError("OCR worker payload fields are invalid")
-    if payload["requirementId"] != "windowsml-ocr":
+    if payload["requirementId"] != "text-recognition":
         raise ValueError("OCR requirementId is invalid")
     model_path = _model_path(payload["modelPath"], required=True)
     assert model_path is not None
@@ -598,7 +598,7 @@ def _run(
     requested_page_scope = page_numbers
     global _reusable_session
     reusable, _reusable_session = _reusable_session, None
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_path,
         execution_plan=compute_plan,
         stage_reporter=_report_stage,
@@ -641,7 +641,7 @@ def _run(
     if worker_engine.execution_proof is not None:
         final_payload["executionProof"] = worker_engine.execution_proof.to_dict()
     if getattr(adapter, "vertical_reader_wanted", False):
-        final_payload["suggestedUnits"] = [VERTICAL_READER_REQUIREMENT_ID]
+        final_payload["suggestedRequirementIds"] = [VERTICAL_READER_REQUIREMENT_ID]
     reusable_session = getattr(adapter, "reusable_session", None)
     _reusable_session = reusable_session() if callable(reusable_session) else None
     return final_payload

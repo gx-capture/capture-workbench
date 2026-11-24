@@ -10,16 +10,23 @@ from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
     OcrComputeNoticeCode,
-    OcrComputePreflightV2,
     OcrComputeReasonCode,
 )
-from capture_runtime.ocr.infrastructure.ocr_preflight import (
+from capture_runtime.contracts import (
+    OcrComputePreflight as OcrComputePreflightContract,
+)
+from capture_runtime.gpu_inventory import (
     _DXGI_FACTORY1_VTABLE_IS_CURRENT,
+    GpuAdapter,
+    GpuAdapterClass,
+    _classify_native_adapter,
+)
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     NativeOcrAdapterMapLease,
+    NativeOcrGpuCapabilityProbe,
     OcrComputePreflight,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
-    _classify_native_adapter,
 )
 
 CONTRACT_SHA256 = "a" * 64
@@ -37,9 +44,9 @@ def _decision(
     adapters: tuple[OcrGpuAdapter, ...],
     *,
     dml_provider_available: bool,
-) -> OcrComputePreflightV2:
+) -> OcrComputePreflightContract:
     return OcrComputePreflight(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         capability_probe=StaticCapabilityProbe(
             OcrGpuCapabilitySnapshot(
                 adapters=adapters,
@@ -56,12 +63,12 @@ def test_hardware_gpu_and_dml_select_gpu_mode(adapter_class: OcrAdapterClass) ->
         dml_provider_available=True,
     )
 
-    assert decision.mode is OcrComputeMode.GPU_DML
+    assert decision.mode is OcrComputeMode.GPU
     assert decision.adapter_class is adapter_class
     assert decision.reason_code is None
     assert decision.user_notice_required is False
     assert decision.notice_code is None
-    assert decision.contract_sha256 == CONTRACT_SHA256
+    assert decision.contract_set_sha256 == CONTRACT_SHA256
 
 
 def test_software_only_adapters_are_not_compatible_gpu() -> None:
@@ -85,7 +92,7 @@ def test_hardware_gpu_without_dml_reports_provider_reason() -> None:
 
     assert decision.mode is OcrComputeMode.CPU_FALLBACK
     assert decision.adapter_class is OcrAdapterClass.INTEGRATED
-    assert decision.reason_code is OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE
+    assert decision.reason_code is OcrComputeReasonCode.GPU_PROVIDER_UNAVAILABLE
     assert decision.user_notice_required is True
     assert decision.notice_code is OcrComputeNoticeCode.CPU_FALLBACK
 
@@ -98,6 +105,30 @@ def test_no_adapter_reports_no_compatible_gpu_even_if_dml_is_registered() -> Non
     assert decision.reason_code is OcrComputeReasonCode.NO_COMPATIBLE_GPU
 
 
+def _probe_native_adapter(
+    monkeypatch: pytest.MonkeyPatch, adapter_class: GpuAdapterClass
+) -> OcrGpuAdapter:
+    adapter = GpuAdapter("Test GPU", 0x1234, 2, "0000000000000001", adapter_class, 3, 0)
+    monkeypatch.setattr(NativeOcrAdapterMapLease, "__init__", lambda self: None)
+    monkeypatch.setattr(NativeOcrAdapterMapLease, "is_current", lambda self: True)
+    monkeypatch.setattr(NativeOcrAdapterMapLease, "close", lambda self: None)
+    monkeypatch.setattr(
+        NativeOcrAdapterMapLease,
+        "enumerate_adapters",
+        lambda self, *, high_performance=False: (adapter,),
+    )
+    snapshot = NativeOcrGpuCapabilityProbe(
+        provider_resolver=lambda: ("DmlExecutionProvider",),
+        version_resolver=lambda: None,
+    ).probe()
+    (ordinary,) = snapshot.ordinary_adapters
+    (high,) = snapshot.high_performance_adapters
+    assert ordinary.high_performance_rank is None
+    assert high.high_performance_rank == 0
+    assert (high.adapter_class, high.is_software) == (ordinary.adapter_class, ordinary.is_software)
+    return ordinary
+
+
 @pytest.mark.parametrize(
     ("uma", "expected"),
     [
@@ -107,14 +138,23 @@ def test_no_adapter_reports_no_compatible_gpu_even_if_dml_is_registered() -> Non
     ],
 )
 def test_native_hardware_classification_uses_architecture_uma_evidence(
-    uma: bool | None,
-    expected: OcrAdapterClass,
+    monkeypatch: pytest.MonkeyPatch, uma: bool | None, expected: OcrAdapterClass
 ) -> None:
-    assert _classify_native_adapter(is_software=False, uma=uma) is expected
+    adapter = _probe_native_adapter(
+        monkeypatch, _classify_native_adapter(is_software=False, uma=uma)
+    )
+    assert adapter.adapter_class is expected
+    assert not adapter.is_software
 
 
-def test_native_hardware_classification_never_uses_software_memory_as_gpu_class() -> None:
-    assert _classify_native_adapter(is_software=True, uma=False) is OcrAdapterClass.UNKNOWN
+def test_native_hardware_classification_never_uses_software_memory_as_gpu_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _probe_native_adapter(
+        monkeypatch, _classify_native_adapter(is_software=True, uma=False)
+    )
+    assert adapter.adapter_class is OcrAdapterClass.UNKNOWN
+    assert adapter.is_software
 
 
 @pytest.mark.parametrize("native_value", [0, 1])
@@ -143,20 +183,20 @@ def test_native_map_lease_reads_dxgi_factory_is_current_vtable_method(native_val
 
 def test_preflight_contract_rejects_inconsistent_gpu_notice() -> None:
     with pytest.raises(ValidationError):
-        OcrComputePreflightV2(
-            contract_sha256=CONTRACT_SHA256,
-            mode=OcrComputeMode.GPU_DML,
+        OcrComputePreflightContract(
+            contract_set_sha256=CONTRACT_SHA256,
+            mode=OcrComputeMode.GPU,
             adapter_class=OcrAdapterClass.DEDICATED,
-            reason_code=OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE,
+            reason_code=OcrComputeReasonCode.GPU_PROVIDER_UNAVAILABLE,
             user_notice_required=True,
             notice_code=OcrComputeNoticeCode.CPU_FALLBACK,
         )
 
 
 def test_async_preflight_normalizes_worker_decision_and_rejects_contract_drift() -> None:
-    decision = OcrComputePreflightV2(
-        contract_sha256=CONTRACT_SHA256,
-        mode=OcrComputeMode.GPU_DML,
+    decision = OcrComputePreflightContract(
+        contract_set_sha256=CONTRACT_SHA256,
+        mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
         user_notice_required=False,
     )
@@ -168,17 +208,17 @@ def test_async_preflight_normalizes_worker_decision_and_rejects_contract_drift()
         return decision.model_dump(mode="json", by_alias=True)
 
     preflight = OcrComputePreflight(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         worker_probe=worker_probe,
     )
     assert asyncio.run(preflight.decide_async()) == decision
     assert calls == 1
 
     async def wrong_worker_probe() -> object:
-        return decision.model_copy(update={"contract_sha256": "b" * 64})
+        return decision.model_copy(update={"contract_set_sha256": "b" * 64})
 
     unavailable = OcrComputePreflight(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         worker_probe=wrong_worker_probe,
     )
     assert asyncio.run(unavailable.decide_async()) is None

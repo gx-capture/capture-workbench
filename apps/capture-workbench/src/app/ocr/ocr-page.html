@@ -20,15 +20,15 @@
         <label
           class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-border py-3 cursor-pointer text-sm"
           data-testid="first-run-option"
-          data-requirement-id="windowsml-ocr"
+          data-requirement-id="text-recognition"
         >
           <input
             type="checkbox"
             class="size-4.5 accent-primary cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             data-testid="first-run-checkbox-ocr"
-            [checked]="isSelected('windowsml-ocr')"
+            [checked]="isSelected('text-recognition')"
             [disabled]="features.installing()"
-            (change)="toggleRequirement('windowsml-ocr', $any($event.target).checked)"
+            (change)="toggleRequirement('text-recognition', $any($event.target).checked)"
           />
           <span class="flex flex-col">
             <span class="font-semibold text-foreground">{{ m().firstRunOcrLabel }}</span>
@@ -132,6 +132,7 @@
         <app-install-progress
           class="flex-1"
           [installation]="activeRunningInstallation()"
+          [retrying]="activeProgressUnavailable()"
         />
         @if (activeRunningInstallation(); as running) {
           <button
@@ -284,7 +285,7 @@
                         ></span>
                       </div>
                     </div>
-                  } @else if (row.interrupted || (row.needsInstall && row.installPercent === null) || (row.needsInstall && row.installPercent !== null)) {
+                  } @else if (row.needsInstall) {
                     <div class="flex flex-col gap-1 items-start">
                       <span
                         class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap self-start"
@@ -292,23 +293,25 @@
                       >
                         {{ row.statusText }}
                       </span>
-                      @if (row.interrupted) {
-                        <span class="text-muted-foreground text-xs">{{ m().ocrInterruptedHint }}</span>
-                      }
-                      @if (row.needsInstall && row.installPercent === null) {
+                      @if (row.installPercent === null) {
                         <span class="text-muted-foreground text-xs">{{ m().ocrNeedsRequirement(queue.ocrSizeLabel()) }}</span>
                       }
-                      @if (row.needsInstall && row.installPercent !== null) {
+                      @if (row.installPercent !== null) {
                         <span class="text-muted-foreground text-xs" data-testid="ocr-row-install-progress">{{ queue.ocrInstallLabel() }}</span>
                       }
                     </div>
                   } @else {
-                    <span
-                      class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap self-start"
-                      [class]="chipClass(row.userStatus)"
-                    >
-                      {{ row.statusText }}
-                    </span>
+                    <div class="flex flex-col gap-1 items-start">
+                      <span
+                        class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap self-start"
+                        [class]="chipClass(row.userStatus)"
+                      >
+                        {{ row.statusText }}
+                      </span>
+                      @if (row.failureReason) {
+                        <span class="text-xs text-destructive" data-testid="ocr-row-reason">{{ row.failureReason }}</span>
+                      }
+                    </div>
                   }
                 </td>
                 <td hlmTd class="px-3 py-4 text-right whitespace-nowrap">
@@ -325,20 +328,21 @@
                         {{ queue.ocrSizeLabel() ? m().installWithSize(queue.ocrSizeLabel()) : m().offerInstall }}
                       </button>
                     }
-                    @if (row.userStatus === 'processing') {
+                    @if (row.canCancel) {
                       <button
                         hlmBtn
                         variant="outline"
                         size="sm"
                         type="button"
                         data-testid="ocr-row-cancel"
+                        [disabled]="row.cancelling"
                         [attr.aria-label]="m().captureCancelNamed(row.fileName)"
                         (click)="queue.cancel(row.documentId)"
                       >
                         {{ m().cancel }}
                       </button>
                     }
-                    @if (row.userStatus === 'needs-attention' && row.interrupted) {
+                    @if (row.canStartAgain) {
                       <button
                         hlmBtn
                         variant="outline"
@@ -346,25 +350,12 @@
                         type="button"
                         data-testid="ocr-row-restart"
                         [attr.aria-label]="m().captureRestartNamed(row.fileName)"
-                        (click)="queue.restart(row.documentId)"
+                        (click)="queue.startAgain(row.documentId)"
                       >
                         {{ m().captureRestart }}
                       </button>
                     }
-                    @if ((row.userStatus === 'needs-attention' && !row.interrupted) || row.userStatus === 'cancelled') {
-                      <button
-                        hlmBtn
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        data-testid="ocr-row-retry"
-                        [attr.aria-label]="m().captureRetryNamed(row.fileName)"
-                        (click)="queue.retry(row.documentId)"
-                      >
-                        {{ m().captureRetry }}
-                      </button>
-                    }
-                    @if (row.userStatus === 'done') {
+                    @if (row.canView) {
                       <a
                         hlmBtn
                         variant="outline"
@@ -375,6 +366,8 @@
                       >
                         {{ m().captureView }}
                       </a>
+                    }
+                    @if (row.userStatus === 'done') {
                       <button
                         hlmBtn
                         variant="outline"

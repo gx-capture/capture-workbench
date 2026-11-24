@@ -6,8 +6,9 @@ import {
   inject,
   Injector,
 } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { filter, switchMap, take } from 'rxjs';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { desktopMessages, type ShellRoute } from './i18n/desktop-messages';
 import { AsrQueueStore } from './services/asr-queue.store';
@@ -54,12 +55,9 @@ export class App {
     selectedId: this.libraryStore.selectedId,
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),
-    documents: () => this.libraryStore.allDocuments() ?? [],
-    selected: () => this.libraryStore.selected(),
     refreshDocuments: () => this.libraryStore.refreshDocuments(),
-    reloadDocumentState: (documentId) => this.libraryStore.reloadDocumentState(documentId),
+    applyDocumentState: (summary) => this.libraryStore.applyDocumentState(summary),
     setMessage: (message) => this.runtimeStatus.message.set(message),
-    identifySpeakers: () => false,
   };
 
   constructor() {
@@ -70,6 +68,29 @@ export class App {
         next: (batch) => this.routeDroppedSources(batch),
         error: (error: unknown) => this.runtimeStatus.message.set(errorMessage(error)),
       });
+    // Once per app run, when the runtime is first ready: the runs that
+    // started the captures still linked in the library have ended.
+    toObservable(this.runtime.ready, { injector: this.injector })
+      .pipe(
+        filter(Boolean),
+        take(1),
+        switchMap(() => this.captureLifecycle.deleteLinkedRuntimeCaptures$()),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      // Best effort: what is not deleted now the runtime's retention removes.
+      .subscribe({ error: () => undefined });
+    // The one admission of waiting documents, from app start and on every
+    // page: it looks again whenever the list, the requirements or the
+    // runtime's readiness change.
+    const admissionChanges = computed(() => [
+      this.libraryStore.allDocuments(),
+      this.features.requirements(),
+      this.runtime.ready(),
+    ]);
+    this.captureLifecycle
+      .admitWaiting$(this.captureHost, toObservable(admissionChanges, { injector: this.injector }))
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({ error: (error: unknown) => this.runtimeStatus.message.set(errorMessage(error)) });
     this.runtimeStatus.reload();
   }
 
@@ -85,8 +106,9 @@ export class App {
   }
 
   /**
-   * The one drag-drop subscription. On `/ocr` or `/asr` the selections wait in that
-   * page's queue. On other routes they start capture immediately.
+   * The one drag-drop subscription. On `/ocr` or `/asr` that page's queue
+   * imports the selections; on other routes the shell does. Either way they
+   * wait for the admission.
    */
   private routeDroppedSources(batch: DesktopSourceSelectionBatch): void {
     const path = this.currentRoutePath();

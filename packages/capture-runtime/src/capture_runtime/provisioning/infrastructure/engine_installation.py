@@ -12,8 +12,8 @@ from threading import Lock
 from uuid import uuid4
 
 from capture_runtime._worker_payloads import WorkerProbeResult
-from capture_runtime.constants.requirements import WINDOWSML_REQUIREMENT_ID
-from capture_runtime.contracts import OcrComputePreflightV2
+from capture_runtime.constants.requirements import TEXT_RECOGNITION_REQUIREMENT_ID
+from capture_runtime.contracts import OcrComputePreflight
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
@@ -37,6 +37,13 @@ from capture_runtime.worker_process import WorkerExecutionError
 
 from . import _engine_installation_limits as _installation_limits
 from ._engine_download_cache import VerifiedDownloadCache, default_cache_root, with_shared_cache
+from ._engine_installation_activation import (
+    VERIFICATION_RECORD_NAME,
+    discard_verification_record,
+    matches_verification_record,
+    verification_record,
+    write_verification_record,
+)
 from ._engine_installation_activation import (
     InstalledFileSnapshot as _InstalledFileSnapshot,
 )
@@ -73,6 +80,7 @@ from ._engine_installation_download import (
     HttpModelFileDownloader,
     LocalModelFileDownloader,
     ModelFileDownloader,
+    _cancellable_file_operation,
     _commit_operation,
     _file_operation,
 )
@@ -86,10 +94,12 @@ from ._engine_installation_download import (
     smoke_worker_mirror_url as _smoke_worker_mirror_url_impl,
 )
 from ._engine_installation_errors import (
+    EngineFilesInUseError,
     EngineInstallationError,
     EngineInstallBusyError,
     EngineResolutionTimeoutError,
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
     SpeechModelNotInstalledError,
 )
 from ._engine_installation_lock import ExclusiveInstallFile
@@ -116,6 +126,7 @@ from ._engine_uninstall import (
     remove_installed_markers,
     remove_unit_files,
 )
+from ._install_stop import InstallStop
 
 DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = (
     _installation_limits.DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
@@ -216,11 +227,14 @@ def _check_worker_path_lengths(root: Path) -> None:
 def verify_direct_model_files(
     root: Path,
     descriptor: EngineModelDeliveryDescriptor,
+    *,
+    cancel_event: asyncio.Event | None = None,
 ) -> None:
     _verify_direct_model_files_impl(
         root,
         descriptor,
         limits=_artifact_validation_limits(),
+        cancel_event=cancel_event,
     )
 
 
@@ -345,7 +359,7 @@ class EngineInstallationManager:
         self._verified_model_units: dict[str, tuple[ModelUnitSnapshot, str]] = {}
         self._verified_active_engines_lock = Lock()
         self._ocr_compute_preflight_cache: dict[
-            tuple[InstalledEngine, str], OcrComputePreflightV2
+            tuple[InstalledEngine, str], OcrComputePreflight
         ] = {}
         self._ocr_compute_selection_cache: dict[
             tuple[InstalledEngine, str], OcrComputeSelection
@@ -357,7 +371,7 @@ class EngineInstallationManager:
         self, requirement: EngineRequirementDescriptor
     ) -> ModelFileDownloader:
         if (
-            requirement.requirement_id == WINDOWSML_REQUIREMENT_ID
+            requirement.requirement_id == TEXT_RECOGNITION_REQUIREMENT_ID
             and self._local_ocr_model_downloader is not None
         ):
             return self._local_ocr_model_downloader
@@ -446,6 +460,8 @@ class EngineInstallationManager:
             cached = self._verified_model_units.get(requirement_id)
         if cached is not None and snapshot and cached == (snapshot, model_unit_state(root)):
             return requirement_model_dir(root, requirement)
+        with self._verified_active_engines_lock:
+            self._verified_model_units.pop(requirement_id, None)
         directory = active_model_unit_dir(root, requirement)
         if directory is None:
             return None
@@ -497,16 +513,31 @@ class EngineInstallationManager:
             and cached.engine.model_dir.is_dir()
         ):
             return cached.engine
-        try:
-            verify_extracted_artifact(worker_root, worker_descriptor)
-            verify_direct_model_files(model_root, model_descriptor)
-        except EngineInstallationError:
-            return None
+        record_path = version_root / VERIFICATION_RECORD_NAME
+        record = verification_record(
+            {
+                **state.to_dict(),
+                "workerDescriptor": worker_descriptor.to_dict(),
+                "modelDelivery": model_descriptor.to_dict(),
+            },
+            files_before_verification,
+        )
+        record_matches = matches_verification_record(record_path, record)
+        if not record_matches:
+            discard_verification_record(record_path)
+            with self._verified_active_engines_lock:
+                self._verified_active_engines.pop(requirement_id, None)
+            try:
+                verify_extracted_artifact(worker_root, worker_descriptor)
+                verify_direct_model_files(model_root, model_descriptor)
+            except EngineInstallationError:
+                return None
         files_after_verification = _installed_engine_snapshot(worker_root, model_root)
         if (
             files_before_verification is None
             or files_after_verification != files_before_verification
         ):
+            discard_verification_record(record_path)
             return None
         executable = self._resolved_child(self._requirement_root(requirement_id), state.entry_point)
         model_dir = self._resolved_child(model_root, model_descriptor.entry_point)
@@ -523,6 +554,8 @@ class EngineInstallationManager:
             worker_sha256=sha256_file(executable),
             content_id=state.content_id,
         )
+        if not record_matches:
+            write_verification_record(record_path, record)
         with self._verified_active_engines_lock:
             self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
                 state=state,
@@ -563,18 +596,18 @@ class EngineInstallationManager:
     async def ocr_compute_selection(
         self,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
     ) -> OcrComputeSelection | None:
         """Resolve and retain the worker-owned immutable OCR compute plan."""
 
         async with self._ocr_compute_preflight_lock:
             try:
-                engine = await self.resolve_active_engine("windowsml-ocr")
+                engine = await self.resolve_active_engine("text-recognition")
             except Exception:
                 return None
             if engine is None:
                 return None
-            cache_key = (engine, contract_sha256)
+            cache_key = (engine, contract_set_sha256)
             cached = self._ocr_compute_selection_cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -584,7 +617,7 @@ class EngineInstallationManager:
             try:
                 value = await worker_probe(
                     engine,
-                    contract_sha256=contract_sha256,
+                    contract_set_sha256=contract_set_sha256,
                 )
                 selection = (
                     value
@@ -593,7 +626,7 @@ class EngineInstallationManager:
                 )
             except Exception:
                 return None
-            if selection.readiness.contract_sha256 != contract_sha256:
+            if selection.readiness.contract_set_sha256 != contract_set_sha256:
                 return None
             if engine.worker_sha256 is not None and (
                 selection.execution_plan.worker_sha256 != engine.worker_sha256
@@ -605,8 +638,8 @@ class EngineInstallationManager:
     async def ocr_compute_preflight(
         self,
         *,
-        contract_sha256: str,
-    ) -> OcrComputePreflightV2 | None:
+        contract_set_sha256: str,
+    ) -> OcrComputePreflight | None:
         """Probe OCR compute in the installed worker and cache valid evidence.
 
         The core runtime intentionally does not carry ONNX Runtime.  The
@@ -617,18 +650,18 @@ class EngineInstallationManager:
 
         if callable(getattr(self.worker_client, "ocr_compute_selection", None)):
             selection = await self.ocr_compute_selection(
-                contract_sha256=contract_sha256,
+                contract_set_sha256=contract_set_sha256,
             )
             return None if selection is None else selection.readiness
 
         async with self._ocr_compute_preflight_lock:
             try:
-                engine = await self.resolve_active_engine("windowsml-ocr")
+                engine = await self.resolve_active_engine("text-recognition")
             except Exception:
                 return None
             if engine is None:
                 return None
-            cache_key = (engine, contract_sha256)
+            cache_key = (engine, contract_set_sha256)
             cached = self._ocr_compute_preflight_cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -638,18 +671,18 @@ class EngineInstallationManager:
             try:
                 value = await worker_probe(
                     engine,
-                    contract_sha256=contract_sha256,
+                    contract_set_sha256=contract_set_sha256,
                 )
-                if isinstance(value, OcrComputePreflightV2):
+                if isinstance(value, OcrComputePreflight):
                     payload = value.model_dump(mode="json", by_alias=True)
                 elif isinstance(value, dict):
                     payload = value
                 else:
                     return None
-                decision = OcrComputePreflightV2.model_validate(payload)
+                decision = OcrComputePreflight.model_validate(payload)
             except Exception:
                 return None
-            if decision.contract_sha256 != contract_sha256:
+            if decision.contract_set_sha256 != contract_set_sha256:
                 return None
             if engine.worker_sha256 is not None and decision.worker_sha256 != engine.worker_sha256:
                 return None
@@ -692,9 +725,13 @@ class EngineInstallationManager:
         report_download: DownloadProgress | None,
     ) -> None:
         requirement_root = self._requirement_root(requirement.requirement_id)
-        self._remove_stale_install_residue(requirement_root)
+        # Every step that walks, hashes, extracts or deletes installed files runs
+        # in a worker thread: a speech worker archive is gigabytes, and on the
+        # event loop it held every request, installation status included, for
+        # minutes.
+        await _file_operation(self._remove_stale_install_residue, requirement_root)
         if requirement.model_only:
-            if self.active_model_unit(requirement.requirement_id) is None:
+            if await _file_operation(self.active_model_unit, requirement.requirement_id) is None:
                 await install_model_unit(
                     requirement_root,
                     requirement,
@@ -706,7 +743,7 @@ class EngineInstallationManager:
             else:
                 report_progress(1)
             return
-        if self.active_engine(requirement.requirement_id) is not None:
+        if await _file_operation(self.active_engine, requirement.requirement_id) is not None:
             report_progress(1)
             return
         # The content is fixed for this install. A later launch reads contentId
@@ -727,6 +764,9 @@ class EngineInstallationManager:
         artifact_version = delivery.artifact_version
         if artifact_version is None:
             raise EngineInstallationError("engine catalog entry is incomplete")
+        # Thread work polls this, never the job's cancel event: a shutdown must
+        # stop it without recording a user cancellation.
+        stop = InstallStop(cancel_event)
         staging = requirement_root / ".staging" / uuid4().hex
         version = requirement_root / "versions" / artifact_version
         # On a first install there is no active version to preserve. Probe the
@@ -764,7 +804,7 @@ class EngineInstallationManager:
             # Direct model delivery always uses its locked HTTPS URLs.
             download_descriptor = worker_descriptor
             if (
-                requirement.requirement_id == "windowsml-ocr"
+                requirement.requirement_id == "text-recognition"
                 and self._pdf_ocr_e2e_local_worker_url is not None
             ):
                 expected_suffix = f"/{worker_descriptor.file_name}"
@@ -794,14 +834,21 @@ class EngineInstallationManager:
                 cancel_event=cancel_event,
                 progress=worker_progress,
             )
-            safe_extract_artifact(
+            await _cancellable_file_operation(
+                stop,
+                safe_extract_artifact,
                 worker_archive,
                 new_version / "worker",
                 worker_descriptor,
-                cancel_event=cancel_event,
+                cancel_event=stop,
+            )
+            model_root = new_version / "model"
+            model_root.mkdir()
+            verified_worker_files = await _file_operation(
+                _installed_engine_snapshot, new_version / "worker", model_root
             )
             # Fail before the model download rather than at the model probe.
-            _check_worker_path_lengths(new_version / "worker")
+            await _file_operation(_check_worker_path_lengths, new_version / "worker")
             probe_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point
             )
@@ -810,7 +857,7 @@ class EngineInstallationManager:
                 artifact_version=artifact_version,
                 executable=probe_executable,
                 model_dir=new_version / "model" / model_descriptor.entry_point,
-                worker_sha256=sha256_file(probe_executable),
+                worker_sha256=await _file_operation(sha256_file, probe_executable),
                 content_id=content_id,
             )
             try:
@@ -833,8 +880,6 @@ class EngineInstallationManager:
                 )
             report_progress(0.35)
 
-            model_root = new_version / "model"
-            model_root.mkdir()
             model_downloader = self._model_downloader_for(requirement)
             completed_model_bytes = 0
             for file_descriptor in model_descriptor.files:
@@ -864,7 +909,25 @@ class EngineInstallationManager:
                     progress=model_progress,
                 )
                 completed_model_bytes += file_descriptor.bytes
-            verify_direct_model_files(model_root, model_descriptor)
+            await _cancellable_file_operation(
+                stop,
+                verify_direct_model_files,
+                model_root,
+                model_descriptor,
+                cancel_event=stop,
+            )
+            verified_files = await _file_operation(
+                _installed_engine_snapshot, new_version / "worker", model_root
+            )
+            if verified_files is not None and verified_worker_files is not None:
+                verified_files = tuple(
+                    sorted(
+                        verified_worker_files
+                        + tuple(item for item in verified_files if item[0].startswith("model/"))
+                    )
+                )
+            else:
+                verified_files = None
             report_progress(0.85)
             engine_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point
@@ -874,7 +937,7 @@ class EngineInstallationManager:
                 artifact_version=artifact_version,
                 executable=engine_executable,
                 model_dir=self._resolved_child(model_root, model_descriptor.entry_point),
-                worker_sha256=sha256_file(engine_executable),
+                worker_sha256=await _file_operation(sha256_file, engine_executable),
                 content_id=content_id,
             )
             try:
@@ -945,16 +1008,31 @@ class EngineInstallationManager:
             active_executable = self._resolved_child(
                 version / "worker", worker_descriptor.entry_point
             )
+            # Committed operations: a cancel that arrives during them is too late.
             active_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
                 artifact_version=artifact_version,
                 executable=active_executable,
                 model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
-                worker_sha256=sha256_file(active_executable),
+                worker_sha256=await _commit_operation(sha256_file, active_executable),
                 content_id=content_id,
             )
-            installed_files = _installed_engine_snapshot(version / "worker", version / "model")
-            if installed_files is not None:
+            installed_files = await _commit_operation(
+                _installed_engine_snapshot, version / "worker", version / "model"
+            )
+            if installed_files is not None and installed_files == verified_files:
+                await _commit_operation(
+                    write_verification_record,
+                    version / VERIFICATION_RECORD_NAME,
+                    verification_record(
+                        {
+                            **state.to_dict(),
+                            "workerDescriptor": worker_descriptor.to_dict(),
+                            "modelDelivery": model_descriptor.to_dict(),
+                        },
+                        installed_files,
+                    ),
+                )
                 with self._verified_active_engines_lock:
                     self._verified_active_engines[requirement.requirement_id] = (
                         _VerifiedActiveEngine(
@@ -964,7 +1042,9 @@ class EngineInstallationManager:
                         )
                     )
             report_progress(1)
-            self._remove_inactive_versions(requirement_root, artifact_version)
+            await _commit_operation(
+                self._remove_inactive_versions, requirement_root, artifact_version
+            )
         finally:
             cleanup_operation = _commit_operation if activated else _file_operation
             await cleanup_operation(
@@ -1008,6 +1088,9 @@ class EngineInstallationManager:
             )
 
     def _forget_verified(self, requirement_id: str) -> None:
+        root = self._requirement_root(requirement_id)
+        for record in (root / "versions").glob(f"*/{VERIFICATION_RECORD_NAME}"):
+            discard_verification_record(record)
         with self._verified_active_engines_lock:
             self._verified_active_engines.pop(requirement_id, None)
             self._verified_model_units.pop(requirement_id, None)
@@ -1039,11 +1122,13 @@ class EngineInstallationManager:
 
 
 __all__ = [
+    "EngineFilesInUseError",
     "EngineInstallBusyError",
     "EngineInstallationError",
     "EngineInstallationManager",
     "EngineResolutionTimeoutError",
     "ExtractionRuntimeUnavailableError",
+    "RequirementResolutionTimeoutError",
     "SpeechModelNotInstalledError",
     "HttpArtifactDownloader",
     "LocalModelFileDownloader",

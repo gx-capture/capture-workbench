@@ -14,7 +14,7 @@ import capture_runtime.workers.ocr_main as ocr_main
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.config import sanitized_child_environment
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance
 from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
     OcrExecutionEvidence,
     OcrSessionDeviceProof,
@@ -69,7 +69,7 @@ class _Probe:
 
 def _selection():
     selection = OcrComputePlan(
-        contract_sha256=SHA,
+        contract_set_sha256=SHA,
         worker_sha256="b" * 64,
         capability_probe=_Probe(),
     ).select()
@@ -121,7 +121,7 @@ def _proof():
         runtime_sha256="e" * 64,
         worker_sha256="b" * 64,
         model_sha256="f" * 64,
-        profile_id="capture-workbench-ocr-test",
+        profile_id="ocr-test",
         profile_spec_sha256="1" * 64,
         contract_set_sha256=SHA,
     )
@@ -242,16 +242,16 @@ def test_failed_worker_capture_does_not_record_a_success_proof(
                 text="page one",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
-                provenance=OcrProvenanceV3(
+                provenance=OcrProvenance(
                     status="resolved",
-                    engine="windowsml-ocr",
+                    engine="text-recognition",
                     model="test-model",
                     model_digest="sha256:" + "1" * 64,
-                    device="windowsml-dml",
-                    profile_id="capture-workbench-ocr-pipeline-v1",
+                    device="directml",
+                    profile_id="ocr-pipeline-v1",
                     profile_spec_sha256="c" * 64,
                 ),
             )
@@ -262,7 +262,7 @@ def test_failed_worker_capture_does_not_record_a_success_proof(
         def record_execution_proof(self) -> None:
             self.record_calls += 1
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", FailingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", FailingAdapter)
     monkeypatch.setattr(
         ocr_main,
         "_pdf_page_images",
@@ -272,7 +272,7 @@ def test_failed_worker_capture_does_not_record_a_success_proof(
         request_id="proof-failure-test",
         operation="run",
         payload={
-            "requirementId": "windowsml-ocr",
+            "requirementId": "text-recognition",
             "artifactVersion": RUNTIME_VERSION,
             "modelPath": str(model_path),
             "sourcePath": str(source_path),
@@ -342,16 +342,16 @@ def test_worker_proof_validation_failure_does_not_leave_acceptance_artifact(
                 text="page",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
-                provenance=OcrProvenanceV3(
+                provenance=OcrProvenance(
                     status="resolved",
-                    engine="windowsml-ocr",
+                    engine="text-recognition",
                     model="test-model",
                     model_digest="sha256:" + "1" * 64,
-                    device="windowsml-dml",
-                    profile_id="capture-workbench-ocr-pipeline-v1",
+                    device="directml",
+                    profile_id="ocr-pipeline-v1",
                     profile_spec_sha256="c" * 64,
                 ),
             )
@@ -364,7 +364,7 @@ def test_worker_proof_validation_failure_does_not_leave_acceptance_artifact(
             if isinstance(self._sink, AcceptanceOcrExecutionEvidenceSink):
                 self._sink.record("private-capture", "pdf", proof)
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", SuccessfulAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", SuccessfulAdapter)
     monkeypatch.setattr(
         ocr_main,
         "_pdf_page_images",
@@ -404,7 +404,7 @@ def test_worker_proof_validation_failure_does_not_leave_acceptance_artifact(
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version=RUNTIME_VERSION,
                     executable=tmp_path / "ocr.exe",
                     model_dir=model_path,

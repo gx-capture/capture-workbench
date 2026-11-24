@@ -1,7 +1,7 @@
 import type {
   CaptureClient,
   CaptureCompletedEvent,
-  CaptureFailure,
+  OperationFailure,
   CapturePreprocessor,
   CaptureStructuringProvider,
   CaptureTaskView,
@@ -38,13 +38,13 @@ export interface CaptureReconciliationContext {
   ) => CaptureTaskView | undefined;
   readonly requireReconciliation: (
     taskId: string,
-    error: CaptureFailure,
+    error: OperationFailure,
     raw?: RawCapture,
   ) => void;
   readonly failTask: (
     taskId: string,
     fileName: string,
-    error: CaptureFailure,
+    error: OperationFailure,
     raw?: RawCapture,
     stage?: CaptureTaskView['stage'],
   ) => void;

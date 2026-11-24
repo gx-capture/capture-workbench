@@ -262,10 +262,10 @@ test('real PDF OCR E2E evidence accepts only all-page PaddleOCR semantics', () =
         { locator: { kind: 'page', page: 2 }, text: '問題3' },
       ],
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
         digest: `sha256:${'a'.repeat(64)}`,
-        device: 'windowsml-dml',
+        device: 'directml',
       },
     },
     2,
@@ -284,7 +284,7 @@ test('real PDF OCR E2E evidence accepts only all-page PaddleOCR semantics', () =
     evidence.matchMode,
     'nfkc-whitespace-insensitive-exact-substring',
   );
-  assert.equal(evidence.extractionEngine, 'windowsml-ocr');
+  assert.equal(evidence.extractionEngine, 'text-recognition');
 });
 
 test('real PDF OCR E2E evidence rejects missing pages and embedded-text engines', () => {
@@ -300,6 +300,6 @@ test('real PDF OCR E2E evidence rejects missing pages and embedded-text engines'
   };
   assert.throws(
     () => assertPdfOcrRawCapture(raw, 2, [{ page: 1, text: '食品の腐敗' }]),
-    /windowsml-ocr/u,
+    /text-recognition/u,
   );
 });

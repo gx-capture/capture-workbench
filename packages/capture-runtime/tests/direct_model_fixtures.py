@@ -29,11 +29,11 @@ def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]
         "blockers": [],
         "status": "approved",
     }
-    whisper_fixture = payload["fixtures"][1]
-    whisper_fixture["expectedDevice"] = "cuda"
-    whisper_fixture["expectedModel"] = "tea-asr-1.1"
-    whisper_fixture["preferGpu"] = True
-    whisper_fixture["expectedNormalizedOutputSha256"] = "a" * 64
+    speech_fixture = payload["fixtures"][1]
+    speech_fixture["expectedDevice"] = "cuda"
+    speech_fixture["expectedModel"] = "tea-asr-1.1"
+    speech_fixture["preferGpu"] = True
+    speech_fixture["expectedNormalizedOutputSha256"] = "a" * 64
     return payload, {}
 
 
@@ -45,13 +45,13 @@ def pending_source_lock() -> dict[str, Any]:
         "approvedAt": None,
         "approvedBy": None,
         "blockers": [
-            "Freeze private Whisper model/device pair and normalized output digest "
+            "Freeze private speech model/device pair and normalized output digest "
             "from two identical production runs."
         ],
         "status": "blocked",
     }
-    whisper_fixture = payload["fixtures"][1]
-    whisper_fixture["expectedDevice"] = None
-    whisper_fixture["expectedModel"] = None
-    whisper_fixture["expectedNormalizedOutputSha256"] = None
+    speech_fixture = payload["fixtures"][1]
+    speech_fixture["expectedDevice"] = None
+    speech_fixture["expectedModel"] = None
+    speech_fixture["expectedNormalizedOutputSha256"] = None
     return payload

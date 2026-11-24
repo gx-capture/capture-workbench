@@ -1,6 +1,18 @@
 // Verifies uninstall error messages and redaction.
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { uninstallFailureMessage } from './desktop-errors';
+import { redactSensitiveMessage, uninstallFailureMessage } from './desktop-errors';
+
+describe('redactSensitiveMessage', () => {
+  it('redacts bearer and token-shaped values and keeps the rest', () => {
+    expect(redactSensitiveMessage('Bearer secret-token failed; token=other-secret, kept')).toBe(
+      'Bearer [redacted] failed; token= [redacted], kept',
+    );
+  });
+
+  it('leaves a missing message missing', () => {
+    expect(redactSensitiveMessage(undefined)).toBeUndefined();
+  });
+});
 
 describe('uninstallFailureMessage', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));

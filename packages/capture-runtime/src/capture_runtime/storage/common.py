@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
+
 
 class RecordNotFoundError(KeyError):
     """A durable runtime record does not exist."""
@@ -35,6 +37,101 @@ def dump_model(model: Any) -> Any:
     return model.model_dump(mode="json", by_alias=True)
 
 
+def project_stored_requirement_id(value: Any) -> Any:
+    if isinstance(value, str):
+        return {
+            "windowsml-ocr": "text-recognition",
+            **RETIRED_STRUCTURING_REQUIREMENT_IDS,
+        }.get(value, value)
+    return value
+
+
+def project_stored_capture_kind(payload: Any) -> Any:
+    # A 0.10.x record may leave the kind out; its default was `audio`.
+    if isinstance(payload, dict) and payload.get("kind", "audio") == "audio":
+        return {**payload, "kind": "recording"}
+    return payload
+
+
+# Failure codes a 0.10.x runtime wrote, each with the code a current reader sees.
+# An old filesystem failure did not say whether it timed out, so it reads as the
+# generic installation failure.
+RETIRED_FAILURE_CODES: dict[str, str] = {
+    "progressive_failed": "extraction_failed",
+    "progressive_interrupted": "capture_interrupted",
+    "progressive_output_invalid": "extraction_output_invalid",
+    "progressive_no_text_at_sample": "extraction_no_text",
+    "streaming_source_unavailable": "ingestion_source_unavailable",
+    "installation_filesystem": "installation_failed",
+}
+
+
+def project_stored_failure(failure: Any) -> Any:
+    """Project a stored failure object with a retired code; message and stage stay."""
+    if isinstance(failure, dict):
+        code = failure.get("code")
+        if isinstance(code, str) and code in RETIRED_FAILURE_CODES:
+            return {**failure, "code": RETIRED_FAILURE_CODES[code]}
+    return failure
+
+
+def project_stored_failure_field(payload: Any, field: str) -> Any:
+    """Project the failure object held in `field` of a stored record."""
+    if isinstance(payload, dict) and isinstance(payload.get(field), dict):
+        projected = project_stored_failure(payload[field])
+        if projected is not payload[field]:
+            return {**payload, field: projected}
+    return payload
+
+
+_OLD_OCR_PROJECTION_KEYS: dict[str, str] = {
+    "pageCount": "processedPageCount",
+    "contractSha256": "contractSetSha256",
+}
+
+
+def project_stored_capture(payload: Any) -> Any:
+    """Project renamed fields in a decoded runtime capture, leaving digests and text intact."""
+    if not isinstance(payload, dict):
+        return payload
+    projected = payload.copy()
+    # A 0.10.x OCR projection wrote both old keys; a record with only one of
+    # them, or with an old and a current key, is left as is and fails validation.
+    if (
+        "captureId" in projected
+        and isinstance(projected.get("pages"), list)
+        and projected.keys() >= _OLD_OCR_PROJECTION_KEYS.keys()
+        and not set(_OLD_OCR_PROJECTION_KEYS.values()) & projected.keys()
+    ):
+        for old_key, current_key in _OLD_OCR_PROJECTION_KEYS.items():
+            projected[current_key] = projected.pop(old_key)
+    for key in ("extractionEngine", "provenance"):
+        identity = payload.get(key)
+        if isinstance(identity, dict) and identity.get("engine") == "windowsml-ocr":
+            identity = {**identity, "engine": "text-recognition"}
+            if identity.get("model") == "pp-ocrv6-medium-windowsml":
+                identity["model"] = "pp-ocrv6-medium"
+            elif identity.get("model") == "deterministic-windowsml-v1":
+                identity["model"] = "deterministic-ocr-v1"
+            if identity.get("device") == "windowsml-dml":
+                identity["device"] = "directml"
+            projected[key] = identity
+    if isinstance(projected.get("failure"), dict):
+        projected["failure"] = project_stored_failure(projected["failure"])
+    if "suggestedUnits" in projected:
+        historical = projected.pop("suggestedUnits")
+        projected.setdefault("suggestedRequirementIds", historical)
+    suggested = projected.get("suggestedRequirementIds")
+    if isinstance(suggested, list):
+        projected["suggestedRequirementIds"] = [
+            project_stored_requirement_id(value) for value in suggested
+        ]
+    pages = payload.get("pages")
+    if isinstance(pages, list):
+        projected["pages"] = [project_stored_capture(page) for page in pages]
+    return projected
+
+
 def atomic_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
@@ -51,5 +148,11 @@ __all__ = [
     "TransitionRejectedError",
     "atomic_json",
     "dump_model",
+    "RETIRED_FAILURE_CODES",
+    "project_stored_capture",
+    "project_stored_capture_kind",
+    "project_stored_failure",
+    "project_stored_failure_field",
+    "project_stored_requirement_id",
     "record_identifier",
 ]

@@ -20,7 +20,7 @@ const EXPECTED_CONTRACT_SET_VERSION = '2';
 const EXPECTED_NX_VERSION = '24.0.3';
 const EXPECTED_PROJECTION_SCHEMA_VERSION = '3';
 const EXPECTED_CONTRACT_SET_SHA256 =
-  '91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380';
+  '7802e8b85d45e687f2ad0ee9980f03e26b5a5ad43d9df079bfacc2ddbfa6780a';
 const EXPECTED_REPOSITORY = 'https://github.com/gx-capture/capture-workbench';
 const EXPECTED_GIT_REPOSITORY =
   'git+https://github.com/gx-capture/capture-workbench.git';
@@ -782,7 +782,7 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
   const sourcePath =
     'packages/capture-runtime/src/capture_runtime/contracts/__init__.py';
   const sourceContent = text(root, sourcePath);
-  if (matchCount(sourceContent, /^class CaptureOcrProjectionV3\b/gmu) !== 1)
+  if (matchCount(sourceContent, /^class CaptureOcrProjection\b/gmu) !== 1)
     throw new Error(`duplicate projection declaration in ${sourcePath}.`);
   const sourceSchema = addExactInventoryMatch(
     entries,
@@ -790,7 +790,7 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
     'projection',
     root,
     sourcePath,
-    /class CaptureOcrProjectionV3[\s\S]*?schema_version:\s*Literal\["([^"]+)"\]/u,
+    /class CaptureOcrProjection\b[\s\S]*?schema_version:\s*Literal\["([^"]+)"\]/u,
   );
   assertExpected(
     'ocr.projection.schema',
@@ -809,11 +809,11 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
     (schema) =>
       schema &&
       typeof schema === 'object' &&
-      (schema as Record<string, unknown>).name === 'CaptureOcrProjectionV3',
+      (schema as Record<string, unknown>).name === 'CaptureOcrProjection',
   );
   if (projections.length !== 1) {
     throw new Error(
-      `CaptureOcrProjectionV3 must have exactly one canonical schema; found ${projections.length}.`,
+      `CaptureOcrProjection must have exactly one canonical schema; found ${projections.length}.`,
     );
   }
   const bundleSchema = nestedString(projections[0], [
@@ -844,7 +844,7 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
   if (
     matchCount(
       generatedTsContent,
-      /^export interface CaptureOcrProjectionV3\s*\{/gmu,
+      /^export interface CaptureOcrProjection\s*\{/gmu,
     ) !== 1
   )
     throw new Error(`duplicate projection declaration in ${generatedTsPath}.`);
@@ -854,14 +854,14 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
     'projection',
     root,
     generatedTsPath,
-    /export interface CaptureOcrProjectionV3\s*\{[\s\S]*?readonly schemaVersion:\s*"([^"]+)";/u,
+    /export interface CaptureOcrProjection\s*\{[\s\S]*?readonly schemaVersion:\s*"([^"]+)";/u,
     EXPECTED_PROJECTION_SCHEMA_VERSION,
   );
   const generatedPythonPath =
     'packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py';
   const generatedPythonContent = text(root, generatedPythonPath);
   if (
-    matchCount(generatedPythonContent, /^class CaptureOcrProjectionV3\b/gmu) !==
+    matchCount(generatedPythonContent, /^class CaptureOcrProjection\b/gmu) !==
     1
   )
     throw new Error(
@@ -873,7 +873,7 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
     'projection',
     root,
     generatedPythonPath,
-    /class CaptureOcrProjectionV3\b[\s\S]*?schema_version:\s*Literal\["([^"]+)"\]/u,
+    /class CaptureOcrProjection\b[\s\S]*?schema_version:\s*Literal\["([^"]+)"\]/u,
     EXPECTED_PROJECTION_SCHEMA_VERSION,
   );
   addExpectedMatch(
@@ -914,7 +914,7 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
   );
 
   const pythonSchemaPath =
-    'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-ocr-projection-v3.schema.json';
+    'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-ocr-projection.schema.json';
   const pythonSchema = json(root, pythonSchemaPath);
   addExpectedJson(
     entries,
@@ -923,7 +923,7 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
     root,
     pythonSchemaPath,
     'title',
-    'CaptureOcrProjectionV3',
+    'CaptureOcrProjection',
   );
   addExpectedNestedJson(
     entries,

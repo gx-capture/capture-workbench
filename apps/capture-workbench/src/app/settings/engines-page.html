@@ -57,7 +57,10 @@
                     </span>
                   } @else if (isRunning(requirement)) {
                     <div data-testid="engine-row-progress" aria-live="polite">
-                      <app-install-progress [installation]="runningInstallation(requirement)" />
+                      <app-install-progress
+                        [installation]="runningInstallation(requirement)"
+                        [retrying]="features.isProgressUnavailable(requirement.requirementId)"
+                      />
                     </div>
                   } @else {
                     <span>{{ statusLabel(requirement) }}</span>

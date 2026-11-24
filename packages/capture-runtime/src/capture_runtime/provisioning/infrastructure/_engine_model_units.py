@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
@@ -22,14 +23,75 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineRequirementDescriptor,
 )
 
+from ._engine_installation_activation import (
+    VERIFICATION_RECORD_NAME,
+    discard_verification_record,
+    matches_verification_record,
+    verification_record,
+    write_verification_record,
+)
 from ._engine_installation_artifacts import verify_direct_model_files
-from ._engine_installation_download import ModelFileDownloader, _commit_operation, _file_operation
+from ._engine_installation_download import (
+    ModelFileDownloader,
+    _cancellable_file_operation,
+    _commit_operation,
+    _file_operation,
+)
 from ._engine_installation_errors import EngineInstallationError
+from ._engine_installation_residue import is_reparse_point, remove_inactive_versions
+from ._install_stop import InstallStop
 
 STATE_FILE_NAME = "active-model.json"
 STATE_VERSION = "1"
 
-ModelUnitSnapshot = tuple[tuple[str, int, int], ...]
+ModelUnitSnapshot = tuple[tuple[str, int, int, int], ...]
+
+
+def remove_inactive_model_unit_versions(app_data: Path) -> None:
+    """Prune installed model units before serving, with the app-data lock held."""
+    engines = app_data / "engines"
+    try:
+        for parent in (app_data, engines):
+            metadata = parent.lstat()
+            if is_reparse_point(parent, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                return
+        for root in engines.iterdir():
+            try:
+                metadata = root.lstat()
+                if is_reparse_point(root, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    continue
+                state_path = root / STATE_FILE_NAME
+                metadata = state_path.lstat()
+                if is_reparse_point(state_path, metadata) or not stat.S_ISREG(metadata.st_mode):
+                    continue
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                if not isinstance(state, dict) or set(state) != {
+                    "stateVersion",
+                    "requirementId",
+                    "artifactVersion",
+                    "manifestSha256",
+                }:
+                    continue
+                version = state["artifactVersion"]
+                digest = state["manifestSha256"]
+                if (
+                    state["stateVersion"] != STATE_VERSION
+                    or state["requirementId"] != root.name
+                    or not isinstance(version, str)
+                    or not version
+                    or not version[0].isascii()
+                    or not version[0].isalnum()
+                    or any(not c.isascii() or not (c.isalnum() or c in ".-_+") for c in version)
+                    or not isinstance(digest, str)
+                    or len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)
+                ):
+                    continue
+                remove_inactive_versions(root, version)
+            except (OSError, ValueError):
+                continue
+    except OSError:
+        return
 
 
 def _delivery(requirement: EngineRequirementDescriptor) -> EngineModelDeliveryDescriptor:
@@ -42,20 +104,49 @@ def _model_root(root: Path, delivery: EngineModelDeliveryDescriptor) -> Path:
     return root / "versions" / delivery.artifact_version / "model"
 
 
-def model_unit_snapshot(root: Path, requirement: EngineRequirementDescriptor) -> ModelUnitSnapshot:
-    """Names, sizes and modification times of the installed files; cheap to compare."""
+def _verification_record_path(root: Path, delivery: EngineModelDeliveryDescriptor) -> Path:
+    # Beside the version's model directory, outside the files it describes, and
+    # removed with the version, so a verification that finishes after an
+    # uninstall cannot write it back.
+    return root / "versions" / delivery.artifact_version / VERIFICATION_RECORD_NAME
 
-    model_root = _model_root(root, _delivery(requirement))
+
+def _model_unit_state(requirement: EngineRequirementDescriptor) -> dict[str, str]:
+    delivery = _delivery(requirement)
+    return {
+        "stateVersion": STATE_VERSION,
+        "requirementId": requirement.requirement_id,
+        "artifactVersion": delivery.artifact_version,
+        "manifestSha256": delivery.manifest_sha256,
+    }
+
+
+def model_unit_snapshot(root: Path, requirement: EngineRequirementDescriptor) -> ModelUnitSnapshot:
+    """Paths, sizes, modification times and Windows creation times; cheap to compare."""
+
+    return _model_files_snapshot(_model_root(root, _delivery(requirement)))
+
+
+def _model_files_snapshot(model_root: Path) -> ModelUnitSnapshot:
+    files: list[tuple[str, int, int, int]] = []
     try:
-        return tuple(
-            sorted(
-                (path.relative_to(model_root).as_posix(), stat.st_size, stat.st_mtime_ns)
-                for path in model_root.rglob("*")
-                if path.is_file()
-                for stat in (path.stat(),)
-            )
-        )
-    except OSError:
+        if not model_root.is_dir() or model_root.is_symlink():
+            return ()
+        for path in model_root.rglob("*"):
+            if path.is_symlink():
+                return ()
+            if path.is_file():
+                stat = path.stat()
+                files.append(
+                    (
+                        path.relative_to(model_root).as_posix(),
+                        stat.st_size,
+                        stat.st_mtime_ns,
+                        stat.st_ctime_ns,
+                    )
+                )
+        return tuple(sorted(files))
+    except (OSError, RuntimeError):
         return ()
 
 
@@ -81,20 +172,28 @@ def active_model_unit_dir(root: Path, requirement: EngineRequirementDescriptor) 
         state = json.loads((root / STATE_FILE_NAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if state != {
-        "stateVersion": STATE_VERSION,
-        "requirementId": requirement.requirement_id,
-        "artifactVersion": delivery.artifact_version,
-        "manifestSha256": delivery.manifest_sha256,
-    }:
+    if state != _model_unit_state(requirement):
         return None
     model_root = _model_root(root, delivery)
-    try:
-        verify_direct_model_files(model_root, delivery)
-    except EngineInstallationError:
+    record_path = _verification_record_path(root, delivery)
+    files = model_unit_snapshot(root, requirement)
+    record = verification_record({**state, "modelDelivery": delivery.to_dict()}, files or None)
+    record_matches = matches_verification_record(record_path, record)
+    if not record_matches:
+        discard_verification_record(record_path)
+        try:
+            verify_direct_model_files(model_root, delivery)
+        except EngineInstallationError:
+            return None
+    if not files or model_unit_snapshot(root, requirement) != files:
+        discard_verification_record(record_path)
         return None
     model_dir = model_root / delivery.entry_point
-    return model_dir if model_dir.is_dir() else None
+    if not model_dir.is_dir():
+        return None
+    if not record_matches:
+        write_verification_record(record_path, record)
+    return model_dir
 
 
 async def install_model_unit(
@@ -131,27 +230,31 @@ async def install_model_unit(
                 descriptor, destination, cancel_event=cancel_event, progress=progress
             )
             completed += descriptor.bytes
-        verify_direct_model_files(model_root, delivery)
+        # Hashing and deleting gigabytes run in a worker thread so that the
+        # event loop keeps answering requests, installation status included.
+        stop = InstallStop(cancel_event)
+        await _cancellable_file_operation(
+            stop, verify_direct_model_files, model_root, delivery, cancel_event=stop
+        )
+        verified_files = await _file_operation(_model_files_snapshot, model_root)
+        state = _model_unit_state(requirement)
         if cancel_event.is_set():
             raise asyncio.CancelledError
         state_path = root / STATE_FILE_NAME
         # Without its state file the previous copy is no longer active, so it can
         # be replaced; the new copy becomes active only once its state is written.
+        for record_path in (root / "versions").glob(f"*/{VERIFICATION_RECORD_NAME}"):
+            discard_verification_record(record_path)
         state_path.unlink(missing_ok=True)
         if final.exists():
-            shutil.rmtree(final)
+            await _file_operation(shutil.rmtree, final)
         await _file_operation(replace_with_retry, staging, final)
         if cancel_event.is_set():
             raise asyncio.CancelledError
         pending = state_path.with_suffix(f".{uuid4().hex}.tmp")
         pending.write_text(
             json.dumps(
-                {
-                    "stateVersion": STATE_VERSION,
-                    "requirementId": requirement.requirement_id,
-                    "artifactVersion": delivery.artifact_version,
-                    "manifestSha256": delivery.manifest_sha256,
-                },
+                state,
                 indent=2,
                 sort_keys=True,
             ),
@@ -161,10 +264,23 @@ async def install_model_unit(
             await _commit_operation(replace_with_retry, pending, state_path)
         finally:
             pending.unlink(missing_ok=True)
+        files = model_unit_snapshot(root, requirement)
+        if files and files == verified_files:
+            await _commit_operation(
+                write_verification_record,
+                _verification_record_path(root, delivery),
+                verification_record(
+                    {**state, "modelDelivery": delivery.to_dict()},
+                    files,
+                ),
+            )
         # The state file makes the unit active; a cancel after it is too late.
         report_progress(1)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        # Left behind only by a cancel or a failure: the files it holds can be
+        # gigabytes. The drain finishes the removal before a cancel propagates.
+        if staging.exists():
+            await _file_operation(shutil.rmtree, staging, ignore_errors=True)
 
 
 __all__ = [
@@ -174,4 +290,5 @@ __all__ = [
     "model_unit_snapshot",
     "model_unit_state",
     "requirement_model_dir",
+    "remove_inactive_model_unit_versions",
 ]

@@ -3,11 +3,48 @@ export interface FakeDesktopOptions {
   readonly editedResults?: boolean;
   readonly completeInstallOnPoll?: number;
   readonly holdRunningUntilCancel?: boolean;
+  /**
+   * Fail the status request of each runtime or model installation
+   * (`runtime_get_installation`, `runtime_get_structuring_model_installation`)
+   * this many times in a row before answering.
+   */
+  readonly failInstallStatusChecks?: number;
+  /**
+   * Answer the first status request of each runtime or model installation
+   * with HTTP 404, as a restarted runtime would. A runtime installation stays
+   * in the installation list (its next status request answers again); a model
+   * installation is gone, so every later read of it answers 404 too.
+   */
+  readonly answerInstallStatusNotFoundOnce?: boolean;
+  /** Once a status request was answered 404, answer each installation listing this much later. */
+  readonly slowListingAfterNotFoundMs?: number;
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
-  /** Script capture commands so one OCR file can reach raw text. */
+  /**
+   * Script OCR captures: each create gets its own capture id and reaches its
+   * checkpoint after a few status reads; a delete forgets the capture.
+   */
   readonly ocrJourney?: boolean;
+  /**
+   * Script recording captures: the simulated runtime publishes partial
+   * revisions, then structures and completes, on its own timeline
+   * (`installTimeline`: `startResponseMs` before the first partial, then
+   * `preparingMs` per step). `runtime_get_capture_events` returns the events
+   * after `lastEventId`, or an empty batch after a short wait when none
+   * arrived. A test can hold revisions with `__captureRecordingHold`, read
+   * every answered events read in `__captureRecordingEventReads`, and hold
+   * the partial read that follows an empty events reply
+   * (`__captureRecordingHoldPartialAfterEmptyEvents`).
+   */
+  readonly recordingJourney?: boolean;
   /** Keep the fake library in sessionStorage so a reload still lists it. */
   readonly persistLibrary?: boolean;
+  /**
+   * Start the library with documents another app run left behind: one
+   * stored processing with its runtime link (interrupted, Start again), one
+   * an earlier version stored waiting with its raw text (interrupted, View
+   * only), and an earlier version's failed cleanup after a failure.
+   */
+  readonly earlierRunRows?: boolean;
   /** Simulated installation phases with visible elapsed-time progress. */
   readonly installTimeline?: {
     readonly startResponseMs?: number;
@@ -47,8 +84,38 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       };
       transformCallback: (...args: unknown[]) => number;
     };
+    /** The capture id of every `runtime_delete_capture`, in order. */
+    __captureDeletedCaptureIds: string[];
     __captureDropSources?: (fileName: string) => void;
     __captureNativeSourcesReady?: boolean;
+    /**
+     * Every answered `runtime_get_capture_events` read, in order: the cursor
+     * it was asked with (0: from the start) and the events it returned as
+     * `[sequence, eventType, partialRevision]`. Recording journey only.
+     */
+    __captureRecordingEventReads?: {
+      readonly captureId: string;
+      readonly lastEventId: number;
+      readonly events: readonly (readonly [number, string, number | null])[];
+    }[];
+    /**
+     * Holds partial revisions from `fromRevision` on until called again
+     * (null: publish on the simulated timeline). Recording journey only.
+     */
+    __captureRecordingHold?: (fromRevision: number | null) => void;
+    /**
+     * From now on, the first events read answered with an empty batch is
+     * noted and the next `runtime_get_partial` of its capture is not answered
+     * until `__captureRecordingReleasePartial`. Recording journey only.
+     */
+    __captureRecordingHoldPartialAfterEmptyEvents?: () => void;
+    /**
+     * Set while that partial read waits: the index in
+     * `__captureRecordingEventReads` of the empty reply it followed.
+     */
+    __captureRecordingHeldPartial?: { readonly emptyEventRead: number } | null;
+    /** Answers the held partial read with the capture's partial as it is then. */
+    __captureRecordingReleasePartial?: () => void;
   }
   const target = globalThis as unknown as TauriTestGlobal;
   let nextCallbackId = 1;
@@ -60,7 +127,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   const batchFor = (fileName: string) => {
     const selectionToken = (++sequence).toString(16).padStart(32, '0');
     const item = { selectionToken, fileName, byteLength: 12,
-      mediaType: fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'application/pdf' };
+      mediaType: fileName.endsWith('.png') ? 'image/png'
+        : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg'
+        : installOptions.recordingJourney && fileName.endsWith('.mp3') ? 'audio/mpeg'
+        : 'application/pdf' };
     selected.set(selectionToken, item);
     return { selections: [item], rejected: [] };
   };
@@ -70,6 +140,26 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   const mutableRequirements = runtimeRequirements.map((item) => ({ ...item }));
   const installations = new Map<string, Record<string, unknown>>();
   const pollCounts = new Map<string, number>();
+  const statusFailures = new Map<string, number>();
+  const statusNotFoundAnswered = new Set<string>();
+  // A failed host command rejects with its message as a plain string, the
+  // form the page gets from Tauri and from the dev-host bridge.
+  const commandFailed = (message: string): Promise<never> => Promise.reject(message);
+  /** The simulated failure message for this status request, if any. */
+  const statusRequestFailure = (installationId: string): string | null => {
+    if (installOptions.answerInstallStatusNotFoundOnce && !statusNotFoundAnswered.has(installationId)) {
+      statusNotFoundAnswered.add(installationId);
+      return 'Capture Runtime request was rejected with HTTP 404.';
+    }
+    const failedSoFar = statusFailures.get(installationId) ?? 0;
+    if (failedSoFar >= (installOptions.failInstallStatusChecks ?? 0)) return null;
+    statusFailures.set(installationId, failedSoFar + 1);
+    return 'Capture Runtime response could not be read.';
+  };
+  const modelInstallations = new Map<string, Record<string, unknown>>();
+  let nextModelInstallSeq = 1;
+  /** The model option a completed model installation made active. */
+  let activeModelOptionId = 'qwen3.5-0.8b-v1';
   const installStartedAtMs = new Map<string, number>();
   const installDownloadBytes = new Map<string, number>();
   const syncTimelineInstallation = (record: Record<string, unknown>): void => {
@@ -132,6 +222,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     status: string;
     stage?: string;
     captureId?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    recoveryCode?: string;
+    recoveryMessage?: string;
     captureOptions?: Record<string, unknown>;
     hasRaw?: boolean;
     pageCount?: number;
@@ -150,7 +244,30 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   });
   let documents: StoredDoc[] = [historyDocument()];
   const rawByDocument = new Map<string, unknown>();
+  // The structured document stored beside the raw result, as the host keeps both.
+  const resultByDocument = new Map<string, unknown>();
   const editsByDocument = new Map<string, Record<string, unknown>>();
+  // OCR evidence, write-once once completed, as the host keeps it.
+  const evidenceByDocument = new Map<string, Record<string, unknown>>();
+  if (installOptions.earlierRunRows) {
+    const earlier = (documentId: string, fileName: string, fields: Partial<StoredDoc>): StoredDoc => ({
+      documentId, fileName, mediaType: 'application/pdf', byteLength: 12, createdAtMs: 2, updatedAtMs: 2,
+      status: 'processing', ...fields,
+    });
+    documents.push(
+      earlier('e'.repeat(32), 'left-running.pdf', { stage: 'extracting', captureId: 'capture-earlier-run' }),
+      earlier('f'.repeat(32), 'kept-result.pdf', { status: 'queued', stage: 'uploading' }),
+      earlier('c'.repeat(32), 'cleanup-failed.pdf', {
+        status: 'recovery_required', stage: 'failed', captureId: 'capture-earlier-cleanup',
+        errorCode: 'capture_failed', errorMessage: 'The capture failed.',
+        recoveryCode: 'runtime_cleanup_failed', recoveryMessage: 'The runtime capture could not be deleted.',
+      }),
+    );
+    rawByDocument.set('f'.repeat(32), {
+      sourceText: '先前版本保留的文字',
+      segments: [{ segmentId: 'page-1', order: 0, locator: { kind: 'page', page: 1 }, text: '先前版本保留的文字' }],
+    });
+  }
   if (installOptions.editedResults) {
     rawByDocument.set(historyId, {
       sourceText: 'recognized page',
@@ -158,10 +275,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         { segmentId: 'page-3', order: 0, locator: { kind: 'page', page: 3 }, text: 'recognized page' },
       ],
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
         digest: `sha256:${'d'.repeat(64)}`,
-        device: 'windowsml-dml',
+        device: 'directml',
       },
     });
     editsByDocument.set(historyId, { schemaVersion: 1, updatedAtMs: 1,
@@ -179,7 +296,9 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     sessionStorage.setItem(libraryKey, JSON.stringify({
       documents,
       raw: [...rawByDocument.entries()],
+      results: [...resultByDocument.entries()],
       edits: [...editsByDocument.entries()],
+      evidence: [...evidenceByDocument.entries()],
     }));
   };
   if (installOptions.persistLibrary) {
@@ -189,7 +308,9 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const parsed = JSON.parse(stored) as {
           documents?: StoredDoc[];
           raw?: readonly (readonly [string, unknown])[];
+          results?: readonly (readonly [string, unknown])[];
           edits?: readonly (readonly [string, Record<string, unknown>])[];
+          evidence?: readonly (readonly [string, Record<string, unknown>])[];
         };
         if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
           documents = parsed.documents;
@@ -199,12 +320,20 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             rawByDocument.set(entry[0], entry[1]);
           }
         }
+        for (const entry of parsed.results ?? []) {
+          if (Array.isArray(entry) && typeof entry[0] === 'string') {
+            resultByDocument.set(entry[0], entry[1]);
+          }
+        }
         for (const [id, edits] of parsed.edits ?? []) editsByDocument.set(id, edits);
+        for (const [id, evidence] of parsed.evidence ?? []) evidenceByDocument.set(id, evidence);
       }
     } catch {
       documents = [historyDocument()];
       rawByDocument.clear();
+      resultByDocument.clear();
       editsByDocument.clear();
+      evidenceByDocument.clear();
     }
     if (!documents.some((item) => item.documentId === historyId)) {
       documents = [historyDocument(), ...documents];
@@ -237,13 +366,19 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     }
     return summary;
   };
-  let ocrPolls = 0;
-  let activeOcrPages: readonly number[] | null = null;
-  const ocrCaptureId = 'capture-ocr-1';
+  // OCR captures this simulated runtime knows, by id. Every create gets a new
+  // id, as at the runtime; a delete forgets the capture, and an id this
+  // runtime does not know is not found.
+  interface OcrCapture {
+    polls: number;
+    readonly pages: readonly number[] | null;
+  }
+  const ocrCaptures = new Map<string, OcrCapture>();
+  const ocrCaptureIdPrefix = 'capture-ocr-';
   const sourceSha = 'a'.repeat(64);
-  const ocrJob = (status: string): Record<string, unknown> => ({
+  const ocrJob = (ocrCaptureId: string, status: string): Record<string, unknown> => ({
     protocolVersion: '2',
-    ingestionId: 'ingestion-ocr-1',
+    ingestionId: `ingestion-${ocrCaptureId}`,
     captureId: ocrCaptureId,
     partialRevision: 0,
     lastEventSequence: 0,
@@ -262,15 +397,15 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   });
   const ocrProvenance = {
     status: 'resolved',
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'RTX4060',
     profileId: 'profile-1',
     profileSpecSha256: 'e'.repeat(64),
   };
-  const ocrProjection = (): Record<string, unknown> => {
-    const pageNumbers = activeOcrPages ?? [1];
+  const ocrProjection = (ocrCaptureId: string, capture: OcrCapture): Record<string, unknown> => {
+    const pageNumbers = capture.pages ?? [1];
     return {
       apiVersion: '2.0',
       schemaVersion: '3',
@@ -300,15 +435,15 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         confidence: 0.875,
         provenance: ocrProvenance,
       })),
-      pageCount: pageNumbers.length,
+      processedPageCount: pageNumbers.length,
       runtimeVersion,
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       provenance: ocrProvenance,
       createdAt: '2026-07-20T00:00:00Z',
     };
   };
-  const ocrRaw = (): Record<string, unknown> => {
-    const pageNumbers = activeOcrPages ?? [1, 2];
+  const ocrRaw = (capture: OcrCapture): Record<string, unknown> => {
+    const pageNumbers = capture.pages ?? [1, 2];
     const pageText = (page: number) => page === 1 ? '第一頁' : page === 2 ? '第二頁' : `第 ${page} 頁`;
     return {
       schemaVersion: '2',
@@ -327,13 +462,334 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       })),
       sourceText: pageNumbers.map(pageText).join('\n'),
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
         digest: `sha256:${'d'.repeat(64)}`,
-        device: 'windowsml-dml',
+        device: 'directml',
       },
       createdAt: '2026-07-20T00:00:00Z',
     };
+  };
+  // preview.spec.ts asserts these sentences, one partial revision each.
+  const recordingLines = [
+    '這是第一句虛構逐字稿。',
+    '這是第二句虛構逐字稿。',
+    '這是第三句虛構逐字稿。',
+  ];
+  const recordingLineMs = 1200;
+  const recordingDurationMs = recordingLines.length * recordingLineMs;
+  const recordingStepMs = Math.max(1, installOptions.installTimeline?.preparingMs ?? 400);
+  const recordingStartMs = Math.max(0, installOptions.installTimeline?.startResponseMs ?? 0);
+  // How long an events read waits for something new before it answers with an empty batch.
+  const recordingEmptyWaitMs = Math.max(20, Math.min(250, Math.round(recordingStepMs / 4)));
+  const recordingEngine = {
+    engine: 'speech-recognition',
+    model: 'fixture-speech',
+    digest: `sha256:${'e'.repeat(64)}`,
+    device: installOptions.cudaAvailable ? 'cuda' : 'cpu',
+  };
+  // The simulated runtime's own timeline after a recording capture starts:
+  // one partial revision per line, then runtime structuring and completion.
+  // Each step is due `afterMs` after the previous one, whoever reads.
+  const recordingSteps: readonly { readonly step: string; readonly afterMs: number }[] = [
+    ...recordingLines.map((_, index) => ({
+      step: 'revision',
+      afterMs: index === 0 ? recordingStartMs : recordingStepMs,
+    })),
+    { step: 'awaiting_structuring', afterMs: recordingStepMs },
+    { step: 'structuring', afterMs: Math.round(recordingStepMs / 2) },
+    { step: 'completed', afterMs: Math.round(recordingStepMs / 2) },
+  ];
+  interface RecordingCapture {
+    readonly captureId: string;
+    readonly ingestionId: string;
+    readonly source: Record<string, unknown>;
+    readonly createdAtMs: number;
+    status: string;
+    progress: number;
+    revision: number;
+    nextStep: number;
+    lastStepAtMs: number;
+    updatedAtMs: number;
+    completedAtMs: number | null;
+    readonly events: Record<string, unknown>[];
+  }
+  // These commands answer for recording capture ids. An id names one capture
+  // for good: like the runtime's, it is random, so a page reload (which keeps
+  // the library and restarts this runtime) never hands an old id to a new capture.
+  const recordingCaptureIdPrefix = 'capture-recording-';
+  const recordingCommands: readonly string[] = [
+    'runtime_get_capture_events',
+    'runtime_get_partial',
+    'runtime_get_result',
+    'runtime_get_capture',
+    'runtime_delete_capture',
+  ];
+  const recordingCaptures = new Map<string, RecordingCapture>();
+  // A test can hold partial revisions from this number on (null: none held).
+  let recordingHeldRevision: number | null = null;
+  let recordingHoldChangedAtMs = 0;
+  const recordingEventReads: NonNullable<TauriTestGlobal['__captureRecordingEventReads']> = [];
+  // A test can hold the partial read after an empty events reply:
+  // 'armed' until that reply, then the capture whose next partial read waits.
+  let recordingPartialHold: 'armed' | { readonly captureId: string; readonly emptyEventRead: number } | null = null;
+  let answerHeldRecordingPartial: (() => void) | null = null;
+  const captureNotFound = (): Promise<never> => commandFailed(
+    'Capture Runtime request was rejected with HTTP 404.',
+  );
+  const recordingSegment = (index: number): Record<string, unknown> => ({
+    segmentId: `segment-${String(index + 1)}`,
+    order: index,
+    locator: { kind: 'time', startMs: index * recordingLineMs, endMs: (index + 1) * recordingLineMs },
+    text: recordingLines[index],
+  });
+  const recordingSegments = (count: number): Record<string, unknown>[] => (
+    recordingLines.slice(0, count).map((_, index) => recordingSegment(index))
+  );
+  const recordingSourceText = (count: number): string => recordingLines.slice(0, count).join('\n');
+  // Like the runtime's event log: sequences start at 1 with `accepted`, and an
+  // event carries the operation's progress when it does not state its own.
+  const appendRecordingEvent = (
+    capture: RecordingCapture,
+    eventType: string,
+    stage: string,
+    atMs: number,
+    fields: Record<string, unknown> = {},
+  ): void => {
+    const sequence = capture.events.length + 1;
+    capture.events.push({
+      protocolVersion: '2',
+      eventId: `${capture.captureId}/${String(sequence)}`,
+      sequence,
+      captureId: capture.captureId,
+      kind: 'recording',
+      eventType,
+      stage,
+      progress: capture.progress,
+      segments: [],
+      createdAt: new Date(atMs).toISOString(),
+      ...fields,
+    });
+  };
+  // Progress values follow the runtime's status transitions.
+  const applyRecordingStep = (capture: RecordingCapture, step: string, atMs: number): void => {
+    if (step === 'revision') {
+      capture.revision += 1;
+      appendRecordingEvent(capture, 'segment', 'extracting', atMs, {
+        partialRevision: capture.revision,
+        coveredUntilMs: capture.revision * recordingLineMs,
+        segments: [recordingSegment(capture.revision - 1)],
+        durationMs: recordingDurationMs,
+      });
+    } else if (step === 'awaiting_structuring') {
+      capture.status = 'awaiting_structuring';
+      capture.progress = 0.9;
+      appendRecordingEvent(capture, 'checkpoint', 'awaiting_structuring', atMs, {
+        partialRevision: capture.revision,
+      });
+    } else if (step === 'structuring') {
+      capture.status = 'structuring';
+      capture.progress = 0.95;
+    } else {
+      capture.status = 'completed';
+      capture.progress = 1;
+      capture.completedAtMs = atMs;
+      appendRecordingEvent(capture, 'completed', 'completed', atMs);
+    }
+  };
+  // Applies every step due by `nowMs`; the result depends only on the time
+  // and the hold, never on how often or by which command the capture is read.
+  const advanceRecording = (capture: RecordingCapture, nowMs: number): void => {
+    while (capture.status !== 'completed' && capture.status !== 'cancelled') {
+      const next = recordingSteps[capture.nextStep];
+      if (!next) return;
+      if (
+        next.step === 'revision'
+        && recordingHeldRevision !== null
+        && capture.revision + 1 >= recordingHeldRevision
+      ) {
+        return;
+      }
+      const dueMs = Math.max(capture.lastStepAtMs + next.afterMs, recordingHoldChangedAtMs);
+      if (dueMs > nowMs) return;
+      applyRecordingStep(capture, next.step, dueMs);
+      capture.nextStep += 1;
+      capture.lastStepAtMs = dueMs;
+      capture.updatedAtMs = dueMs;
+    }
+  };
+  const readRecording = (id: string): RecordingCapture | undefined => {
+    const capture = recordingCaptures.get(id);
+    if (capture) advanceRecording(capture, Date.now());
+    return capture;
+  };
+  const recordingOperation = (capture: RecordingCapture): Record<string, unknown> => ({
+    protocolVersion: '2',
+    captureId: capture.captureId,
+    ingestionId: capture.ingestionId,
+    kind: 'recording',
+    status: capture.status,
+    progress: capture.progress,
+    partialRevision: capture.revision,
+    lastEventSequence: capture.events.length,
+    source: capture.source,
+    createdAt: new Date(capture.createdAtMs).toISOString(),
+    updatedAt: new Date(capture.updatedAtMs).toISOString(),
+    durationMs: recordingDurationMs,
+    coveredUntilMs: capture.revision * recordingLineMs,
+    ...(capture.completedAtMs === null
+      ? {}
+      : { completedAt: new Date(capture.completedAtMs).toISOString() }),
+  });
+  const recordingPartial = (capture: RecordingCapture): Record<string, unknown> => ({
+    protocolVersion: '2',
+    captureId: capture.captureId,
+    source: capture.source,
+    revision: capture.revision,
+    coveredUntilMs: capture.revision * recordingLineMs,
+    segments: recordingSegments(capture.revision),
+    sourceText: recordingSourceText(capture.revision),
+    extractionEngine: recordingEngine,
+    updatedAt: new Date(capture.updatedAtMs).toISOString(),
+  });
+  const startRecording = (current: StoredDoc): Record<string, unknown> => {
+    const nowMs = Date.now();
+    const capture: RecordingCapture = {
+      captureId: `${recordingCaptureIdPrefix}${crypto.randomUUID()}`,
+      ingestionId: `ingestion-recording-${crypto.randomUUID()}`,
+      source: {
+        sha256: 'c'.repeat(64),
+        fileName: current.fileName,
+        mediaType: current.mediaType,
+        bytes: current.byteLength,
+      },
+      createdAtMs: nowMs,
+      status: 'waiting_input',
+      progress: 0,
+      revision: 0,
+      nextStep: 0,
+      lastStepAtMs: nowMs,
+      updatedAtMs: nowMs,
+      completedAtMs: null,
+      events: [],
+    };
+    appendRecordingEvent(capture, 'accepted', 'queued', nowMs);
+    capture.status = 'extracting';
+    capture.progress = 0.1;
+    appendRecordingEvent(capture, 'input_checkpoint', 'extracting', nowMs);
+    recordingCaptures.set(capture.captureId, capture);
+    return recordingOperation(capture);
+  };
+  // Like the fixed host (#479): the events after `lastEventId` that exist now;
+  // when there are none, a short wait and then whatever arrived, possibly none.
+  const recordingEvents = (
+    input: { readonly id?: string; readonly lastEventId?: number | null } | undefined,
+  ): Promise<unknown> => {
+    const id = String(input?.id ?? '');
+    const rawCursor = input?.lastEventId;
+    const after = rawCursor === null || rawCursor === undefined ? 0 : Number(rawCursor);
+    if (!Number.isInteger(after) || after < 0) {
+      return commandFailed('Capture Runtime request was rejected with HTTP 422.');
+    }
+    const capture = readRecording(id);
+    if (!capture) return captureNotFound();
+    const since = (): Record<string, unknown>[] => capture.events.filter(
+      (event) => Number(event['sequence']) > after,
+    );
+    const answered = (events: Record<string, unknown>[]): Record<string, unknown>[] => {
+      recordingEventReads.push({
+        captureId: id,
+        lastEventId: after,
+        events: events.map((event) => [
+          Number(event['sequence']),
+          String(event['eventType']),
+          typeof event['partialRevision'] === 'number' ? event['partialRevision'] : null,
+        ] as const),
+      });
+      if (events.length === 0 && recordingPartialHold === 'armed') {
+        recordingPartialHold = { captureId: id, emptyEventRead: recordingEventReads.length - 1 };
+      }
+      return events;
+    };
+    const available = since();
+    if (available.length > 0) return Promise.resolve(answered(available));
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        // Simulated outcome: a capture deleted during the wait publishes
+        // nothing more, and the waiting read is answered with no event. The
+        // real host has other outcomes too: the runtime records a
+        // cancellation before it removes a capture that still runs, so a
+        // waiting read can return that event, or fail when the stream breaks.
+        if (recordingCaptures.get(id) !== capture) {
+          resolve(answered([]));
+          return;
+        }
+        advanceRecording(capture, Date.now());
+        resolve(answered(since()));
+      }, recordingEmptyWaitMs);
+    });
+  };
+  // Answers a partial read, or keeps it waiting when a test holds it.
+  const recordingPartialRead = (id: string): Promise<unknown> => {
+    const answer = (): Promise<unknown> => {
+      const capture = readRecording(id);
+      // A capture this fake never started, or one deleted since, is not found.
+      if (!capture) return captureNotFound();
+      // The host answers null where the runtime has no partial yet (409).
+      return Promise.resolve(capture.revision < 1 ? null : recordingPartial(capture));
+    };
+    const hold = recordingPartialHold;
+    if (hold === null || hold === 'armed' || hold.captureId !== id) return answer();
+    recordingPartialHold = null;
+    return new Promise((resolve) => {
+      answerHeldRecordingPartial = () => resolve(answer());
+      target.__captureRecordingHeldPartial = { emptyEventRead: hold.emptyEventRead };
+    });
+  };
+  const recordingResult = (capture: RecordingCapture): Promise<unknown> => {
+    if (capture.status !== 'completed') {
+      return commandFailed('Capture Runtime request was rejected with HTTP 409.');
+    }
+    const segments = recordingSegments(recordingLines.length);
+    const sourceText = recordingSourceText(recordingLines.length);
+    const createdAt = new Date(capture.createdAtMs).toISOString();
+    const completedAt = new Date(capture.completedAtMs ?? capture.updatedAtMs).toISOString();
+    return Promise.resolve({
+      operation: recordingOperation(capture),
+      raw: {
+        schemaVersion: '2',
+        diagnosticOnly: true,
+        source: capture.source,
+        segments,
+        sourceText,
+        extractionEngine: recordingEngine,
+        createdAt,
+      },
+      result: {
+        schemaVersion: '2',
+        source: capture.source,
+        rawSegments: segments,
+        blocks: segments.map((segment, index) => ({
+          blockId: `block-${String(index + 1)}`,
+          order: index,
+          type: 'transcript',
+          sourceSegmentId: segment['segmentId'],
+          locator: segment['locator'],
+          sourceText: segment['text'],
+          targetText: segment['text'],
+        })),
+        sourceText,
+        targetText: sourceText,
+        extractionEngine: recordingEngine,
+        structuringEngine: {
+          engine: 'structuring-runtime',
+          model: 'fixture-structuring',
+          digest: `sha256:${'f'.repeat(64)}`,
+        },
+        createdAt,
+        completedAt,
+      },
+    });
   };
 
   for (const initial of installOptions.initialRunningInstallations ?? []) {
@@ -361,6 +817,27 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   target.__captureInvokedCommands = [];
   target.__captureStartedRequirementIds = [];
   target.__captureCreatedPdfPageNumbers = [];
+  target.__captureDeletedCaptureIds = [];
+  if (installOptions.recordingJourney) {
+    target.__captureRecordingEventReads = recordingEventReads;
+    target.__captureRecordingHold = (fromRevision) => {
+      // Steps already due keep their times; a held revision is due from now on.
+      const nowMs = Date.now();
+      for (const capture of recordingCaptures.values()) advanceRecording(capture, nowMs);
+      recordingHeldRevision = fromRevision;
+      recordingHoldChangedAtMs = nowMs;
+    };
+    target.__captureRecordingHeldPartial = null;
+    target.__captureRecordingHoldPartialAfterEmptyEvents = () => {
+      recordingPartialHold = 'armed';
+    };
+    target.__captureRecordingReleasePartial = () => {
+      const answerHeld = answerHeldRecordingPartial;
+      answerHeldRecordingPartial = null;
+      target.__captureRecordingHeldPartial = null;
+      answerHeld?.();
+    };
+  }
   target.__captureDropSources = (fileName) => sendBatch(batchFor(fileName));
   target.__TAURI_INTERNALS__ = {
     metadata: {
@@ -382,11 +859,17 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           readonly id?: string;
           readonly installationId?: string;
           readonly requirementId?: string;
+          readonly optionId?: string;
+          readonly documentId?: string;
+          readonly lastEventId?: number | null;
         };
         readonly request?: Record<string, unknown>;
         readonly update?: Record<string, unknown>;
         readonly onEvent?: { onmessage?: (batch: unknown) => void };
       };
+      if (command === 'runtime_delete_capture') {
+        target.__captureDeletedCaptureIds.push(String(args.input?.id ?? ''));
+      }
       if (command === 'desktop_runtime_status') {
         return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
       }
@@ -412,16 +895,27 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           runtimeVersion,
           captureDocumentSchemaVersion: '2',
           contractSetVersion: '2',
-          capabilities: {},
+          capabilities: {
+            captureKinds: ['pdf', 'image', 'recording'],
+            structuringModes: ['runtime', 'host'],
+            supportsCancellation: true,
+            supportsRawDiagnostics: true,
+            maxUploadBytes: 50 * 1024 * 1024,
+            maxChunkBytes: 4 * 1024 * 1024,
+            checkpointIntervalMs: 300_000,
+            heartbeatIntervalMs: 5_000,
+            stallTimeoutMs: 90_000,
+            supportsProgressiveRecording: true,
+          },
           ocrCompute: {
             apiVersion: '2.0',
             schemaVersion: '1',
             service: 'capture-runtime',
             runtimeVersion,
             contractSetVersion: '2',
-            contractSha256: 'a'.repeat(64),
+            contractSetSha256: 'a'.repeat(64),
             workerSha256: 'b'.repeat(64),
-            mode: 'gpu-dml',
+            mode: 'gpu',
             adapterClass: 'dedicated',
             reasonCode: null,
             userNoticeRequired: false,
@@ -433,14 +927,22 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         return Promise.resolve({ items: mutableRequirements.map((item) => ({ ...item })) });
       }
       if (command === 'runtime_list_installations') {
-        if (installOptions.installTimeline) {
-          for (const item of installations.values()) {
-            syncTimelineInstallation(item);
+        const listing = () => {
+          if (installOptions.installTimeline) {
+            for (const item of installations.values()) {
+              syncTimelineInstallation(item);
+            }
           }
+          // Newest first, like the runtime.
+          return { items: [...installations.values()].reverse().map((item) => ({ ...item })) };
+        };
+        const slowMs = installOptions.slowListingAfterNotFoundMs ?? 0;
+        if (slowMs > 0 && statusNotFoundAnswered.size > 0) {
+          return new Promise((resolve) => {
+            setTimeout(() => resolve(listing()), slowMs);
+          });
         }
-        return Promise.resolve({
-          items: [...installations.values()].map((item) => ({ ...item })),
-        });
+        return Promise.resolve(listing());
       }
       if (command === 'runtime_start_installation') {
         const requirementId = String(args.input?.requirementId ?? 'speech-recognition');
@@ -486,8 +988,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const id = String(args.input?.id ?? args.input?.installationId ?? '');
         const record = installations.get(id);
         if (!record) {
-          return Promise.reject(new Error(`Unknown installation: ${id}`));
+          return commandFailed('Capture Runtime request was rejected with HTTP 404.');
         }
+        const failure = statusRequestFailure(id);
+        if (failure) return commandFailed(failure);
         if (installOptions.installTimeline) {
           syncTimelineInstallation(record);
           return Promise.resolve({ ...record });
@@ -526,9 +1030,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           item['requirementId'] === requirementId
           && (item['status'] === 'queued' || item['status'] === 'running'));
         if (inUse) {
-          return Promise.reject(
-            new Error('Capture Runtime request was rejected with HTTP 409.'),
-          );
+          return commandFailed('Capture Runtime request was rejected with HTTP 409.');
         }
         return new Promise((resolve) => {
           setTimeout(() => {
@@ -540,7 +1042,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               requirementId,
               displayName: requirementId,
               status: 'installable',
-              kind: 'runtime',
+              kind: requirementId,
               requiredFor: ['capture'],
               installStrategy: 'runtime-catalog',
               detail: null,
@@ -548,7 +1050,43 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           }, 1500);
         });
       }
-      if (command === 'runtime_model_options') {
+      if (command === 'runtime_start_structuring_model_installation') {
+        const installationId = `model-inst-${nextModelInstallSeq++}`;
+        const record: Record<string, unknown> = {
+          installationId,
+          optionId: String(args.input?.optionId ?? ''),
+          status: 'running',
+          progress: 0.1,
+          createdAt: '2026-11-03T00:00:00Z',
+          updatedAt: '2026-11-03T00:00:00Z',
+        };
+        modelInstallations.set(installationId, record);
+        return Promise.resolve({ ...record });
+      }
+      if (command === 'runtime_get_structuring_model_installation') {
+        const id = String(args.input?.id ?? '');
+        const record = modelInstallations.get(id);
+        if (!record) {
+          return commandFailed('Capture Runtime request was rejected with HTTP 404.');
+        }
+        const failure = statusRequestFailure(id);
+        if (failure) {
+          // A restarted runtime no longer has the model installation: later reads agree.
+          if (failure.includes('HTTP 404')) modelInstallations.delete(id);
+          return commandFailed(failure);
+        }
+        // Each answered status request moves the download on by a tenth.
+        if (record['status'] === 'running') {
+          const progress = Math.min(1, Math.round((Number(record['progress'] ?? 0) + 0.1) * 10) / 10);
+          record['progress'] = progress;
+          if (progress >= 1) {
+            record['status'] = 'completed';
+            activeModelOptionId = String(record['optionId'] ?? activeModelOptionId);
+          }
+        }
+        return Promise.resolve({ ...record });
+      }
+      if (command === 'runtime_structuring_model_options') {
         return Promise.resolve({
           catalogSha256: 'a'.repeat(64),
           items: [
@@ -557,30 +1095,30 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               displayName: 'Qwen 3.5 0.8B',
               modelReference: 'qwen3.5:0.8b',
               expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+              downloadBytes: null,
+              profileId: 'qwen3.5-0.8b-structure-v1',
               profileSpecSha256: 'b'.repeat(64),
-              status: 'active',
+              status: activeModelOptionId === 'qwen3.5-0.8b-v1' ? 'active' : 'not-installed',
             },
             {
               optionId: 'qwen3.5-2b-v1',
               displayName: 'Qwen 3.5 2B',
               modelReference: 'qwen3.5:2b',
               expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-2b-structure-v1',
+              downloadBytes: null,
+              profileId: 'qwen3.5-2b-structure-v1',
               profileSpecSha256: 'c'.repeat(64),
-              status: 'not-installed',
+              status: activeModelOptionId === 'qwen3.5-2b-v1' ? 'active' : 'not-installed',
             },
             {
               optionId: 'qwen3.5-4b-v1',
               displayName: 'Qwen 3.5 4B',
               modelReference: 'qwen3.5:4b',
               expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-4b-structure-v1',
+              downloadBytes: null,
+              profileId: 'qwen3.5-4b-structure-v1',
               profileSpecSha256: 'd'.repeat(64),
-              status: 'not-installed',
+              status: activeModelOptionId === 'qwen3.5-4b-v1' ? 'active' : 'not-installed',
             },
           ],
         });
@@ -588,7 +1126,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'library_list') {
         return Promise.resolve(documents.map((item) => listedSummary(item)));
       }
-      if (command === 'library_select_sources') return Promise.resolve(batchFor('charge.pdf'));
+      if (command === 'library_select_sources') {
+        const kind = String(args.request?.['kind'] ?? '');
+        const fileName = installOptions.recordingJourney && kind === 'recordings'
+          ? 'sample-recording.mp3'
+          : 'charge.pdf';
+        return Promise.resolve(batchFor(fileName));
+      }
       if (command === 'library_watch_native_sources') {
         sourceChannel = args.onEvent;
         target.__captureNativeSourcesReady = true;
@@ -603,7 +1147,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const request = args.request ?? {};
         const token = String(request['selectionToken'] ?? '');
         const selection = selected.get(token);
-        if (!selection) return Promise.reject(new Error('Selected source is no longer available. Choose it again.'));
+        if (!selection) return commandFailed('Selected source is no longer available. Choose it again.');
         selected.delete(token);
         const { fileName, mediaType } = selection;
         const options = request['captureOptions'];
@@ -613,6 +1157,21 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const pdfPageNumbers = options !== null && typeof options === 'object'
           ? (options as { readonly pdfPageNumbers?: unknown }).pdfPageNumbers
           : undefined;
+        const spokenLanguage = options !== null && typeof options === 'object'
+          ? (options as { readonly spokenLanguage?: unknown }).spokenLanguage
+          : undefined;
+        const identifySpeakers = options !== null && typeof options === 'object'
+          ? (options as { readonly identifySpeakers?: unknown }).identifySpeakers
+          : undefined;
+        const captureOptions: Record<string, unknown> = {};
+        if (typeof pdfPageCount === 'number') captureOptions['pdfPageCount'] = pdfPageCount;
+        else if (Array.isArray(pdfPageNumbers)) captureOptions['pdfPageNumbers'] = pdfPageNumbers;
+        if (installOptions.recordingJourney && typeof spokenLanguage === 'string') {
+          captureOptions['spokenLanguage'] = spokenLanguage;
+        }
+        if (installOptions.recordingJourney && typeof identifySpeakers === 'boolean') {
+          captureOptions['identifySpeakers'] = identifySpeakers;
+        }
         const document: StoredDoc = {
           documentId: selection.selectionToken,
           fileName,
@@ -622,11 +1181,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           updatedAtMs: Date.now(),
           status: 'queued',
           stage: 'uploading',
-          ...(typeof pdfPageCount === 'number'
-            ? { captureOptions: { pdfPageCount } }
-            : Array.isArray(pdfPageNumbers)
-              ? { captureOptions: { pdfPageNumbers } }
-              : {}),
+          ...(Object.keys(captureOptions).length > 0 ? { captureOptions } : {}),
         };
         documents = [
           document,
@@ -638,11 +1193,15 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'library_get') {
         const documentId = String(args.request?.['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
-        if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+        if (!current) return commandFailed(`Unknown document: ${documentId}`);
         return Promise.resolve({
           ...listedSummary(current),
-          ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
+          // As the host does: a missing raw text or result is answered as `null`,
+          // missing edits and evidence are left out.
+          raw: rawByDocument.get(documentId) ?? null,
+          result: resultByDocument.get(documentId) ?? null,
           ...(editsByDocument.has(documentId) ? { edits: editsByDocument.get(documentId) } : {}),
+          ...(evidenceByDocument.has(documentId) ? { ocrEvidence: evidenceByDocument.get(documentId) } : {}),
         });
       }
       if (command === 'library_export') {
@@ -656,13 +1215,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             locator: { kind: string; page?: number; startMs?: number; endMs?: number } }[];
         } | undefined;
         if (!current || !raw || !['text', 'markdown', 'srt', 'vtt', 'json'].includes(format)) {
-          return Promise.reject(new Error('Export unavailable'));
+          return commandFailed('Export unavailable');
         }
         const recording = /^(audio|video)\//u.test(current.mediaType);
-        if (!recording && (format === 'srt' || format === 'vtt')) return Promise.reject(new Error('Recording required'));
+        if (!recording && (format === 'srt' || format === 'vtt')) return commandFailed('Recording required');
         if ((format === 'text' || format === 'markdown') &&
           (pageLabel.length > 40 || pageLabel.split('{page}').length !== 2)) {
-          return Promise.reject(new Error('Invalid page label'));
+          return commandFailed('Invalid page label');
         }
         const edits = editsByDocument.get(documentId) as {
           ocrPages: Record<string, string>; transcriptLines: Record<string, string>; speakerNames: Record<string, string>;
@@ -698,8 +1257,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       }
       if (command === 'library_save_edits') {
         const documentId = String(args.request?.['documentId'] ?? '');
-        if (!documents.some((item) => item.documentId === documentId)) return Promise.reject(new Error('Unknown document'));
-        if (!rawByDocument.has(documentId)) return Promise.reject(new Error('edits require a raw result.'));
+        if (!documents.some((item) => item.documentId === documentId)) return commandFailed('Unknown document');
+        if (!rawByDocument.has(documentId)) return commandFailed('edits require a raw result.');
         const maps = args.request?.['edits'] as {
           ocrPages: Record<string, string>; transcriptLines: Record<string, string>; speakerNames: Record<string, string>;
         };
@@ -710,9 +1269,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         return Promise.resolve(edits);
       }
       if (command === 'library_delete') {
+        // Like the host, a linked document is deleted too; its runtime
+        // capture is the Workbench's to delete.
         const documentId = String(args.request?.['documentId'] ?? '');
         documents = documents.filter((item) => item.documentId !== documentId);
+        evidenceByDocument.delete(documentId);
         rawByDocument.delete(documentId);
+        resultByDocument.delete(documentId);
         editsByDocument.delete(documentId);
         rememberLibrary();
         return Promise.resolve(null);
@@ -720,7 +1283,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'library_source_bytes') {
         const documentId = String(args.request?.['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
-        if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+        if (!current) return commandFailed(`Unknown document: ${documentId}`);
         if (current.mediaType === 'application/pdf') {
           const binary = atob(pdfFixtureBase64);
           const bytes = new Uint8Array(binary.length);
@@ -740,44 +1303,129 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       }
       if (command === 'library_update_capture') {
         const update = args.update ?? {};
+        // Serialized fields of the host's LibraryCaptureUpdate.
+        const allowedFields = new Set([
+          'documentId', 'captureId', 'clearCaptureId', 'status', 'stage', 'raw',
+          'result', 'errorCode', 'errorMessage', 'ocrEvidence', 'captureOptions',
+        ]);
+        const unknownField = Object.keys(update).find((field) => !allowedFields.has(field));
+        if (unknownField !== undefined) return commandFailed(`unknown field \`${unknownField}\``);
         const documentId = String(update['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
-        if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+        if (!current) return commandFailed(`Unknown document: ${documentId}`);
+        const status = String(update['status'] ?? '');
+        // Like the host: statuses of earlier versions are only read.
+        if (status === 'persisting' || status === 'recovery_required') {
+          return commandFailed('Capture library updates do not store the statuses of earlier versions.');
+        }
+        if (update['clearCaptureId'] === true && typeof update['captureId'] === 'string') {
+          return commandFailed('Capture library update cannot set and clear a runtime identifier together.');
+        }
+        // Like the host: evidence states the update's status, or `completed`
+        // on an OCR checkpoint; completed evidence is write-once, failed
+        // evidence can be replaced. A refused write changes nothing.
+        const evidence = update['ocrEvidence'];
+        if (evidence !== undefined && evidence !== null) {
+          const incoming = evidence as Record<string, unknown>;
+          const evidenceStatus = incoming['status'];
+          if (evidenceStatus !== status && !(evidenceStatus === 'completed' && status === 'awaiting_confirmation')) {
+            return commandFailed('OCR evidence status must match the terminal library update.');
+          }
+          const existing = evidenceByDocument.get(documentId);
+          if (existing && JSON.stringify(existing) !== JSON.stringify(incoming) && existing['status'] !== 'failed') {
+            return commandFailed('OCR evidence is write-once and conflicts with existing evidence.');
+          }
+          evidenceByDocument.set(documentId, incoming);
+        }
+        // Raw and result are stored each on its own, and an update without
+        // one of them leaves the stored one as it is. A different raw result
+        // resets the edits made on the old one.
         if (update['raw'] !== undefined && update['raw'] !== null) {
-          if (rawByDocument.has(documentId)) editsByDocument.delete(documentId);
+          if (JSON.stringify(rawByDocument.get(documentId)) !== JSON.stringify(update['raw'])) {
+            editsByDocument.delete(documentId);
+          }
           rawByDocument.set(documentId, update['raw']);
           current.hasRaw = true;
         }
-        if (typeof update['status'] === 'string') current.status = update['status'];
-        if (typeof update['stage'] === 'string') current.stage = update['stage'];
-        if (typeof update['captureId'] === 'string') current.captureId = update['captureId'];
+        if (update['result'] !== undefined && update['result'] !== null) {
+          resultByDocument.set(documentId, update['result']);
+        }
         if (update['clearCaptureId'] === true) delete current.captureId;
+        else if (typeof update['captureId'] === 'string') current.captureId = update['captureId'];
+        // Status, stage and error fields are written as the update states
+        // them: an omitted one is cleared, and so are an earlier version's
+        // recovery fields.
+        const text = (field: string): string | undefined =>
+          typeof update[field] === 'string' ? String(update[field]) : undefined;
+        current.status = status;
+        current.stage = text('stage');
+        current.errorCode = text('errorCode');
+        current.errorMessage = text('errorMessage');
+        for (const field of ['stage', 'errorCode', 'errorMessage'] as const) {
+          if (current[field] === undefined) delete current[field];
+        }
+        delete current.recoveryCode;
+        delete current.recoveryMessage;
         current.updatedAtMs = Date.now();
         rememberLibrary();
         return Promise.resolve(listedSummary(current));
       }
+      if (installOptions.recordingJourney && command === 'runtime_start_recording_capture') {
+        const documentId = String(args.input?.documentId ?? '');
+        const current = documents.find((item) => item.documentId === documentId);
+        if (!current || !/^(audio|video)\//u.test(current.mediaType)) {
+          return commandFailed('Progressive capture is available only for recordings.');
+        }
+        return Promise.resolve(startRecording(current));
+      }
+      const runtimeCaptureId = String(args.input?.id ?? '');
+      if (
+        installOptions.recordingJourney
+        && runtimeCaptureId.startsWith(recordingCaptureIdPrefix)
+        && recordingCommands.includes(command)
+      ) {
+        if (command === 'runtime_get_capture_events') return recordingEvents(args.input);
+        if (command === 'runtime_get_partial') return recordingPartialRead(runtimeCaptureId);
+        if (command === 'runtime_delete_capture') {
+          // The runtime forgets a deleted capture, so later reads of its id
+          // are not found and nothing more is published for it; the host
+          // answers null for a delete the runtime rejects as not found.
+          recordingCaptures.delete(runtimeCaptureId);
+          return Promise.resolve(null);
+        }
+        const capture = readRecording(runtimeCaptureId);
+        // A capture this fake never started is not found, as at the runtime.
+        if (!capture) return captureNotFound();
+        if (command === 'runtime_get_result') return recordingResult(capture);
+        return Promise.resolve(recordingOperation(capture));
+      }
       if (installOptions.ocrJourney && command === 'runtime_create_capture') {
-        ocrPolls = 0;
         const input = (args.input ?? {}) as { readonly pdfPageNumbers?: readonly number[] };
-        activeOcrPages = Array.isArray(input.pdfPageNumbers) ? [...input.pdfPageNumbers] : null;
-        target.__captureCreatedPdfPageNumbers.push(activeOcrPages);
-        return Promise.resolve(ocrJob('extracting'));
+        const pages = Array.isArray(input.pdfPageNumbers) ? [...input.pdfPageNumbers] : null;
+        target.__captureCreatedPdfPageNumbers.push(pages);
+        const ocrCaptureId = `${ocrCaptureIdPrefix}${crypto.randomUUID()}`;
+        ocrCaptures.set(ocrCaptureId, { polls: 0, pages });
+        return Promise.resolve(ocrJob(ocrCaptureId, 'extracting'));
       }
-      if (installOptions.ocrJourney && command === 'runtime_get_capture') {
-        ocrPolls += 1;
-        if (ocrPolls <= 4) return Promise.resolve(ocrJob('extracting'));
-        return Promise.resolve(ocrJob('awaiting_structuring'));
+      if (
+        installOptions.ocrJourney
+        && runtimeCaptureId.startsWith(ocrCaptureIdPrefix)
+        && ['runtime_get_capture', 'runtime_get_raw', 'runtime_get_ocr'].includes(command)
+      ) {
+        const capture = ocrCaptures.get(runtimeCaptureId);
+        if (!capture) return captureNotFound();
+        if (command === 'runtime_get_raw') return Promise.resolve(ocrRaw(capture));
+        if (command === 'runtime_get_ocr') return Promise.resolve(ocrProjection(runtimeCaptureId, capture));
+        capture.polls += 1;
+        return Promise.resolve(ocrJob(runtimeCaptureId, capture.polls <= 4 ? 'extracting' : 'awaiting_structuring'));
       }
-      if (installOptions.ocrJourney && command === 'runtime_get_raw') {
-        return Promise.resolve(ocrRaw());
-      }
-      if (installOptions.ocrJourney && command === 'runtime_get_ocr') {
-        return Promise.resolve(ocrProjection());
-      }
-      if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
+      if (command === 'runtime_delete_capture') {
+        // The runtime stops and forgets the capture; the host answers null
+        // also for one the runtime does not know.
+        ocrCaptures.delete(runtimeCaptureId);
         return Promise.resolve(null);
       }
-      return Promise.reject(new Error(`Unexpected command: ${command}`));
+      return commandFailed(`Unexpected command: ${command}`);
     },
   };
 }
@@ -792,7 +1440,7 @@ export function fakeRequirement(
     requirementId,
     displayName,
     status,
-    kind: 'runtime',
+    kind: requirementId,
     requiredFor: ['capture'],
     installStrategy: 'runtime-catalog',
     detail: '需要使用者同意後才能安裝。',

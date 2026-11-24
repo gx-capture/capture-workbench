@@ -25,6 +25,7 @@ import capture_runtime.contracts as contracts
 from capture_runtime import _contract_set_bundle as _bundle_support
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.problem_registry import (
+    DEFAULT_FAILURE_CODE_REGISTRY,
     DEFAULT_PROBLEM_REGISTRY,
     ProblemDefinition,
     ProblemRegistry,
@@ -35,7 +36,6 @@ from capture_runtime.release import (
 )
 
 CONTRACT_SET_VERSION = "2"
-CATALOG_VERSION = CONTRACT_SET_VERSION
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 CONTRACT_MEDIA_TYPE = "application/json"
 DISCOVERY_PATH = "/meta/v2/contracts"
@@ -129,12 +129,10 @@ def _json_source(source: object) -> dict[str, Any]:
 def load_contract_index(source: object) -> dict[str, Any]:
     """Load and validate the shape of a discovery index."""
     index = _json_source(source)
-    required = {"catalogVersion", "runtimeVersion", "contractSetVersion", "surfaces", "sha256"}
+    required = {"runtimeVersion", "contractSetVersion", "surfaces", "sha256"}
     missing = required.difference(index)
     if missing:
         raise ContractSetError(f"contract index is missing fields: {', '.join(sorted(missing))}")
-    if index.get("catalogVersion") != CATALOG_VERSION:
-        raise ContractSetError("unsupported catalogVersion")
     if index.get("contractSetVersion") != CONTRACT_SET_VERSION:
         raise ContractSetError("unsupported contractSetVersion")
     digest = index.get("sha256")
@@ -153,6 +151,7 @@ def load_contract_bundle(source: object) -> dict[str, Any]:
         "schemas",
         "operations",
         "problems",
+        "failureCodes",
         "invariants",
     }
     missing = required.difference(bundle)
@@ -162,7 +161,7 @@ def load_contract_bundle(source: object) -> dict[str, Any]:
         raise ContractSetError("unsupported contractSetVersion")
     if bundle.get("schemaDialect") != SCHEMA_DIALECT:
         raise ContractSetError("unsupported JSON Schema dialect")
-    for field in ("surfaces", "schemas", "operations", "problems", "invariants"):
+    for field in ("surfaces", "schemas", "operations", "problems", "failureCodes", "invariants"):
         if not isinstance(bundle[field], list):
             raise ContractSetError(f"contract bundle {field} must be an array")
     _validate_bundle_entries(bundle)
@@ -236,7 +235,6 @@ class ContractSet:
         digest = sha256_hex(bundle_bytes)
         surfaces = loaded_bundle["surfaces"]
         index = {
-            "catalogVersion": CATALOG_VERSION,
             "runtimeVersion": runtime_version,
             "contractSetVersion": loaded_bundle["contractSetVersion"],
             "surfaces": surfaces,
@@ -371,20 +369,12 @@ def _operation_definitions() -> list[dict[str, Any]]:
             problems=_COMMON_PROBLEMS,
         ),
         _operation(
-            "v2.streaming.health.ready",
-            "v2",
-            "GET",
-            f"{v2}/streaming/health/ready",
-            response_schema="RuntimeStreamingCapabilitiesV2",
-            problems=_COMMON_PROBLEMS,
-        ),
-        _operation(
             "v2.ingestions.open",
             "v2",
             "POST",
             f"{v2}/ingestions",
-            request_schema="OpenIngestionV2",
-            response_schema="IngestionV2",
+            request_schema="OpenIngestion",
+            response_schema="Ingestion",
             problems=_COMMON_PROBLEMS + ("idempotency_conflict",),
             body_kind="json",
             required_headers=("X-Idempotency-Key",),
@@ -396,7 +386,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/ingestions/{{ingestion_id}}",
-            response_schema="IngestionV2",
+            response_schema="Ingestion",
             problems=_COMMON_PROBLEMS + ("ingestion_not_found",),
         ),
         _operation(
@@ -404,7 +394,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "PUT",
             f"{v2}/ingestions/{{ingestion_id}}/chunks/{{chunk_index}}",
-            response_schema="IngestionV2",
+            response_schema="Ingestion",
             problems=_COMMON_PROBLEMS
             + (
                 "ingestion_not_found",
@@ -426,8 +416,8 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "POST",
             f"{v2}/ingestions/{{ingestion_id}}/finalize",
-            request_schema="FinalizeIngestionV2",
-            response_schema="IngestionV2",
+            request_schema="FinalizeIngestion",
+            response_schema="Ingestion",
             problems=_COMMON_PROBLEMS + ("ingestion_not_found", "ingestion_finalize_rejected"),
             body_kind="json",
         ),
@@ -444,8 +434,8 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "POST",
             f"{v2}/captures",
-            request_schema="StartCaptureV2",
-            response_schema="CaptureOperationV2",
+            request_schema="StartCapture",
+            response_schema="CaptureOperation",
             problems=_COMMON_PROBLEMS + ("ingestion_not_found", "idempotency_conflict"),
             body_kind="json",
             required_headers=("X-Idempotency-Key",),
@@ -457,7 +447,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}",
-            response_schema="CaptureOperationV2",
+            response_schema="CaptureOperation",
             problems=_COMMON_PROBLEMS + ("capture_not_found",),
         ),
         _operation(
@@ -474,7 +464,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}/partial",
-            response_schema="PartialCaptureV2",
+            response_schema="PartialCapture",
             problems=_COMMON_PROBLEMS + ("capture_not_found", "partial_unavailable"),
         ),
         _operation(
@@ -490,7 +480,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}/ocr",
-            response_schema="CaptureOcrProjectionV3",
+            response_schema="CaptureOcrProjection",
             problems=_COMMON_PROBLEMS + ("capture_not_found", "ocr_unavailable"),
         ),
         _operation(
@@ -498,7 +488,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "POST",
             f"{v2}/captures/{{capture_id}}/cancel",
-            response_schema="CaptureOperationV2",
+            response_schema="CaptureOperation",
             problems=_COMMON_PROBLEMS + ("capture_not_found",),
         ),
         _operation(
@@ -506,17 +496,23 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "POST",
             f"{v2}/captures/{{capture_id}}/structure",
-            response_schema="CaptureStreamingResult",
+            response_schema="CaptureDocument",
             problems=_COMMON_PROBLEMS
-            + ("capture_not_found", "raw_unavailable", "invalid_capture_state"),
+            + (
+                "capture_not_found",
+                "raw_unavailable",
+                "invalid_capture_state",
+                "requirement_unavailable",
+                "structuring_invalid_output",
+            ),
         ),
         _operation(
             "v2.captures.structure.session.open",
             "v2",
             "POST",
             f"{v2}/captures/{{capture_id}}/structure/session",
-            request_schema="OpenStructuringSessionV2",
-            response_schema="StructuringSessionV2",
+            request_schema="OpenStructuringSession",
+            response_schema="StructuringSession",
             problems=_COMMON_PROBLEMS
             + (
                 "capture_not_found",
@@ -535,7 +531,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}/structure/session",
-            response_schema="StructuringSessionV2",
+            response_schema="StructuringSession",
             problems=_COMMON_PROBLEMS + ("structuring_session_not_found",),
         ),
         _operation(
@@ -543,7 +539,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}/structure/session/batches/{{batch_index}}",
-            response_schema="StructuringBatchV2",
+            response_schema="StructuringBatch",
             problems=_COMMON_PROBLEMS
             + ("structuring_session_not_found", "structuring_batch_not_found"),
         ),
@@ -552,8 +548,8 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "PUT",
             f"{v2}/captures/{{capture_id}}/structure/session/batches/{{batch_index}}",
-            request_schema="SubmitStructuringBatchV2",
-            response_schema="StructuringSessionV2",
+            request_schema="SubmitStructuringBatch",
+            response_schema="StructuringSession",
             problems=_COMMON_PROBLEMS
             + (
                 "structuring_session_not_found",
@@ -575,7 +571,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "POST",
             f"{v2}/captures/{{capture_id}}/structure/commit",
             request_schema="CaptureDocument",
-            response_schema="CaptureOperationV2",
+            response_schema="CaptureOperation",
             problems=_COMMON_PROBLEMS
             + (
                 "capture_not_found",
@@ -593,8 +589,8 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "POST",
             f"{v2}/captures/{{capture_id}}/structure/failure",
-            request_schema="ReportStructuringFailureV2",
-            response_schema="CaptureOperationV2",
+            request_schema="ReportStructuringFailure",
+            response_schema="CaptureOperation",
             problems=_COMMON_PROBLEMS
             + ("capture_not_found", "idempotency_conflict", "invalid_capture_state"),
             body_kind="json",
@@ -606,7 +602,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}/result",
-            response_schema="CaptureDocument",
+            response_schema="CaptureResult",
             problems=_COMMON_PROBLEMS + ("capture_not_found", "result_unavailable"),
         ),
         _operation(
@@ -627,15 +623,15 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "v2",
                 "GET",
                 f"{v2}/runtime/requirements",
-                response_schema="RuntimeRequirementsV2",
+                response_schema="RuntimeRequirements",
                 problems=_COMMON_PROBLEMS,
             ),
             _operation(
-                "v2.runtime.model-options",
+                "v2.runtime.structuring-model-options",
                 "v2",
                 "GET",
-                f"{v2}/runtime/model-options",
-                response_schema="RuntimeModelOptionsV2",
+                f"{v2}/runtime/structuring-model-options",
+                response_schema="StructuringModelOptions",
                 problems=_COMMON_PROBLEMS + ("requirement_disabled",),
             ),
             _operation(
@@ -643,8 +639,8 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "v2",
                 "POST",
                 f"{v2}/runtime/installations",
-                request_schema="StartRuntimeInstallationV2",
-                response_schema="RuntimeInstallationV2",
+                request_schema="StartRuntimeInstallation",
+                response_schema="RuntimeInstallation",
                 problems=_COMMON_PROBLEMS + ("requirement_disabled", "idempotency_conflict"),
                 body_kind="json",
                 required_headers=("X-Idempotency-Key",),
@@ -656,7 +652,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "v2",
                 "GET",
                 f"{v2}/runtime/installations",
-                response_schema="RuntimeInstallationsV2",
+                response_schema="RuntimeInstallations",
                 problems=_COMMON_PROBLEMS,
             ),
             _operation(
@@ -664,7 +660,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "v2",
                 "GET",
                 f"{v2}/runtime/installations/{{installation_id}}",
-                response_schema="RuntimeInstallationV2",
+                response_schema="RuntimeInstallation",
                 problems=_COMMON_PROBLEMS + ("installation_not_found",),
             ),
             _operation(
@@ -672,7 +668,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "v2",
                 "POST",
                 f"{v2}/runtime/installations/{{installation_id}}/cancel",
-                response_schema="RuntimeInstallationV2",
+                response_schema="RuntimeInstallation",
                 problems=_COMMON_PROBLEMS + ("installation_not_found",),
             ),
             _operation(
@@ -680,22 +676,23 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "v2",
                 "DELETE",
                 f"{v2}/runtime/requirements/{{requirement_id}}/installation",
-                response_schema="RuntimeRequirementV2",
+                response_schema="RuntimeRequirement",
                 problems=_COMMON_PROBLEMS
                 + (
                     "requirement_not_found",
                     "requirement_disabled",
                     "requirement_not_uninstallable",
                     "requirement_in_use",
+                    "uninstall_failed",
                 ),
             ),
             _operation(
-                "v2.runtime.model-installations.create",
+                "v2.runtime.structuring-model-installations.create",
                 "v2",
                 "POST",
-                f"{v2}/runtime/model-installations",
-                request_schema="StartRuntimeModelInstallationV2",
-                response_schema="RuntimeModelInstallationV2",
+                f"{v2}/runtime/structuring-model-installations",
+                request_schema="StartStructuringModelInstallation",
+                response_schema="StructuringModelInstallation",
                 problems=_COMMON_PROBLEMS
                 + ("requirement_disabled", "model_option_unknown", "idempotency_conflict"),
                 body_kind="json",
@@ -704,19 +701,19 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 response_statuses=(202,),
             ),
             _operation(
-                "v2.runtime.model-installations.get",
+                "v2.runtime.structuring-model-installations.get",
                 "v2",
                 "GET",
-                f"{v2}/runtime/model-installations/{{installation_id}}",
-                response_schema="RuntimeModelInstallationV2",
+                f"{v2}/runtime/structuring-model-installations/{{installation_id}}",
+                response_schema="StructuringModelInstallation",
                 problems=_COMMON_PROBLEMS + ("installation_not_found",),
             ),
             _operation(
-                "v2.runtime.model-installations.cancel",
+                "v2.runtime.structuring-model-installations.cancel",
                 "v2",
                 "POST",
-                f"{v2}/runtime/model-installations/{{installation_id}}/cancel",
-                response_schema="RuntimeModelInstallationV2",
+                f"{v2}/runtime/structuring-model-installations/{{installation_id}}/cancel",
+                response_schema="StructuringModelInstallation",
                 problems=_COMMON_PROBLEMS + ("installation_not_found",),
             ),
         ]
@@ -725,9 +722,15 @@ def _operation_definitions() -> list[dict[str, Any]]:
 
 
 def _problem_definitions() -> list[dict[str, Any]]:
-    """Serialize the single centralized v2 problem catalog."""
+    """Serialize the HTTP problem catalog."""
 
     return DEFAULT_PROBLEM_REGISTRY.as_dicts()
+
+
+def _failure_code_definitions() -> list[dict[str, Any]]:
+    """Serialize the job failure code catalog."""
+
+    return DEFAULT_FAILURE_CODE_REGISTRY.as_dicts()
 
 
 def default_contract_bundle() -> dict[str, Any]:
@@ -749,6 +752,7 @@ def default_contract_bundle() -> dict[str, Any]:
         "schemas": schemas,
         "operations": _operation_definitions(),
         "problems": _problem_definitions(),
+        "failureCodes": _failure_code_definitions(),
         "invariants": invariants,
     }
 
@@ -798,7 +802,6 @@ load_bundle = load_contract_bundle
 
 
 __all__ = [
-    "CATALOG_VERSION",
     "CONTRACT_MEDIA_TYPE",
     "CONTRACT_SET_VERSION",
     "CONTRACT_ASSET_DIR",

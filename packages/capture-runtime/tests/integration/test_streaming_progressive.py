@@ -20,17 +20,18 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
     CaptureEngine,
+    CaptureEventType,
     CaptureSource,
     CaptureSourceKind,
-    OpenIngestionV2,
-    PartialCaptureV2,
+    OpenIngestion,
+    PartialCapture,
     RawCapture,
     RawCaptureSegment,
-    StartCaptureV2,
-    StreamingEventType,
+    StartCapture,
     StructuringMode,
     TimeLocator,
 )
+from capture_runtime.diagnostic_log import configure_diagnostic_log
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
@@ -69,13 +70,13 @@ def test_progressive_worker_launch_strips_windows_extended_path_prefix(
 def test_streaming_progress_follows_the_covered_time() -> None:
     # 0.7.1 left a streaming capture's progress unchanged until it ended.
     checkpoint = ProgressiveSessionEvent(
-        StreamingEventType.CHECKPOINT, "checkpoint", covered_until_ms=60_000
+        CaptureEventType.CHECKPOINT, "checkpoint", covered_until_ms=60_000
     )
 
     assert _with_progress(checkpoint, 120_000).progress == 0.475
     assert _with_progress(checkpoint, 30_000).progress == 0.9
     assert _with_progress(checkpoint, None).progress is None
-    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "transcribing")
+    heartbeat = ProgressiveSessionEvent(CaptureEventType.HEARTBEAT, "transcribing")
     assert _with_progress(heartbeat, 120_000).progress is None
 
 
@@ -142,7 +143,6 @@ def _warm_processor(
 
     monkeypatch.setattr(_SessionWorker, "start", start)
     config = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -222,7 +222,6 @@ def test_a_session_worker_is_told_the_chosen_speech_model(
     )
     engine = replace(_engine(tmp_path), executable=script, model_dir=tmp_path)
     config = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -234,11 +233,126 @@ def test_a_session_worker_is_told_the_chosen_speech_model(
 
     async def scenario() -> object:
         worker = await _SessionWorker.start(engine=engine, config=config)
-        output = await worker.stdout.read()
-        await worker.process.wait()
+        try:
+            output = await worker.stdout.read()
+        finally:
+            await worker.close()
         return json.loads(output)
 
     assert asyncio.run(scenario()) == sent
+
+
+def _session_worker_writing_audio(
+    tmp_path: Path,
+) -> tuple[InstalledEngine, ExtractionRuntimeConfig]:
+    script = tmp_path / "session_worker.py"
+    script.write_text(
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "directory = Path(os.environ['CAPTURE_SESSION_TEMP_DIR'])\n"
+        "(directory / 'window.wav').write_bytes(b'audio')\n"
+        "sys.stdout.buffer.write((str(directory) + '\\n').encode('utf-8'))\n"
+        "sys.stdout.buffer.flush()\n"
+        "sys.stdin.buffer.read()\n",
+        encoding="utf-8",
+    )
+    engine = replace(_engine(tmp_path), executable=script, model_dir=tmp_path)
+    config = ExtractionRuntimeConfig(
+        temp_dir=tmp_path / "temp",
+        max_pdf_pages=10,
+        max_image_pixels=100_000,
+        ocr_render_scale=2,
+        max_audio_duration_ms=60_000,
+        speech_prefer_gpu=True,
+    )
+    return engine, config
+
+
+def test_session_worker_close_removes_only_its_audio_directory(tmp_path: Path) -> None:
+    engine, config = _session_worker_writing_audio(tmp_path)
+    config.temp_dir.mkdir()
+    other_audio = config.temp_dir / "other.wav"
+    other_audio.write_bytes(b"other")
+
+    async def scenario() -> None:
+        worker = await _SessionWorker.start(engine=engine, config=config)
+        try:
+            directory = Path((await asyncio.wait_for(worker.stdout.readline(), 5)).decode().strip())
+            assert directory.parent == config.temp_dir
+            assert directory.name.startswith("capture-speech-session-")
+            assert (directory / "window.wav").read_bytes() == b"audio"
+        finally:
+            await worker.close()
+        assert not directory.exists()
+        assert config.temp_dir.is_dir()
+        assert other_audio.read_bytes() == b"other"
+        await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_successive_session_workers_use_different_directories(tmp_path: Path) -> None:
+    engine, config = _session_worker_writing_audio(tmp_path)
+    config.temp_dir.mkdir()
+
+    async def run_worker() -> Path:
+        worker = await _SessionWorker.start(engine=engine, config=config)
+        try:
+            line = await asyncio.wait_for(worker.stdout.readline(), 5)
+            assert line
+            return Path(line.decode().strip())
+        finally:
+            await worker.close()
+
+    async def scenario() -> None:
+        assert await run_worker() != await run_worker()
+
+    asyncio.run(scenario())
+
+
+def test_session_worker_close_preserves_audio_if_process_does_not_exit(tmp_path: Path) -> None:
+    class Process:
+        stdin = stdout = object()
+        returncode = None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> int:
+            raise TimeoutError
+
+    directory = tmp_path / "session"
+    directory.mkdir()
+    audio = directory / "window.wav"
+    audio.write_bytes(b"audio")
+
+    async def scenario() -> None:
+        process = Process()
+        worker = _SessionWorker(
+            process, asyncio.create_task(asyncio.sleep(0, result=())), temp_dir=directory
+        )
+        await worker.close()
+        assert process.terminated and process.killed
+        assert audio.read_bytes() == b"audio"
+
+    asyncio.run(scenario())
+
+
+def test_session_worker_start_failure_removes_its_directory(tmp_path: Path, monkeypatch) -> None:
+    engine, config = _session_worker_writing_audio(tmp_path)
+
+    async def fail(*args, env, **kwargs):
+        directory = Path(env["CAPTURE_SESSION_TEMP_DIR"])
+        assert directory.is_dir()
+        raise OSError("process creation failed")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail)
+    with pytest.raises(OSError, match="process creation failed"):
+        asyncio.run(_SessionWorker.start(engine=engine, config=config))
+    assert list(config.temp_dir.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -261,7 +375,6 @@ def test_a_session_worker_is_told_the_installed_content_and_not_the_variant(
         _engine(tmp_path, content_id=content_id), executable=script, model_dir=tmp_path
     )
     config = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -274,8 +387,10 @@ def test_a_session_worker_is_told_the_installed_content_and_not_the_variant(
 
     async def scenario() -> object:
         worker = await _SessionWorker.start(engine=engine, config=config)
-        output = await worker.stdout.read()
-        await worker.process.wait()
+        try:
+            output = await worker.stdout.read()
+        finally:
+            await worker.close()
         return json.loads(output)
 
     assert asyncio.run(scenario()) == {"model": None, "content": sent}
@@ -341,7 +456,7 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
     )
     state.apply(
         ProgressiveSessionEvent(
-            StreamingEventType.SEGMENT,
+            CaptureEventType.SEGMENT,
             "extracting",
             partial_revision=1,
             covered_until_ms=120_000,
@@ -358,7 +473,7 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
     )
     state.apply(
         ProgressiveSessionEvent(
-            StreamingEventType.SEGMENT,
+            CaptureEventType.SEGMENT,
             "extracting",
             partial_revision=2,
             covered_until_ms=210_000,
@@ -405,7 +520,7 @@ class FakeProgressiveProcessor:
             locator=TimeLocator(start_ms=0, end_ms=1_000),
             text="hello streaming",
         )
-        partial = PartialCaptureV2(
+        partial = PartialCapture(
             capture_id=capture_id,
             source=source,
             revision=1,
@@ -418,7 +533,7 @@ class FakeProgressiveProcessor:
         await sink(
             (
                 ProgressiveSessionEvent(
-                    StreamingEventType.SEGMENT,
+                    CaptureEventType.SEGMENT,
                     "extracting",
                     partial_revision=1,
                     covered_until_ms=1_000,
@@ -448,7 +563,7 @@ class SessionEndingProcessor(FakeProgressiveProcessor):
             cancellation=cancellation,
             sink=sink,
         )
-        await sink((ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed"),), None)
+        await sink((ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed"),), None)
         return raw
 
 
@@ -466,17 +581,17 @@ class FailingDecoderProcessor:
 
 def _open(
     repository: StreamingRepository,
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO,
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING,
     *,
     source: bytes = b"audio-fixture",
 ) -> tuple[str, str]:
     digest = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id="progressive-ingestion",
             kind=kind,
-            file_name="sample.mp3" if kind is CaptureSourceKind.AUDIO else "sample.png",
-            media_type="audio/mpeg" if kind is CaptureSourceKind.AUDIO else "image/png",
+            file_name="sample.mp3" if kind is CaptureSourceKind.RECORDING else "sample.png",
+            media_type="audio/mpeg" if kind is CaptureSourceKind.RECORDING else "image/png",
             total_bytes=len(source),
             source_sha256=digest,
         )
@@ -515,7 +630,7 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-capture",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -534,11 +649,396 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
             event.event_type
             for event in repository.read_events(operation.capture_id, after_sequence=-1)
         ]
-        assert StreamingEventType.SEGMENT in event_types
-        assert StreamingEventType.COMPLETED in event_types
+        assert CaptureEventType.SEGMENT in event_types
+        assert CaptureEventType.COMPLETED in event_types
         await service.shutdown()
 
-    asyncio.run(scenario())
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" capture-ended ") == 1
+    assert "capture-ended kind=recording outcome=completed code=none stage=none elapsedMs=0" in log
+
+
+@pytest.mark.parametrize("exit_code", [7, 0xC0000005])
+def test_progressive_worker_exit_records_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int
+) -> None:
+    class Decoder:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode = None
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] == SessionFrameType.FINISH.value.encode():
+                self.stderr.feed_data(
+                    b"capture-worker-stage:speech-model-load-cpu-failed-unknown\n"
+                    b"capture-worker-stage:speech-output-empty\n"
+                    b"Bearer fixture-secret-token\n"
+                )
+                self.stderr.feed_eof()
+                self.stdout.feed_eof()
+
+        async def drain(self) -> None:
+            pass
+
+        async def wait(self) -> int:
+            self.returncode = exit_code
+            return exit_code
+
+    async def spawn(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        operation = service.start_capture_use_case.execute(
+            StartCapture(
+                client_request_id="progressive-worker-exit",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+            )
+        )
+        try:
+            await service._tasks[operation.capture_id]
+            failed = service.get_capture(operation.capture_id)
+            assert failed.error is not None
+            assert failed.error.code == "progressive_worker_finish_failed"
+            assert failed.error.message == (
+                "Progressive speech recognition worker failed while finishing the session."
+            )
+            assert failed.error.retryable
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" worker-failure ") == 1
+    assert (
+        "worker-failure requirement=speech-recognition code=progressive_worker_finish_failed "
+        f"class=exit-before-response exit={exit_code} cause=IncompleteReadError "
+        "stages=speech-model-load-cpu-failed-unknown>speech-output-empty elapsedMs=0"
+    ) in log
+    assert "fixture-secret-token" not in log
+
+
+def _session_frame(frame_type: SessionFrameType, payload: bytes = b"") -> bytes:
+    return struct.pack(">BI", ord(frame_type.value), len(payload)) + payload
+
+
+def _sealed_segment_frame() -> bytes:
+    segment = RawCaptureSegment(
+        segment_id="segment-1",
+        order=0,
+        locator=TimeLocator(start_ms=0, end_ms=1_000),
+        text="hello",
+    )
+    engine = CaptureEngine(
+        engine="speech-recognition",
+        model="tea-asr-1.1-mini",
+        digest=f"sha256:{'b' * 64}",
+        device="cpu",
+    )
+    payload = json.dumps(
+        {
+            "partialRevision": 1,
+            "coveredUntilMs": 1_000,
+            "segments": [segment.model_dump(mode="json", by_alias=True)],
+            "extractionEngine": engine.model_dump(mode="json", by_alias=True),
+        }
+    ).encode()
+    return _session_frame(SessionFrameType.SEALED_SEGMENT, payload)
+
+
+def test_cancelling_during_failure_diagnostics_propagates_and_records_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Cancelling the capture while diagnostics waits on stderr must propagate.
+    # That bounded wait used to swallow it and record a worker failure.
+    class Decoder:
+        duration_ms = 1_000
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id: str):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode: int | None = None
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] == SessionFrameType.FINISH.value.encode():
+                self.stdout.feed_eof()
+
+        async def drain(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+        def kill(self) -> None:
+            self.returncode = 1
+
+        async def wait(self) -> int:
+            if self.returncode is None:
+                self.returncode = 1
+            return self.returncode
+
+    async def spawn(*_args: object, **_kwargs: object) -> Process:
+        return Process()
+
+    real_wait_for = asyncio.wait_for
+    armed = True
+
+    async def wait_for(fut: object, timeout: float | None = None) -> object:
+        nonlocal armed
+        if armed and timeout == 0.2:
+            # The stderr drain is the first bounded wait on this path.
+            armed = False
+            running = asyncio.current_task()
+            assert running is not None
+            running.cancel()
+        return await real_wait_for(fut, timeout)
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        try:
+            operation = service.start_capture_use_case.execute(
+                StartCapture(
+                    client_request_id="cancel-during-diagnostics",
+                    ingestion_id=ingestion_id,
+                    structuring_mode=StructuringMode.HOST,
+                )
+            )
+            await service._tasks[operation.capture_id]
+            failed = service.get_capture(operation.capture_id)
+            assert failed.error is not None
+            assert failed.error.code == "capture_interrupted"
+            assert armed is False
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert " worker-failure " not in log
+
+
+def test_a_warm_workers_second_failure_reports_only_its_own_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Decoder:
+        duration_ms = 1_000
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id: str):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode: int | None = None
+            self.finishes = 0
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] != SessionFrameType.FINISH.value.encode():
+                return
+            self.finishes += 1
+            if self.finishes == 1:
+                self.stderr.feed_data(b"capture-worker-stage:speech-model-load-cpu-start\n")
+                self.stdout.feed_data(_sealed_segment_frame())
+                self.stdout.feed_data(_session_frame(SessionFrameType.COMPLETED))
+                return
+            self.stderr.feed_data(b"capture-worker-stage:speech-output-empty\n")
+            self.stderr.feed_eof()
+            self.stdout.feed_eof()
+
+        async def drain(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+        def kill(self) -> None:
+            self.returncode = 1
+
+        async def wait(self) -> int:
+            if self.returncode is None:
+                self.returncode = 1
+            return self.returncode
+
+    spawned: list[Process] = []
+
+    async def spawn(*_args: object, **_kwargs: object) -> Process:
+        spawned.append(Process())
+        return spawned[-1]
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        try:
+            first = service.start_capture_use_case.execute(
+                StartCapture(
+                    client_request_id="warm-worker-first",
+                    ingestion_id=ingestion_id,
+                    structuring_mode=StructuringMode.HOST,
+                )
+            )
+            await service._tasks[first.capture_id]
+            assert processor._warm is not None
+            tail = processor._warm.worker._stderr_tail
+            assert tail is not None
+            for _ in range(50):
+                if b"speech-model-load-cpu-start" in tail:
+                    break
+                await asyncio.sleep(0)
+            assert b"speech-model-load-cpu-start" in tail
+
+            second = service.start_capture_use_case.execute(
+                StartCapture(
+                    client_request_id="warm-worker-second",
+                    ingestion_id=ingestion_id,
+                    structuring_mode=StructuringMode.HOST,
+                )
+            )
+            await service._tasks[second.capture_id]
+            failed = service.get_capture(second.capture_id)
+            assert failed.error is not None
+            assert failed.status.value == "failed"
+            assert len(spawned) == 1
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" worker-failure ") == 1
+    assert "stages=speech-output-empty " in log
+    assert "speech-model-load-cpu-start" not in log
 
 
 def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> None:
@@ -568,7 +1068,7 @@ def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> No
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="audio-after-ocr",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -608,7 +1108,7 @@ def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-host-capture",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,
@@ -620,9 +1120,9 @@ def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end
             await asyncio.sleep(0.01)
         assert service.get_capture(operation.capture_id).status.value == "awaiting_structuring"
         events = repository.read_events(operation.capture_id, after_sequence=-1)
-        assert StreamingEventType.COMPLETED not in [event.event_type for event in events]
+        assert CaptureEventType.COMPLETED not in [event.event_type for event in events]
         assert (events[-1].event_type, events[-1].stage) == (
-            StreamingEventType.CHECKPOINT,
+            CaptureEventType.CHECKPOINT,
             "awaiting_structuring",
         )
         await service.shutdown()
@@ -651,7 +1151,7 @@ def test_progressive_runtime_preserves_structuring_phase_failure_after_raw_mater
             structurer=FailingStructurer(),  # type: ignore[arg-type]
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-structuring-failure",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -693,7 +1193,7 @@ def test_progressive_runtime_exposes_bounded_decoder_failure(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-decoder-failure",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -735,7 +1235,7 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="missing-audio-processor",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -748,7 +1248,8 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
         failed = service.get_capture(operation.capture_id)
         assert failed.status.value == "failed"
         assert failed.error is not None
-        assert failed.error.code == "requirement_unavailable"
+        assert failed.error.code == "extraction_runtime_unavailable"
+        assert failed.error.retryable is False
         assert failed.error.stage == "extraction"
         await service.shutdown()
 
@@ -797,7 +1298,7 @@ def test_an_audio_capture_hands_its_spoken_language_to_recognition(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="spoken-language",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -831,7 +1332,7 @@ def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> No
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="spoken-language-image",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -850,7 +1351,7 @@ def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> No
 def test_start_capture_accepts_only_listed_spoken_languages() -> None:
     for language in ("jp", "JA", "japanese", ""):
         with pytest.raises(ValueError):
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="spoken-language-invalid",
                 ingestion_id="ingestion",
                 structuring_mode=StructuringMode.RUNTIME,
@@ -980,7 +1481,7 @@ def test_a_capture_started_while_an_engine_is_uninstalled_waits_for_it(tmp_path:
         )
         assert service.hold_new_captures()
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="capture-during-uninstall",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -1023,7 +1524,7 @@ class _ScriptedSessionWorker:
             text=f"words until {window.end_ms}",
         )
         event = ProgressiveSessionEvent(
-            StreamingEventType.SEGMENT,
+            CaptureEventType.SEGMENT,
             "extracting",
             partial_revision=window.end_ms // 1_000,
             covered_until_ms=window.end_ms,
@@ -1034,7 +1535,7 @@ class _ScriptedSessionWorker:
         return [event]
 
     async def finish(self, cancellation, on_event):
-        events = [ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")]
+        events = [ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")]
         await on_event(events[0])
         return events
 
@@ -1091,7 +1592,7 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
             processor=processor,
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="duration-capture",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,
@@ -1194,7 +1695,7 @@ def test_finalized_ingestion_decodes_without_spool_and_maps_duration_overflow(
             processor=processor,
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="finalized-recording",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,

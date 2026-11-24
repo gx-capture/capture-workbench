@@ -31,7 +31,7 @@ class WorkerClient(OcrWorkerMethods, SpeechWorkerMethods, SpeakerWorkerMethods, 
         on_permille: Callable[[int], None] | None = None,
         vertical_reader_dir: Path | None = None,
     ) -> WorkerRunResult:
-        if engine.requirement_id == "windowsml-ocr":
+        if engine.requirement_id == "text-recognition":
             return await self.run_ocr(
                 engine,
                 source_path=source_path,

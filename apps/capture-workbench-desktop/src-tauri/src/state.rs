@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use capture_sidecar_launcher::OwnedRuntimeSession;
+use capture_sidecar_launcher::OwnedSidecarSession;
 
 use crate::{
     config::{BackendConfig, DesktopRuntimeStatus},
@@ -33,7 +33,7 @@ enum RuntimePhase {
 struct OwnedRuntime {
     identity: RuntimeIdentity,
     phase: RuntimePhase,
-    session: OwnedRuntimeSession,
+    session: OwnedSidecarSession,
 }
 
 struct DesktopRuntimeState {
@@ -156,7 +156,7 @@ impl DesktopState {
 
     fn cleanup_session(
         _runtime: &mut DesktopRuntimeState,
-        session: &OwnedRuntimeSession,
+        session: &OwnedSidecarSession,
     ) -> Result<(), String> {
         #[cfg(test)]
         if _runtime.cleanup_failures > 0 {
@@ -209,7 +209,7 @@ impl DesktopState {
     fn register_pending(
         &self,
         generation: u64,
-        session: OwnedRuntimeSession,
+        session: OwnedSidecarSession,
     ) -> Result<(), String> {
         let identity = RuntimeIdentity {
             generation,
@@ -576,7 +576,7 @@ mod tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         LaunchedRuntime {
-            child: OwnedRuntimeSession::spawn(&mut command).expect("owned runtime"),
+            child: OwnedSidecarSession::spawn(&mut command).expect("owned runtime"),
             config: BackendConfig {
                 base_url: "http://127.0.0.1:49152".into(),
                 token: "test-token".into(),

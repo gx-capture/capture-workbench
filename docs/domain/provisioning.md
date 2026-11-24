@@ -15,6 +15,8 @@
 2. **需求 (`requirement`)**：`RuntimeRequirement` 實體描述需求識別碼、顯示名稱與就緒狀態。
 3. **引擎目錄 (`catalog`)**：`EngineCatalog` 與 `EngineRequirementDescriptor` 描述需求的檔案規格與校驗雜湊。
 
+一般安裝（`POST /v2/runtime/installations`）不接受結構化模型：它由結構化模型安裝選擇與安裝，請求寫 `structuring-model` 是驗證錯誤並指向模型安裝；查詢與結果仍用完整的需求識別碼。安裝作業的檔案錯誤分成逾時 `installation_timeout` 與其他 I/O 錯誤 `installation_io_failed`（先判斷逾時，因為逾時也是 I/O 錯誤）；0.10.x 存下、分不出是否逾時的舊檔案錯誤代碼讀成一般的 `installation_failed`，保留原本的訊息與可重試旗標，檔案不改寫。模型安裝只在另一次嘗試可能成功時標為可重試：選項不在發布目錄、目錄的 profile 位元組不符，或拉下的模型摘要或大小與目錄不符時不可重試。卸載時，另一個行程正在安裝或檔案仍被開啟回答 409 `requirement_in_use`，其他失敗回答 500 `uninstall_failed`，訊息不含路徑。422 `requirement_disabled`（訊息「Structuring model management is not available in this runtime's structuring mode.」）的條件依路由而定。一般安裝與卸載只在主機（`host`）與外部 Ollama（`external-ollama`）模式下，對 `structuring-runtime` 與 `structuring-model` 回答它；一般安裝的請求先經過驗證，寫 `structuring-model` 在任何模式都是 422 `validation_error`，所以一般安裝實際只對 `structuring-runtime` 回答 `requirement_disabled`。模型選項（`GET /v2/runtime/structuring-model-options`）與開始模型安裝（`POST /v2/runtime/structuring-model-installations`）在內建 Ollama（`ollama`）以外的每個模式（主機、外部 Ollama、假供應者 `fake`）都回答它；讀取或取消既有的模型安裝作業不看模式。假供應者模式下，一般安裝與卸載照常交給安裝器。
+
 ```mermaid
 classDiagram
   class InstallationJob {
@@ -98,6 +100,8 @@ sequenceDiagram
 `CAPTURE_SPEECH_RECOGNITION_VARIANT` 為 `auto`（未設定時的預設）、`cuda` 或 `cpu`，在程序啟動時驗證，其他值會使程序無法啟動。`auto` 在 Windows 且 `%SystemRoot%\System32\nvcuda.dll` 是檔案時偏好 `cuda`，否則偏好 `cpu`。非 Windows、沒有 `SystemRoot`，或該路徑不是檔案，都視為沒有驅動。目錄有偏好的內容就用它。`auto` 而目錄沒有該內容時，改用目錄裡現有的內容（先用偵測到的，否則就是唯一的那一個）。因此目錄只有 `cuda`、變數是 `auto`、機器沒有驅動時，需求仍可安裝，大小是 `cuda` 的大小。`cuda` 與 `cpu` 強制該內容，不看驅動。被強制的內容不在目錄裡時，需求狀態是 `unavailable`，`downloadBytes` 為 null。列出需求與安裝由同一個函式決定內容。
 
 內容在取得安裝鎖、且確認尚未安裝之後選定一次，寫入 `active.json`。沒有 `contents` 的需求仍寫 `stateVersion` `"1"`。有 `contents` 的寫 `"2"` 與 `contentId`。就緒與啟動讀這筆記錄，不再偵測驅動。卸載不讀這筆記錄：它刪掉該需求的整個目錄，並釋放每個內容的快取下載；另一個需求識別碼仍使用的摘要則保留。已就緒時再次安裝是空操作，不會下載另一個內容。要換內容須先卸載再安裝。
+
+安裝及啟用完成後，版本目錄（`versions/<產物版本>/`，只有模型的單元也一樣）會以原子寫入保存 `verified-files.json`，放在 `worker/`、`model/` 之外；它隨版本目錄一起移除，卸載後才完成的驗證不會把它寫回。驗證紀錄綁定紀錄格式版本、需求識別碼、產物版本、內容識別碼（若有）、已啟用的工作程序封存檔與模型清單摘要，以及每個檔案的相對路徑、大小、修改時間，以及 Windows 上的建立時間（奈秒）。重新啟動時，只有這些資料與目前的檔案快照完全一致才沿用驗證結果，同樣大小的改寫若還原修改時間便不會被偵測，其信任範圍與程序內的驗證快取相同。安裝時、任何檔案 stat 改變時，或紀錄缺少、無法讀取及無效時，都會執行完整 SHA-256 驗證；成功後重寫紀錄，失敗則不再信任舊紀錄。卸載、重新安裝與移除非使用中版本時，紀錄隨對應檔案移除。
 
 尚未安裝時，`GET /v2/runtime/requirements` 的 `downloadBytes` 是這台機器將下載的內容大小。已安裝時狀態是 `ready`，大小是已安裝內容的大小，即使之後驅動或覆寫改變也一樣。安裝作業的位元組計數在安裝開始時凍結為當時選定的內容。語音需求的每個內容都讓公開的 `artifact` 保持 null，主機不會在部分機器上自行開始下載 worker。
 

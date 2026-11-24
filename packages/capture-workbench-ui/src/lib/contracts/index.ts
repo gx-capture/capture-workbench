@@ -4,11 +4,12 @@ import type {
   CaptureBlock,
   CaptureEvent,
   CaptureDocument,
-  CaptureFailure,
   CaptureOperation,
-  StreamingCaptureStatus,
-  CaptureReview,
+  CaptureResult,
+  CaptureStatus,
   CaptureSourceKind,
+  InstallableRequirementId,
+  OperationFailure,
   PageLocator,
   PartialCapture,
   RawCapture,
@@ -34,20 +35,25 @@ export {
 export type {
   CaptureBlock,
   CaptureEvent,
+  CaptureEventType,
   CaptureContractExtraPolicy,
   CaptureContractInvariant,
   CaptureContractName,
   CaptureDocument,
   CaptureEngine,
-  CaptureFailure,
   CaptureOperation,
+  CaptureResult,
+  CaptureStatus,
   FinalizeIngestion,
   Ingestion,
+  IngestionMode,
+  IngestionStatus,
   OpenIngestion,
-  CaptureReviewEdit,
-  CaptureReview,
+  OperationFailure,
   CaptureLocator,
+  CaptureRequirementId,
   CaptureSourceKind,
+  InstallableRequirementId,
   OcrAdapterClass,
   OcrComputeMode,
   OcrComputeNoticeCode,
@@ -61,13 +67,14 @@ export type {
   RawCapture,
   ReportStructuringFailure,
   RuntimeArtifactDescriptor,
+  RuntimeCapabilities,
   RuntimeInstallationStatus,
   RuntimeInstallation,
   RuntimeInstallations,
-  RuntimeModelInstallation,
-  RuntimeModelOption,
-  RuntimeModelOptionStatus,
-  RuntimeModelOptions,
+  StructuringModelInstallation,
+  StructuringModelOption,
+  StructuringModelOptionStatus,
+  StructuringModelOptions,
   RuntimeRequirementStatus,
   RuntimeRequirement,
   RuntimeRequirements,
@@ -75,9 +82,18 @@ export type {
   TimeLocator,
 } from '@gx-capture/capture-runtime-client';
 
+export interface CaptureReviewEdit {
+  readonly segmentId: string;
+  readonly reviewedText: string;
+}
+
+export interface CaptureReview {
+  readonly reviewVersion: number;
+  readonly edits: readonly CaptureReviewEdit[];
+}
+
 /** Angular's API naming remains stable while the wire owner is generated. */
 export type CaptureStructuringMode = StructuringMode;
-export type CaptureRequirementId = RuntimeRequirement['requirementId'];
 export type CapturePageLocator = PageLocator;
 export type CaptureTimeLocator = TimeLocator;
 export type CaptureBlockType = CaptureBlock['type'];
@@ -109,7 +125,7 @@ export type CaptureTaskStatus =
   | 'canceled';
 
 export type CaptureTaskStage =
-  | StreamingCaptureStatus
+  | CaptureStatus
   | 'queued'
   | 'uploading'
   | 'preprocessing'
@@ -119,49 +135,29 @@ export type CaptureTaskStage =
 
 export interface StartRuntimeInstallationRequest {
   readonly clientRequestId: string;
-  readonly requirementId: CaptureRequirementId;
+  /** The structuring model is not installed here; a host installs a chosen model option. */
+  readonly requirementId: InstallableRequirementId;
   /** Must only be set after an explicit user action. */
   readonly consent: true;
 }
 
-export interface CreateCaptureRequest {
+/** Upload one file and start its capture. */
+export interface StartCaptureRequest {
   readonly clientRequestId: string;
   readonly file: File;
   readonly sourceKind: CaptureSourceKind;
   readonly structuringMode: CaptureStructuringMode;
   readonly targetLanguage?: string;
-  readonly signal?: AbortSignal;
-}
-
-/** The v2 upload-and-start operation used by the streaming runtime. */
-export interface StartStreamingCaptureRequest {
-  readonly clientRequestId: string;
-  readonly file: File;
-  readonly sourceKind: CaptureSourceKind;
-  readonly structuringMode: CaptureStructuringMode;
-  readonly targetLanguage?: string;
+  /**
+   * PDF only: the source pages to read, one-based, ascending and without
+   * duplicates (for example `[3, 7]`). Omit it to read every page.
+   */
+  readonly pdfPageNumbers?: readonly number[];
   /** Audio only: label who speaks each segment. */
   readonly identifySpeakers?: boolean;
   /** Audio only: the language spoken in the recording. */
   readonly spokenLanguage?: SpokenLanguage;
   readonly signal?: AbortSignal;
-}
-
-export interface CaptureStreamingResult {
-  readonly operation: CaptureOperation;
-  readonly raw: RawCapture;
-  readonly result: CaptureDocument;
-}
-
-export interface CommitStreamingStructuredResultRequest {
-  readonly clientRequestId: string;
-  readonly candidate: CaptureStructuringCandidate;
-}
-
-export interface ReportStreamingStructuringFailureRequest {
-  readonly clientRequestId?: string;
-  readonly code: string;
-  readonly message: string;
 }
 
 export interface CaptureEventStreamOptions {
@@ -179,6 +175,8 @@ export interface CommitStructuredResultRequest {
 }
 
 export interface ReportStructuringFailureRequest {
+  /** The idempotency key of the report; the HTTP client generates one when it is absent. */
+  readonly clientRequestId?: string;
   readonly code: string;
   readonly message: string;
 }
@@ -218,37 +216,37 @@ export interface CaptureClient {
     id: string,
     options?: CaptureEventStreamOptions,
   ): Observable<CaptureEvent>;
-  startStreamingCapture(
-    request: StartStreamingCaptureRequest,
+  startCapture(
+    request: StartCaptureRequest,
   ): Observable<CaptureOperation>;
-  getStreamingCapture(
+  getCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperation>;
-  cancelStreamingCapture(
+  cancelCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperation>;
-  getStreamingPartial(
+  getPartial(
     id: string,
     signal?: AbortSignal,
   ): Observable<PartialCapture>;
-  getStreamingRaw(id: string, signal?: AbortSignal): Observable<RawCapture>;
-  getStreamingResult(
+  getRaw(id: string, signal?: AbortSignal): Observable<RawCapture>;
+  getResult(
     id: string,
     signal?: AbortSignal,
-  ): Observable<CaptureStreamingResult>;
-  commitStreamingStructuredResult(
+  ): Observable<CaptureResult>;
+  commitStructure(
     id: string,
-    request: CommitStreamingStructuredResultRequest,
-    signal?: AbortSignal,
-  ): Observable<CaptureOperation>;
-  reportStreamingStructuringFailure(
-    id: string,
-    request: ReportStreamingStructuringFailureRequest,
+    request: CommitStructuredResultRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperation>;
-  deleteStreamingCapture(
+  reportStructuringFailure(
+    id: string,
+    request: ReportStructuringFailureRequest,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperation>;
+  deleteCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<void>;
@@ -360,6 +358,11 @@ export interface CaptureWorkbenchConfig {
    * the speech model's default.
    */
   readonly spokenLanguage?: SpokenLanguage;
+  /**
+   * PDF captures only: the source pages to read, one-based, ascending and
+   * without duplicates (for example `[3, 7]`). Omit it to read every page.
+   */
+  readonly pdfPageNumbers?: readonly number[];
   readonly width?: string;
   readonly height?: string;
   readonly density?: CaptureDensity;
@@ -384,7 +387,7 @@ export interface CaptureTaskView {
   readonly result?: CaptureDocument;
   readonly raw?: RawCapture;
   readonly review?: CaptureReview;
-  readonly error?: CaptureFailure;
+  readonly error?: OperationFailure;
 }
 
 export interface CaptureCompletedEvent {
@@ -397,7 +400,7 @@ export interface CaptureFailedEvent {
   readonly taskId: string;
   readonly captureId?: string;
   readonly fileName: string;
-  readonly error: CaptureFailure;
+  readonly error: OperationFailure;
   readonly raw?: RawCapture;
 }
 

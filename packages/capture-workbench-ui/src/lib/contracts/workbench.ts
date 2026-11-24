@@ -1,4 +1,4 @@
-import type { SpokenLanguage } from '@gx-capture/capture-runtime-client';
+import type { CaptureSourceKind, SpokenLanguage } from '@gx-capture/capture-runtime-client';
 import type {
   CaptureClient,
   CaptureCompletedEvent,
@@ -12,7 +12,7 @@ import type {
 } from './index';
 
 export interface ResolvedCaptureWorkbenchConfig {
-  readonly enabledSources: readonly ('pdf' | 'image' | 'audio')[];
+  readonly enabledSources: readonly CaptureSourceKind[];
   readonly structuringMode: 'runtime' | 'host';
   readonly outputMode: 'json' | 'text';
   readonly multiple: boolean;
@@ -26,6 +26,7 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly reviewEditable: boolean;
   readonly identifySpeakers: boolean;
   readonly spokenLanguage?: SpokenLanguage;
+  readonly pdfPageNumbers?: readonly number[];
   readonly width: string;
   readonly height: string;
   readonly density: 'compact' | 'comfortable';

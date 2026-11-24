@@ -195,9 +195,9 @@ mod handlers {
             LibraryCaptureUpdate, LibraryDiscardSelectionsRequest, LibraryDocumentRequest,
             LibraryExportRequest, LibraryImportSelectionRequest, LibraryListRequest,
             LibrarySaveEditsRequest, LibrarySelectSourcesRequest, RuntimeCancelUploadInput,
-            RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-            RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-            RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+            RuntimeCaptureEventsInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+            RuntimeInstallationStartInput, RuntimeRecordingCaptureInput, RuntimeRequirementInput,
+            StructuringModelInstallationStartInput,
         },
         host_api,
     };
@@ -403,31 +403,32 @@ mod handlers {
         ))
     }
 
-    pub(super) fn runtime_model_options(
+    pub(super) fn runtime_structuring_model_options(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let EmptyArgs {} = parse_args(args)?;
-        json_result(host_api::runtime_model_options(&context.state))
+        json_result(host_api::runtime_structuring_model_options(&context.state))
     }
 
-    pub(super) fn runtime_start_model_installation(
+    pub(super) fn runtime_start_structuring_model_installation(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeModelInstallationStartInput> = parse_args(args)?;
-        json_result(host_api::runtime_start_model_installation(
+        let InputArgs { input }: InputArgs<StructuringModelInstallationStartInput> =
+            parse_args(args)?;
+        json_result(host_api::runtime_start_structuring_model_installation(
             &context.state,
             input,
         ))
     }
 
-    pub(super) fn runtime_get_model_installation(
+    pub(super) fn runtime_get_structuring_model_installation(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_get_model_installation(
+        json_result(host_api::runtime_get_structuring_model_installation(
             &context.state,
             input,
         ))
@@ -454,12 +455,12 @@ mod handlers {
         ))
     }
 
-    pub(super) fn runtime_start_streaming_capture(
+    pub(super) fn runtime_start_recording_capture(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeStreamingCaptureInput> = parse_args(args)?;
-        json_result(host_api::runtime_start_streaming_capture(
+        let InputArgs { input }: InputArgs<RuntimeRecordingCaptureInput> = parse_args(args)?;
+        json_result(host_api::runtime_start_recording_capture(
             &context.state,
             &context.library,
             &context.uploads,
@@ -475,78 +476,20 @@ mod handlers {
         json_result(host_api::runtime_get_capture(&context.state, input))
     }
 
-    pub(super) fn runtime_get_streaming_capture(
+    pub(super) fn runtime_get_capture_events(
+        args: Value,
+        context: &HostContext,
+    ) -> Result<HostResponse, HostError> {
+        let InputArgs { input }: InputArgs<RuntimeCaptureEventsInput> = parse_args(args)?;
+        json_result(host_api::runtime_get_capture_events(&context.state, input))
+    }
+
+    pub(super) fn runtime_get_partial(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_get_streaming_capture(
-            &context.state,
-            input,
-        ))
-    }
-
-    pub(super) fn runtime_get_streaming_events(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeStreamingEventsInput> = parse_args(args)?;
-        json_result(host_api::runtime_get_streaming_events(
-            &context.state,
-            input,
-        ))
-    }
-
-    pub(super) fn runtime_get_streaming_partial(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_get_streaming_partial(
-            &context.state,
-            input,
-        ))
-    }
-
-    pub(super) fn runtime_get_streaming_result(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_get_streaming_result(
-            &context.state,
-            input,
-        ))
-    }
-
-    pub(super) fn runtime_structure_streaming_capture(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_structure_streaming_capture(
-            &context.state,
-            input,
-        ))
-    }
-
-    pub(super) fn runtime_cancel_capture(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_cancel_capture(&context.state, input))
-    }
-
-    pub(super) fn runtime_cancel_streaming_capture(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_cancel_streaming_capture(
-            &context.state,
-            input,
-        ))
+        json_result(host_api::runtime_get_partial(&context.state, input))
     }
 
     pub(super) fn runtime_get_raw(
@@ -579,16 +522,5 @@ mod handlers {
     ) -> Result<HostResponse, HostError> {
         let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
         json_result(host_api::runtime_delete_capture(&context.state, input))
-    }
-
-    pub(super) fn runtime_delete_streaming_capture(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_delete_streaming_capture(
-            &context.state,
-            input,
-        ))
     }
 }

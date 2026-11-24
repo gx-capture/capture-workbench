@@ -42,9 +42,9 @@ residue.
 ## Acceptance Criteria
 
 - The input and oracle are existing regular files; no input SHA is required.
-- First-run installation checks `windowsml-ocr` and leaves speech recognition
+- First-run installation checks `text-recognition` and leaves speech recognition
   and speaker diarization unchecked before installation begins.
-- Before import, Settings Compute exposes the active OCR compute mode (`gpu-dml`
+- Before import, Settings Compute exposes the active OCR compute mode (`gpu`
   required in acceptance mode).
 - Each visible result page (`result-page-text`) matches the durable raw segments
   composed for that page, ordered segments match durable `sourceText`, and

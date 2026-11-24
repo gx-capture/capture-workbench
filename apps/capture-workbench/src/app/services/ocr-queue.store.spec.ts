@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { CaptureRequirementId, RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
-import { of, Subject } from 'rxjs';
+import { type Observable, of, Subject, throwError } from 'rxjs';
 import { App } from '../app';
 import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
@@ -10,7 +10,7 @@ import { OcrQueueStore } from './ocr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './recognition-requirements';
 import { LibraryStore } from './library.store';
@@ -57,7 +57,7 @@ describe('OcrQueueStore', () => {
     expect(library.get).not.toHaveBeenCalled();
   });
 
-  it('keeps an imported file waiting while OCR is missing, then starts it when install finishes', async () => {
+  it('stores an imported file waiting with its pages, asking for OCR while it is missing', async () => {
     const harness = configure({ ocrReady: false });
     harness.store.attach();
     TestBed.tick();
@@ -72,20 +72,17 @@ describe('OcrQueueStore', () => {
     );
     expect(harness.rows()[0]?.userStatus).toBe('waiting');
     expect(harness.rows()[0]?.needsInstall).toBe(true);
-    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
 
     harness.requirements.set([requirement('ready')]);
     TestBed.tick();
     await settle();
 
-    expect(harness.runtime.createCapture).toHaveBeenCalledWith(
-      'b'.repeat(32),
-      expect.any(String),
-      [1, 2, 3],
-    );
+    // The admission of the capture service starts it, not the queue.
+    expect(harness.rows()[0]).toMatchObject({ userStatus: 'waiting', needsInstall: false });
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
   });
 
-  it('lists and starts waiting files in import order, oldest first (#348)', async () => {
+  it('lists waiting files in import order, oldest first (#348)', async () => {
     const harness = configure({ ocrReady: false });
     // The library lists newest first; first.pdf and second.png share a timestamp.
     harness.docs.push(
@@ -97,70 +94,6 @@ describe('OcrQueueStore', () => {
     TestBed.tick();
 
     expect(harness.rows().map((row) => row.fileName)).toEqual(['first.pdf', 'second.png', 'third.jpg']);
-
-    harness.requirements.set([requirement('ready')]);
-    TestBed.tick();
-    await settle();
-
-    expect(harness.runtime.createCapture.mock.calls.map((call) => (call as unknown[])[0])).toEqual([
-      'a'.repeat(32),
-      'd'.repeat(32),
-      'c'.repeat(32),
-    ]);
-  });
-
-  it('starts a file at once when OCR is already ready', async () => {
-    const harness = configure({ ocrReady: true });
-    harness.store.attach();
-    TestBed.tick();
-
-    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
-    TestBed.tick();
-    await settle();
-
-    expect(harness.runtime.createCapture).toHaveBeenCalledWith(
-      'b'.repeat(32),
-      expect.any(String),
-      undefined,
-    );
-    expect(harness.rows()[0]?.userStatus).toBe('processing');
-  });
-
-  it('starts a waiting PDF with stored pdfPageNumbers or legacy pdfPageCount', async () => {
-    const harness = configure({ ocrReady: false });
-    harness.docs.push(
-      doc({
-        documentId: 'c'.repeat(32),
-        fileName: 'gapped.pdf',
-        createdAtMs: 1,
-        captureOptions: { pdfPageNumbers: [3, 7] },
-      }),
-      doc({
-        documentId: 'd'.repeat(32),
-        fileName: 'legacy.pdf',
-        createdAtMs: 2,
-        captureOptions: { pdfPageCount: 2 },
-      }),
-    );
-    harness.store.attach();
-    TestBed.tick();
-
-    harness.requirements.set([requirement('ready')]);
-    TestBed.tick();
-    await settle();
-
-    expect(harness.runtime.createCapture).toHaveBeenNthCalledWith(
-      1,
-      'c'.repeat(32),
-      expect.any(String),
-      [3, 7],
-    );
-    expect(harness.runtime.createCapture).toHaveBeenNthCalledWith(
-      2,
-      'd'.repeat(32),
-      expect.any(String),
-      [1, 2],
-    );
   });
 
   it('refuses the whole batch without touching importError while the page field is invalid', async () => {
@@ -201,74 +134,224 @@ describe('OcrQueueStore', () => {
     expect(harness.rows().map((row) => row.fileName)).toEqual(['scan.png']);
   });
 
-  it('cancels a running capture', async () => {
-    const harness = configure({ ocrReady: true });
+  it('cancels a waiting document and refreshes its row', () => {
+    const harness = configure({ ocrReady: false });
+    const waiting = doc({});
+    harness.docs.push(waiting);
     harness.store.attach();
     TestBed.tick();
-    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
-    TestBed.tick();
-    await settle();
+    const capture = TestBed.inject(DesktopCaptureService);
+    const cancel = vi.spyOn(capture, 'cancel$');
 
-    harness.store.cancel('b'.repeat(32));
-    // The upload was still running, so its native cancel is asked for first.
-    expect(harness.runtime.cancelUpload).toHaveBeenCalledTimes(1);
-    // If the capture is created anyway, it is cancelled through the runtime.
-    harness.created.next(runningOperation());
-    await settle();
+    harness.store.cancel(waiting.documentId);
 
-    expect(harness.runtime.cancelCapture).toHaveBeenCalledWith('capture-1');
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(waiting.documentId, expect.anything());
+    expect(harness.docs[0]).toMatchObject({
+      status: 'canceled', stage: 'cancelled', captureId: undefined,
+    });
+    expect(harness.rows()[0]?.userStatus).toBe('cancelled');
+    expect(harness.runtime.deleteCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
   });
 
-  it('retries a failed file and restarts a file whose runtime operation is gone', async () => {
+  it.each(['read', 'write'] as const)('shows a failed %s of a waiting cancel', (failure) => {
+    const harness = configure({ ocrReady: false });
+    const waiting = doc({});
+    harness.docs.push(waiting);
+    harness.store.attach();
+    TestBed.tick();
+    const error = new Error('Library unavailable');
+    if (failure === 'read') harness.library.list.mockReturnValueOnce(throwError(() => error));
+    else harness.library.updateCapture.mockReturnValueOnce(throwError(() => error));
+
+    harness.store.cancel(waiting.documentId);
+
+    expect(harness.store.importError()).toBe('Library unavailable');
+    expect(harness.docs[0]).toBe(waiting);
+    expect(harness.runtime.deleteCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+  });
+
+  it('preserves a completed document when its visible row still says waiting', () => {
+    const harness = configure({ ocrReady: false });
+    const waiting = doc({});
+    harness.docs.push(waiting);
+    harness.store.attach();
+    TestBed.tick();
+    const completed = { ...waiting, status: 'completed', hasRaw: true } satisfies DesktopLibrarySummary;
+    harness.docs[0] = completed;
+    harness.holdListReloads();
+    expect(harness.documents()[0]).toBe(waiting);
+    const refresh = vi.spyOn(TestBed.inject(LibraryStore), 'refreshDocuments');
+
+    harness.store.cancel(waiting.documentId);
+
+    expect(harness.library.list).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(harness.library.updateCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.deleteCapture).not.toHaveBeenCalled();
+    expect(harness.docs[0]).toBe(completed);
+  });
+
+  it('stores a failed file and an interrupted one waiting again only on the user’s Start again', async () => {
     const harness = configure({ ocrReady: true });
     harness.docs.push(doc({ status: 'failed', documentId: 'c'.repeat(32), fileName: 'failed.pdf' }));
     harness.docs.push(doc({
       status: 'recovery_required',
       documentId: 'd'.repeat(32),
-      fileName: 'lost.pdf',
-      captureId: 'capture-lost',
+      fileName: 'interrupted.pdf',
+      captureId: 'capture-earlier-run',
       recoveryCode: 'capture_recovery_required',
     }));
     harness.store.attach();
     TestBed.tick();
     await settle();
-
-    harness.store.retry('c'.repeat(32));
-    await settle();
-    expect(harness.runtime.createCapture).toHaveBeenCalledWith(
-      'c'.repeat(32),
-      expect.any(String),
-      undefined,
-    );
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
     expect(harness.runtime.getCapture).not.toHaveBeenCalled();
+    expect(harness.rows().find((row) => row.documentId === 'd'.repeat(32))).toMatchObject({
+      userStatus: 'needs-attention', interrupted: true,
+    });
 
-    harness.runtime.createCapture.mockClear();
-    harness.store.restart('d'.repeat(32));
+    harness.store.startAgain('c'.repeat(32));
     await settle();
+    expect(harness.docs.find((item) => item.documentId === 'c'.repeat(32))).toMatchObject({ status: 'queued' });
 
-    expect(harness.library.updateCapture).toHaveBeenCalledWith(expect.objectContaining({
-      documentId: 'd'.repeat(32),
-      status: 'queued',
-      clearCaptureId: true,
-    }));
+    harness.store.startAgain('d'.repeat(32));
+    await settle();
+    // The link of the earlier run is only an address for its cleanup: never read, deleted.
+    expect(harness.runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-earlier-run');
     expect(harness.runtime.getCapture).not.toHaveBeenCalled();
-    expect(harness.runtime.createCapture).toHaveBeenCalledWith(
-      'd'.repeat(32),
-      expect.any(String),
-      undefined,
-    );
+    expect(harness.docs.find((item) => item.documentId === 'd'.repeat(32)))
+      .toMatchObject({ status: 'queued', captureId: undefined });
+    // The capture service's admission starts them in their turn.
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+    expect(harness.rows().map((row) => row.userStatus)).toEqual(['waiting', 'waiting']);
+  });
+
+  it.each(['Start again', 'Cancel'] as const)('shows a failed %s on this page and clears it on the next action', async (action) => {
+    const harness = configure({ ocrReady: true });
+    const failed = doc({ status: action === 'Cancel' ? 'queued' : 'failed' });
+    harness.docs.push(failed);
+    harness.store.attach();
+    TestBed.tick();
+    const act = () => action === 'Start again'
+      ? harness.store.startAgain(failed.documentId)
+      : harness.store.cancel(failed.documentId);
+    harness.library.list.mockReturnValueOnce(throwError(() => new Error('Capture library list failed.')));
+
+    act();
+    await settle();
+    expect(harness.store.importError()).toBe('Capture library list failed.');
+
+    act();
+    expect(harness.store.importError()).toBe('');
+  });
+
+  describe('a start or a terminal write this run could not store', () => {
+    /** The app shell's side of the admission, as `App` wires it. */
+    function admit(harness: ReturnType<typeof configure>) {
+      const libraryStore = TestBed.inject(LibraryStore);
+      const host: DesktopCaptureHost = {
+        selectedId: signal<string | null>(null),
+        requestedRequirements: signal<ReadonlySet<CaptureRequirementId>>(new Set()),
+        requirements: () => harness.requirements(),
+        refreshDocuments: () => libraryStore.refreshDocuments(),
+        applyDocumentState: (summary) => libraryStore.applyDocumentState(summary),
+        setMessage: vi.fn(),
+      };
+      const admission = TestBed.inject(DesktopCaptureService).admitWaiting$(host, of(undefined)).subscribe();
+      return { host, stop: () => admission.unsubscribe() };
+    }
+
+    it('shows the error of the admission’s failed read on the row it passed by; Start again clears it', async () => {
+      const harness = configure({ ocrReady: true });
+      const waiting = doc({});
+      harness.docs.push(waiting);
+      harness.store.attach();
+      TestBed.tick();
+      harness.library.list
+        .mockReturnValueOnce(of([waiting]))
+        .mockReturnValueOnce(throwError(() => new Error('Capture library list failed.')));
+
+      const admission = admit(harness);
+      await settle();
+
+      expect(harness.rows()[0]).toMatchObject({
+        userStatus: 'needs-attention', statusText: '需要處理', canStartAgain: true,
+        failureReason: 'Capture library list failed.',
+      });
+      // On the row only: no page error line, no general message.
+      expect(harness.store.importError()).toBe('');
+      expect(admission.host.setMessage).not.toHaveBeenCalled();
+
+      harness.store.startAgain(waiting.documentId);
+      await settle();
+      expect(harness.rows()[0]?.failureReason).toBeNull();
+      expect(harness.rows()[0]?.userStatus).not.toBe('needs-attention');
+      admission.stop();
+    });
+
+    it('shows the error of a failed terminal write on the interrupted row; Start again clears it', async () => {
+      const harness = configure({ ocrReady: true });
+      const waiting = doc({});
+      harness.docs.push(waiting);
+      harness.store.attach();
+      TestBed.tick();
+      const store = harness.library.updateCapture.getMockImplementation();
+      if (!store) throw new Error('the library double stores writes');
+      harness.library.updateCapture.mockImplementation((update) => update.status === 'failed'
+        ? throwError(() => new Error('Capture library index cannot be written: the disk is full.'))
+        : store(update));
+      harness.runtime.createCapture.mockReturnValueOnce(throwError(() => new Error('Capture Runtime refused the capture.')));
+
+      const admission = admit(harness);
+      await settle();
+
+      expect(harness.docs[0]?.status).toBe('processing');
+      expect(harness.rows()[0]).toMatchObject({
+        userStatus: 'needs-attention', statusText: '已中斷', interrupted: true, canStartAgain: true,
+        failureReason: 'Capture library index cannot be written: the disk is full.',
+      });
+      expect(harness.store.importError()).toBe('');
+      expect(admission.host.setMessage).not.toHaveBeenCalled();
+
+      harness.library.updateCapture.mockImplementation(store);
+      harness.store.startAgain(waiting.documentId);
+      await settle();
+      expect(harness.rows()[0]?.failureReason).toBeNull();
+      expect(harness.rows()[0]?.interrupted).toBe(false);
+      admission.stop();
+    });
   });
 
   it('shows page progress from the live capture operation', async () => {
-    const harness = configure({ ocrReady: true, operation: runningOperation() });
+    const harness = configure({ ocrReady: true });
+    harness.docs.push(doc({}));
     harness.store.attach();
     TestBed.tick();
-    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
-    TestBed.tick();
+    // Only an attempt of this run has a live operation.
+    TestBed.inject(DesktopCaptureService).busyIds.set(new Set(['b'.repeat(32)]));
+    TestBed.inject(DesktopCaptureService).oneShotOperations.set(new Map([['b'.repeat(32), runningOperation()]]));
 
     expect(harness.rows()[0]?.userStatus).toBe('processing');
     expect(harness.rows()[0]?.progressText).toContain('第 9/12 頁');
     expect(harness.rows()[0]?.pageLabel).toBe('12');
+  });
+
+  it('neither reads nor writes a linked row when the list loads', () => {
+    const harness = configure({ ocrReady: true });
+    harness.docs.push(
+      doc({ documentId: '1'.repeat(32), status: 'processing', captureId: 'capture-a' }),
+      doc({ documentId: '2'.repeat(32), status: 'awaiting_confirmation', hasRaw: true, captureId: 'capture-b' }),
+      doc({ documentId: '3'.repeat(32), status: 'queued', captureId: 'capture-c' }),
+    );
+    harness.store.attach();
+    TestBed.tick();
+
+    expect(harness.runtime.getCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.deleteCapture).not.toHaveBeenCalled();
+    expect(harness.library.updateCapture).not.toHaveBeenCalled();
   });
 
   it('drops a document the workspace deletes and lists one the workspace imports', async () => {
@@ -315,7 +398,6 @@ describe('OcrQueueStore', () => {
       getModelOptions: vi.fn(() => of([])),
       createCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
       getCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
-      cancelCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
       getRaw: vi.fn(() => of(null)),
       getOcr: vi.fn(() => new Subject()),
       deleteCapture: vi.fn(() => of(undefined)),
@@ -382,15 +464,16 @@ describe('OcrQueueStore', () => {
   });
 });
 
-function configure(options: { readonly ocrReady: boolean; readonly operation?: DesktopCaptureOperation }) {
+function configure(options: { readonly ocrReady: boolean }) {
   const docs: DesktopLibrarySummary[] = [];
   const documents = signal<readonly DesktopLibrarySummary[]>([]);
-  const created = new Subject<DesktopCaptureOperation>();
   const requirements = signal<readonly RuntimeRequirement[]>([
     requirement(options.ocrReady ? 'ready' : 'installable'),
   ]);
+  // A list reload answers at once, unless a test holds the answers back.
+  let listReloadsAnswered = true;
   const refreshDocuments = (): void => {
-    documents.set([...docs]);
+    if (listReloadsAnswered) documents.set([...docs]);
   };
   const library = {
     list: vi.fn(() => of([...docs])),
@@ -418,6 +501,7 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
       const next: DesktopLibrarySummary = {
         ...(current ?? doc({ documentId: update.documentId })),
         status: update.status,
+        recoveryCode: undefined,
         ...(update.stage === undefined ? {} : { stage: update.stage }),
         ...(update.clearCaptureId
           ? { captureId: undefined }
@@ -435,9 +519,8 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
     ready: signal(true),
     pdfPageNumbers: signal<readonly number[] | undefined>(undefined),
     ocrCompute: signal(null),
-    createCapture: vi.fn(() => options.operation ? of(options.operation) : created),
-    getCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
-    cancelCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
+    createCapture: vi.fn((): Observable<DesktopCaptureOperation> => new Subject<DesktopCaptureOperation>()),
+    getCapture: vi.fn((): Observable<DesktopCaptureOperation> => new Subject<DesktopCaptureOperation>()),
     cancelUpload: vi.fn(() => of(undefined)),
     getRaw: vi.fn(() => of(null)),
     getOcr: vi.fn(() => new Subject()),
@@ -456,7 +539,11 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
       { provide: DesktopLibraryService, useValue: library },
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: RecognitionFeaturesStore, useValue: features },
-      { provide: LibraryStore, useValue: { allDocuments: documents, refreshDocuments, export: library.export } },
+      {
+        provide: LibraryStore,
+        // Like a list whose reload has not answered: a write reaches it only through a reload.
+        useValue: { allDocuments: documents, refreshDocuments, applyDocumentState: refreshDocuments, export: library.export },
+      },
       DesktopCaptureService,
       OcrQueueStore,
     ],
@@ -467,17 +554,21 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
     runtime,
     requirements,
     docs,
-    created,
+    documents,
+    /** From now on the displayed list keeps what it shows: a reload does not answer. */
+    holdListReloads: (): void => {
+      listReloadsAnswered = false;
+    },
     rows: () => TestBed.inject(OcrQueueStore).rows(),
   };
 }
 
 function requirement(status: RuntimeRequirement['status']): RuntimeRequirement {
   return {
-    requirementId: 'windowsml-ocr',
+    requirementId: 'text-recognition',
     displayName: '文字辨識',
     status,
-    kind: 'runtime',
+    kind: 'text-recognition',
     requiredFor: ['capture'],
     installStrategy: 'runtime-catalog',
     detail: null,
@@ -504,6 +595,7 @@ function runningOperation(): DesktopCaptureOperation {
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
+    kind: 'pdf',
     status: 'extracting',
     progress: 0.75,
     pagesDone: 9,

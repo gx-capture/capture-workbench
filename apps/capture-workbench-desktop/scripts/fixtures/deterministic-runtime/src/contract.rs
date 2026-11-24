@@ -12,7 +12,11 @@ use sha2::{Digest, Sha256};
 
 use crate::http::{api_error, api_error_details, find_bytes, Request, Response};
 
+mod capture_control;
 mod ingestions;
+use capture_control::CaptureControl;
+#[cfg(test)]
+use capture_control::CaptureControlSettings;
 use ingestions::IngestionRecord;
 
 const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -27,6 +31,7 @@ mod tests;
 pub struct FixtureSettings {
     pub api_token: String,
     max_upload_bytes: usize,
+    capture_control: CaptureControl,
 }
 
 impl FixtureSettings {
@@ -45,6 +50,7 @@ impl FixtureSettings {
         Ok(Self {
             api_token,
             max_upload_bytes,
+            capture_control: CaptureControl::from_env(),
         })
     }
 }
@@ -57,24 +63,155 @@ struct CaptureRecord {
     source: Value,
     raw: Value,
     result: Value,
+    /// Requested with `structuringMode: "host"`: the host structures the raw
+    /// text, so the capture waits at the checkpoint instead of completing.
+    host_structured: bool,
+    /// A host-structured capture was seen at its checkpoint; it stays there
+    /// whatever the hold says later.
+    checkpoint_reached: bool,
+    /// Set when a cancel reached the capture before it ended, with how far
+    /// the capture had come.
+    cancelled: Option<CancelledAt>,
+    /// Set when the capture was created while captures were made to fail.
+    failed: bool,
+}
+
+/// Where a cancel ended a capture. As in the product runtime, a cancel at the
+/// checkpoint keeps the extraction's progress, raw text and OCR projection
+/// and is the event after the checkpoint's.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CancelledAt {
+    Extracting,
+    Checkpoint,
+}
+
+const CAPTURE_FAILURE_CODE: &str = "extraction_failed";
+const CAPTURE_FAILURE_MESSAGE: &str = "The deterministic runtime failed this capture.";
+
+/// What a capture reports: held captures are still extracting. As in the
+/// product runtime, a host-structured capture whose extraction finished waits
+/// at `awaiting_structuring` with its raw text and OCR projection; it never
+/// completes by itself, and the host deletes it once it has stored them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureState {
+    Extracting,
+    AwaitingStructuring,
+    Completed,
+    Cancelled(CancelledAt),
+    Failed,
+}
+
+impl CaptureState {
+    /// Whether the extraction finished, so its raw text and OCR projection are served.
+    fn extracted(self) -> bool {
+        matches!(
+            self,
+            Self::AwaitingStructuring | Self::Completed | Self::Cancelled(CancelledAt::Checkpoint)
+        )
+    }
+}
+
+/// The reads of what a capture makes, for their not-ready answers.
+#[derive(Clone, Copy)]
+enum CaptureRead {
+    Raw,
+    Ocr,
+    Result,
+    Structure,
+}
+
+/// The answer to a read of what the capture has not made. A host-structured
+/// capture answers with the product runtime's codes; a runtime-structured
+/// one keeps the fixture's own.
+fn not_ready(host_structured: bool, read: CaptureRead) -> Response {
+    if !host_structured {
+        return api_error(409, "capture_not_terminal", "Capture has not finished.");
+    }
+    match read {
+        CaptureRead::Raw => api_error(
+            409,
+            "raw_unavailable",
+            "Raw extraction is not available yet.",
+        ),
+        CaptureRead::Ocr => api_error(
+            409,
+            "ocr_unavailable",
+            "Canonical OCR projection is not available yet.",
+        ),
+        CaptureRead::Result => api_error(
+            409,
+            "result_unavailable",
+            "Structured progressive result is not available.",
+        ),
+        CaptureRead::Structure => api_error(
+            409,
+            "invalid_capture_state",
+            "host structuring requires a host-owned candidate",
+        ),
+    }
 }
 
 impl CaptureRecord {
-    fn wire(&self) -> Value {
+    /// Latches the checkpoint the first time a request sees a host-structured
+    /// capture past the hold, so a hold applied later no longer moves it back.
+    fn observe_extraction(&mut self, held: bool) {
+        if self.host_structured && !held && !self.failed && self.cancelled.is_none() {
+            self.checkpoint_reached = true;
+        }
+    }
+
+    fn state(&self, held: bool) -> CaptureState {
+        if let Some(at) = self.cancelled {
+            CaptureState::Cancelled(at)
+        } else if self.failed {
+            CaptureState::Failed
+        } else if self.checkpoint_reached {
+            CaptureState::AwaitingStructuring
+        } else if held {
+            CaptureState::Extracting
+        } else if self.host_structured {
+            // Past the hold even before a request latched it.
+            CaptureState::AwaitingStructuring
+        } else {
+            CaptureState::Completed
+        }
+    }
+
+    fn wire(&self, held: bool) -> Value {
+        let (status, progress, sequence, updated_at, completed_at) = match self.state(held) {
+            CaptureState::Extracting => ("extracting", 0.5, 0, CREATED_AT, None),
+            CaptureState::AwaitingStructuring => {
+                ("awaiting_structuring", 0.9, 1, COMPLETED_AT, None)
+            }
+            CaptureState::Completed => ("completed", 1.0, 1, COMPLETED_AT, Some(COMPLETED_AT)),
+            CaptureState::Cancelled(CancelledAt::Extracting) => {
+                ("cancelled", 0.5, 1, COMPLETED_AT, Some(COMPLETED_AT))
+            }
+            // The checkpoint was event 1; the cancellation is event 2.
+            CaptureState::Cancelled(CancelledAt::Checkpoint) => {
+                ("cancelled", 0.9, 2, COMPLETED_AT, Some(COMPLETED_AT))
+            }
+            CaptureState::Failed => ("failed", 0.5, 1, COMPLETED_AT, Some(COMPLETED_AT)),
+        };
+        let error = if self.state(held) == CaptureState::Failed {
+            json!({ "code": CAPTURE_FAILURE_CODE, "message": CAPTURE_FAILURE_MESSAGE })
+        } else {
+            Value::Null
+        };
         json!({
             "protocolVersion": "2",
             "captureId": self.capture_id,
             "ingestionId": self.ingestion_id,
             "kind": self.kind,
-            "status": "completed",
-            "progress": 1.0,
+            "status": status,
+            "progress": progress,
             "partialRevision": 0,
-            "lastEventSequence": 1,
+            "lastEventSequence": sequence,
             "source": self.source,
-            "error": null,
+            "error": error,
             "createdAt": CREATED_AT,
-            "updatedAt": COMPLETED_AT,
-            "completedAt": COMPLETED_AT,
+            "updatedAt": updated_at,
+            "completedAt": completed_at,
         })
     }
 }
@@ -166,20 +303,27 @@ impl FixtureState {
     }
 
     pub fn route(&self, request: Request) -> Response {
-        match (request.method.as_str(), request.path.as_str()) {
+        // Resolved before the answer, so a delete still names the capture it removed.
+        let capture_id = self.issued_capture(&request.path);
+        let response = match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/v2/health/ready") => self.ready(),
             ("GET", "/v2/runtime/requirements") => self.requirements(),
-            ("GET", "/v2/runtime/model-options") => self.model_options(),
+            ("GET", "/v2/runtime/structuring-model-options") => self.model_options(),
             ("GET", "/v2/runtime/installations") => self.list_installations(),
             ("POST", "/v2/runtime/installations") => self.create_installation(&request),
-            ("POST", "/v2/runtime/model-installations") => self.create_model_installation(&request),
+            ("POST", "/v2/runtime/structuring-model-installations") => {
+                self.create_model_installation(&request)
+            }
             ("POST", "/v2/captures") => self.create_capture(&request),
             ("POST", "/v2/ingestions") => self.open_ingestion(&request),
             _ if request.path.starts_with("/v2/ingestions/") => self.route_ingestion(&request),
             _ if request.path.starts_with("/v2/runtime/installations/") => {
                 self.route_installation(&request)
             }
-            _ if request.path.starts_with("/v2/runtime/model-installations/") => {
+            _ if request
+                .path
+                .starts_with("/v2/runtime/structuring-model-installations/") =>
+            {
                 self.route_model_installation(&request)
             }
             _ if request.path.starts_with("/v2/runtime/requirements/") => {
@@ -187,6 +331,10 @@ impl FixtureState {
             }
             _ if request.path.starts_with("/v2/captures/") => self.route_capture(&request),
             _ => api_error(404, "not_found", "Resource was not found."),
+        };
+        match capture_id {
+            Some(capture_id) => response.for_capture(&capture_id),
+            None => response,
         }
     }
 
@@ -206,7 +354,7 @@ impl FixtureState {
                     "service": "capture-runtime",
                     "runtimeVersion": RUNTIME_VERSION,
                     "contractSetVersion": "2",
-                    "contractSha256": sha256_hex(b"deterministic-ocr-contract"),
+                    "contractSetSha256": sha256_hex(b"deterministic-ocr-contract"),
                     "workerSha256": sha256_hex(b"deterministic-ocr-worker"),
                     "mode": "cpu-fallback",
                     "adapterClass": "unknown",
@@ -215,11 +363,16 @@ impl FixtureState {
                     "noticeCode": "ocr_cpu_fallback",
                 },
                 "capabilities": {
-                    "captureKinds": ["pdf", "image", "audio"],
+                    "captureKinds": ["pdf", "image", "recording"],
                     "structuringModes": ["runtime", "host"],
                     "supportsCancellation": true,
                     "supportsRawDiagnostics": true,
                     "maxUploadBytes": self.settings.max_upload_bytes,
+                    "maxChunkBytes": ingestions::MAX_CHUNK_BYTES,
+                    "checkpointIntervalMs": 300_000,
+                    "heartbeatIntervalMs": 5_000,
+                    "stallTimeoutMs": 90_000,
+                    "supportsProgressiveRecording": true,
                 },
                 "message": null,
             }),
@@ -229,10 +382,12 @@ impl FixtureState {
     fn requirements(&self) -> Response {
         let uninstalled = self.uninstalled.lock().ok();
         let items = [
-            "windowsml-ocr",
+            "text-recognition",
             "speech-recognition",
-            "ollama-runtime",
-            "capture-ollama-model",
+            "speaker-diarization",
+            "vertical-japanese-reader",
+            "structuring-runtime",
+            "structuring-model",
         ]
         .into_iter()
         .filter_map(|requirement_id| {
@@ -307,7 +462,7 @@ impl FixtureState {
         let Some(ingestion) = ingestion else {
             return api_error(404, "ingestion_not_found", "Ingestion was not found.");
         };
-        let key = match matching_request_key(request, &payload, ingestion.kind == "audio") {
+        let key = match matching_request_key(request, &payload, ingestion.kind == "recording") {
             Ok(key) => key,
             Err(response) => return response,
         };
@@ -381,16 +536,26 @@ impl FixtureState {
             "capture-{}",
             self.next_capture.fetch_add(1, Ordering::Relaxed)
         );
-        // The installed fixture finishes extraction and structuring synchronously,
-        // including host-mode requests, so no model or confirmation is needed.
-        let record = CaptureRecord {
+        // The fixture extracts at once. A runtime-structured capture is also
+        // structured at once; a host-structured one waits at the checkpoint.
+        let control = match self.settings.capture_control.current() {
+            Ok(control) => control,
+            Err(message) => return api_error(500, "runtime_unavailable", &message),
+        };
+        let held = control.hold_captures;
+        let mut record = CaptureRecord {
             capture_id: capture_id.clone(),
             ingestion_id: ingestion.ingestion_id,
             kind: ingestion.kind,
             source,
             result: build_result(&raw, target_language),
             raw,
+            host_structured: payload["structuringMode"] == "host",
+            checkpoint_reached: false,
+            cancelled: None,
+            failed: control.fail_captures,
         };
+        record.observe_extraction(held);
         let Ok(mut captures) = self.captures.lock() else {
             return api_error(500, "runtime_unavailable", "Capture state is unavailable.");
         };
@@ -402,38 +567,126 @@ impl FixtureState {
                 resource_id: capture_id,
             },
         );
-        Response::json(202, record.wire())
+        // The creation names the capture it issued, so the request log can
+        // tell which capture a successful create made.
+        Response::json(202, record.wire(held)).for_capture(&record.capture_id)
+    }
+
+    /// The capture a request under `/v2/captures/{captureId}` is about, when
+    /// the fixture issued it; never an id taken from the path's shape alone.
+    fn issued_capture(&self, path: &str) -> Option<String> {
+        let relative = path.strip_prefix("/v2/captures/")?;
+        let capture_id = relative.split('/').next()?;
+        self.captures
+            .lock()
+            .ok()?
+            .contains_key(capture_id)
+            .then(|| capture_id.to_owned())
     }
 
     fn route_capture(&self, request: &Request) -> Response {
         let relative = request.path.trim_start_matches("/v2/captures/");
         let (capture_id, suffix) = relative.split_once('/').unwrap_or((relative, ""));
+        let control = match self.settings.capture_control.current() {
+            Ok(control) => control,
+            Err(message) => return api_error(500, "runtime_unavailable", &message),
+        };
+        let held = control.hold_captures;
         let Ok(mut captures) = self.captures.lock() else {
             return api_error(500, "runtime_unavailable", "Capture state is unavailable.");
         };
-        let Some(record) = captures.get(capture_id) else {
+        let Some(record) = captures.get_mut(capture_id) else {
             return api_error(404, "capture_not_found", "Capture job was not found.");
         };
+        // A refused request answers without the capture's state, so it saw no
+        // checkpoint and latches none, and it leaves the capture unchanged.
         match (request.method.as_str(), suffix) {
-            ("GET", "") | ("POST", "cancel") => Response::json(200, record.wire()),
+            ("GET", "") if control.capture_status_unavailable => {
+                return api_error(
+                    503,
+                    "runtime_unavailable",
+                    "Capture status is temporarily unavailable.",
+                )
+            }
+            ("DELETE", "") if control.delete_unavailable => {
+                return api_error(
+                    503,
+                    "runtime_unavailable",
+                    "Capture deletion is temporarily unavailable.",
+                )
+            }
+            _ => {}
+        }
+        record.observe_extraction(held);
+        let host_structured = record.host_structured;
+        let not_made = move |read| not_ready(host_structured, read);
+        let state = record.state(held);
+        match (request.method.as_str(), suffix) {
+            ("GET", "") => Response::json(200, record.wire(held)),
+            ("POST", "cancel") => {
+                // A capture that has not ended (held running, or waiting at the
+                // checkpoint) is ended by the cancel.
+                match state {
+                    CaptureState::Extracting => record.cancelled = Some(CancelledAt::Extracting),
+                    CaptureState::AwaitingStructuring => {
+                        record.cancelled = Some(CancelledAt::Checkpoint);
+                    }
+                    _ => {}
+                }
+                Response::json(200, record.wire(held))
+            }
+            ("GET", "raw") if !state.extracted() => not_made(CaptureRead::Raw),
+            // A host-structured capture never has a result here, and the
+            // runtime refuses to structure it.
+            ("GET", "result") if state != CaptureState::Completed => not_made(CaptureRead::Result),
+            ("POST", "structure") if state != CaptureState::Completed => {
+                not_made(CaptureRead::Structure)
+            }
             ("GET", "raw") => Response::json(200, record.raw.clone()),
             ("GET", "result") => Response::json(
                 200,
                 json!({
-                    "operation": record.wire(), "raw": record.raw, "result": record.result,
+                    "operation": record.wire(held), "raw": record.raw, "result": record.result,
                 }),
             ),
             ("POST", "structure") => Response::json(200, record.result.clone()),
-            ("GET", "ocr") if record.kind != "audio" => Response::json(200, build_ocr(record)),
-            ("GET", "partial") if record.kind == "audio" => Response::json(
-                200,
-                json!({
-                    "protocolVersion": "2", "captureId": capture_id, "source": record.source,
-                    "revision": 0, "coveredUntilMs": record.raw["segments"].as_array().map_or(0, Vec::len) * 1000,
-                    "segments": record.raw["segments"], "sourceText": record.raw["sourceText"],
-                    "extractionEngine": record.raw["extractionEngine"], "updatedAt": COMPLETED_AT,
-                }),
+            ("GET", "ocr") if record.kind != "recording" && state == CaptureState::Failed => {
+                Response::json(200, build_failed_ocr(record))
+            }
+            ("GET", "ocr") if !state.extracted() => not_made(CaptureRead::Ocr),
+            ("GET", "ocr") if record.kind != "recording" => Response::json(200, build_ocr(record)),
+            // A recording has no OCR projection, and asking writes nothing.
+            ("GET", "ocr") => api_error(
+                409,
+                "ocr_unavailable",
+                "Canonical OCR projection is not available.",
             ),
+            ("GET", "partial") if record.kind == "recording" => {
+                // A held recording has heard its first segment so far.
+                let all = record.raw["segments"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let heard = if state == CaptureState::Extracting {
+                    all.into_iter().take(1).collect::<Vec<_>>()
+                } else {
+                    all
+                };
+                let text = heard
+                    .iter()
+                    .filter_map(|segment| segment["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Response::json(
+                    200,
+                    json!({
+                        "protocolVersion": "2", "captureId": capture_id, "source": record.source,
+                        "revision": 0, "coveredUntilMs": heard.len() * 1000,
+                        "segments": heard, "sourceText": text,
+                        "extractionEngine": record.raw["extractionEngine"], "updatedAt": COMPLETED_AT,
+                    }),
+                )
+            }
             ("GET", "events") => {
                 let cursor = match request.headers.get("last-event-id") {
                     None => -1,
@@ -446,17 +699,40 @@ impl FixtureState {
                         }
                     },
                 };
-                let event = json!({
-                    "protocolVersion": "2", "eventId": format!("{capture_id}-completed"),
-                    "sequence": 1, "captureId": capture_id, "kind": record.kind,
-                    "eventType": "completed", "stage": "completed", "progress": 1.0,
-                    "partialRevision": 0, "segments": [], "error": null, "createdAt": COMPLETED_AT,
-                });
-                Response::event_stream(if cursor < 1 {
-                    format!("id: 1\nevent: completed\ndata: {event}\n\n")
-                } else {
-                    String::new()
-                })
+                let events: &[(&str, &str)] = match state {
+                    // A held capture has no event yet.
+                    CaptureState::Extracting => &[],
+                    // The stream of a host-structured capture ends at its checkpoint.
+                    CaptureState::AwaitingStructuring => &[("checkpoint", "awaiting_structuring")],
+                    CaptureState::Completed => &[("completed", "completed")],
+                    CaptureState::Cancelled(CancelledAt::Extracting) => {
+                        &[("cancelled", "cancelled")]
+                    }
+                    // A cancel at the checkpoint is the event after the checkpoint's.
+                    CaptureState::Cancelled(CancelledAt::Checkpoint) => &[
+                        ("checkpoint", "awaiting_structuring"),
+                        ("cancelled", "cancelled"),
+                    ],
+                    CaptureState::Failed => &[("failed", "failed")],
+                };
+                // The last event says what the capture status says; progress
+                // never goes back, and only a failure carries an error.
+                let operation = record.wire(held);
+                let stream = (1_i64..)
+                    .zip(events)
+                    .filter(|(sequence, _)| *sequence > cursor)
+                    .map(|(sequence, (event_type, stage))| {
+                        let event = json!({
+                            "protocolVersion": "2", "eventId": format!("{capture_id}-{stage}"),
+                            "sequence": sequence, "captureId": capture_id, "kind": record.kind,
+                            "eventType": event_type, "stage": stage,
+                            "progress": operation["progress"], "partialRevision": 0,
+                            "segments": [], "error": operation["error"], "createdAt": COMPLETED_AT,
+                        });
+                        format!("id: {sequence}\nevent: {event_type}\ndata: {event}\n\n")
+                    })
+                    .collect::<String>();
+                Response::event_stream(stream)
             }
             ("DELETE", "") => {
                 let ingestion_id = record.ingestion_id.clone();
@@ -483,13 +759,19 @@ impl FixtureState {
     }
 
     fn capture_response(&self, capture_id: &str, status: u16) -> Response {
-        let record = self
-            .captures
-            .lock()
-            .ok()
-            .and_then(|items| items.get(capture_id).cloned());
-        match record {
-            Some(record) => Response::json(status, record.wire()),
+        let held = match self.settings.capture_control.current() {
+            Ok(control) => control.hold_captures,
+            Err(message) => return api_error(500, "runtime_unavailable", &message),
+        };
+        let mut captures = self.captures.lock().ok();
+        match captures
+            .as_mut()
+            .and_then(|items| items.get_mut(capture_id))
+        {
+            Some(record) => {
+                record.observe_extraction(held);
+                Response::json(status, record.wire(held))
+            }
             None => api_error(404, "capture_not_found", "Capture job was not found."),
         }
     }
@@ -504,6 +786,12 @@ impl FixtureState {
             Err(_) => return validation_error("Request body must be valid JSON."),
         };
         let requirement_id = payload.get("requirementId").and_then(Value::as_str);
+        // As in the runtime: the model is installed through model installation.
+        if requirement_id == Some("structuring-model") {
+            return validation_error(
+                "structuring-model is installed through structuring model installation.",
+            );
+        }
         if !requirement_id.is_some_and(valid_requirement_id)
             || payload.get("consent").and_then(Value::as_bool) != Some(true)
         {
@@ -643,7 +931,7 @@ impl FixtureState {
     fn route_model_installation(&self, request: &Request) -> Response {
         let installation_id = request
             .path
-            .trim_start_matches("/v2/runtime/model-installations/");
+            .trim_start_matches("/v2/runtime/structuring-model-installations/");
         if request.method == "GET" && !installation_id.contains('/') {
             return self.model_installation_response(installation_id, 200);
         }
@@ -689,7 +977,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
         source_kind,
         source["sha256"].as_str().unwrap_or_default(),
     );
-    let parts = if source_kind == "audio" {
+    let parts = if source_kind == "recording" {
         text.split('|')
     } else {
         text.split('\x0c')
@@ -705,7 +993,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
             json!({
                 "segmentId": format!("segment-{}", index + 1),
                 "order": index,
-                "locator": if source_kind == "audio" {
+                "locator": if source_kind == "recording" {
                     json!({ "kind": "time", "startMs": index * 1000, "endMs": (index + 1) * 1000 })
                 } else {
                     json!({ "kind": "page", "page": index + 1 })
@@ -714,10 +1002,10 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
             })
         })
         .collect::<Vec<_>>();
-    let (engine, model) = if source_kind == "audio" {
-        ("speech-recognition", "deterministic-speech-recognition-v1")
+    let (engine, model) = if source_kind == "recording" {
+        ("speech-recognition", "deterministic-speech-v1")
     } else {
-        ("windowsml-ocr", "deterministic-windowsml-v1")
+        ("text-recognition", "deterministic-ocr-v1")
     };
     json!({
         "schemaVersion": SCHEMA_VERSION,
@@ -736,12 +1024,30 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
     })
 }
 
+/// The OCR projection of a failed capture: every page failed, nothing recognized.
+fn build_failed_ocr(record: &CaptureRecord) -> Value {
+    let mut projection = build_ocr(record);
+    let failure = json!({ "code": CAPTURE_FAILURE_CODE, "message": CAPTURE_FAILURE_MESSAGE });
+    if let Some(pages) = projection["pages"].as_array_mut() {
+        for page in pages {
+            let mut failed = json!({
+                "page": page["page"], "status": "failed", "raster": page["raster"],
+                "provenance": page["provenance"], "failure": failure,
+            });
+            std::mem::swap(page, &mut failed);
+        }
+    }
+    projection["status"] = json!("failed");
+    projection["failure"] = failure;
+    projection
+}
+
 fn build_ocr(record: &CaptureRecord) -> Value {
     let provenance = json!({
-        "status": "resolved", "engine": "windowsml-ocr",
+        "status": "resolved", "engine": "text-recognition",
         "model": record.raw["extractionEngine"]["model"],
         "modelDigest": record.raw["extractionEngine"]["digest"],
-        "device": "fake", "profileId": "deterministic-windowsml-v1",
+        "device": "fake", "profileId": "deterministic-ocr-v1",
         "profileSpecSha256": sha256_hex(b"deterministic-ocr-profile"),
     });
     let pages = record.raw["segments"]
@@ -759,8 +1065,8 @@ fn build_ocr(record: &CaptureRecord) -> Value {
         .collect::<Vec<_>>();
     json!({
         "apiVersion": API_VERSION, "schemaVersion": "3", "captureId": record.capture_id,
-        "status": "completed", "source": record.source, "pageCount": pages.len(), "pages": pages,
-        "runtimeVersion": RUNTIME_VERSION, "contractSha256": sha256_hex(b"deterministic-ocr-contract"),
+        "status": "completed", "source": record.source, "processedPageCount": pages.len(), "pages": pages,
+        "runtimeVersion": RUNTIME_VERSION, "contractSetSha256": sha256_hex(b"deterministic-ocr-contract"),
         "provenance": provenance, "warnings": [], "failure": null, "createdAt": CREATED_AT,
     })
 }
@@ -889,30 +1195,35 @@ fn valid_requirement_id(value: &str) -> bool {
 
 fn known_requirement(requirement_id: &str, status: &str) -> Option<Value> {
     Some(match requirement_id {
-        "windowsml-ocr" => requirement(
-            "windowsml-ocr",
-            "ocr",
-            "WindowsML OCR",
+        "text-recognition" => requirement(
+            "text-recognition",
+            "Text recognition",
             &["pdf", "image"],
             status,
         ),
         "speech-recognition" => requirement(
             "speech-recognition",
-            "stt",
             "Speech recognition",
-            &["audio"],
+            &["recording"],
             status,
         ),
-        "ollama-runtime" => requirement(
-            "ollama-runtime",
-            "llm-runtime",
-            "Ollama",
-            &["structuring"],
+        "speaker-diarization" => requirement(
+            "speaker-diarization",
+            "Speaker diarization",
+            &["recording"],
             status,
         ),
-        "capture-ollama-model" => requirement(
-            "capture-ollama-model",
-            "llm-model",
+        "vertical-japanese-reader" => requirement(
+            "vertical-japanese-reader",
+            "Vertical Japanese reader",
+            &["pdf", "image"],
+            status,
+        ),
+        "structuring-runtime" => {
+            requirement("structuring-runtime", "Ollama", &["structuring"], status)
+        }
+        "structuring-model" => requirement(
+            "structuring-model",
             "Capture structuring model",
             &["structuring"],
             status,
@@ -932,8 +1243,8 @@ fn model_option(option_id: &str, display_name: &str, model_reference: &str, stat
         "displayName": display_name,
         "modelReference": model_reference,
         "expectedDigest": null,
-        "expectedBytes": null,
-        "profileId": format!("capture-workbench-{base_id}-structure-v1"),
+        "downloadBytes": null,
+        "profileId": format!("{base_id}-structure-v1"),
         "profileSpecSha256": "b".repeat(64),
         "status": status,
     })
@@ -941,14 +1252,13 @@ fn model_option(option_id: &str, display_name: &str, model_reference: &str, stat
 
 fn requirement(
     requirement_id: &str,
-    kind: &str,
     display_name: &str,
     required_for: &[&str],
     status: &str,
 ) -> Value {
     json!({
         "requirementId": requirement_id,
-        "kind": kind,
+        "kind": requirement_id,
         "displayName": display_name,
         "status": status,
         "requiredFor": required_for,
@@ -967,19 +1277,19 @@ fn sniff_source(content: &[u8]) -> Option<(&'static str, &'static str)> {
     } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WEBP" {
         Some(("image", "image/webp"))
     } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WAVE" {
-        Some(("audio", "audio/wav"))
+        Some(("recording", "audio/wav"))
     } else if content.starts_with(b"ID3")
         || content
             .get(..2)
             .is_some_and(|value| matches!(value, b"\xff\xfb" | b"\xff\xf3" | b"\xff\xf2"))
     {
-        Some(("audio", "audio/mpeg"))
+        Some(("recording", "audio/mpeg"))
     } else if content.starts_with(b"fLaC") {
-        Some(("audio", "audio/flac"))
+        Some(("recording", "audio/flac"))
     } else if content.starts_with(b"OggS") {
-        Some(("audio", "audio/ogg"))
+        Some(("recording", "audio/ogg"))
     } else if content.len() >= 12 && &content[4..8] == b"ftyp" {
-        Some(("audio", "audio/mp4"))
+        Some(("recording", "audio/mp4"))
     } else {
         None
     }

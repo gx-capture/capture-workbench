@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::BackendConfig,
     contracts::{
-        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        RuntimeCancelUploadInput, RuntimeCaptureEventsInput, RuntimeCreateCaptureInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeRecordingCaptureInput,
+        RuntimeRequirementInput, StructuringModelInstallationStartInput,
     },
     library::{validate_spoken_language, LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
     state::DesktopState,
@@ -23,9 +23,7 @@ pub(crate) mod validation;
 
 pub(crate) use upload_cancellation::{Upload, UploadCancellations};
 
-use transport::{
-    is_http_rejection, request, request_sse, request_with_headers, request_with_retry, RequestBody,
-};
+use transport::{is_http_rejection, request, request_sse, request_with_retry, RequestBody};
 use validation::{
     validate_client_request_id, validate_document_id, validate_model_option_id, validate_opaque_id,
     validate_pdf_page_numbers, validate_requirement_id, validate_structuring_mode,
@@ -108,13 +106,19 @@ pub(crate) fn uninstall_requirement(
     )
 }
 
-pub(crate) fn model_options(state: &DesktopState) -> Result<Value, String> {
-    request_json(state, "GET", "/v2/runtime/model-options", None, None)
+pub(crate) fn structuring_model_options(state: &DesktopState) -> Result<Value, String> {
+    request_json(
+        state,
+        "GET",
+        "/v2/runtime/structuring-model-options",
+        None,
+        None,
+    )
 }
 
-pub(crate) fn start_model_installation(
+pub(crate) fn start_structuring_model_installation(
     state: &DesktopState,
-    input: RuntimeModelInstallationStartInput,
+    input: StructuringModelInstallationStartInput,
 ) -> Result<Value, String> {
     validate_client_request_id(&input.client_request_id)?;
     validate_model_option_id(&input.option_id)?;
@@ -126,7 +130,7 @@ pub(crate) fn start_model_installation(
     request_json(
         state,
         "POST",
-        "/v2/runtime/model-installations",
+        "/v2/runtime/structuring-model-installations",
         Some(RequestBody {
             bytes: body,
             content_type: "application/json".into(),
@@ -135,7 +139,7 @@ pub(crate) fn start_model_installation(
     )
 }
 
-pub(crate) fn model_installation(
+pub(crate) fn structuring_model_installation(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
@@ -143,7 +147,7 @@ pub(crate) fn model_installation(
     request_json(
         state,
         "GET",
-        &format!("/v2/runtime/model-installations/{}", input.id),
+        &format!("/v2/runtime/structuring-model-installations/{}", input.id),
         None,
         None,
     )
@@ -168,7 +172,7 @@ pub(crate) fn create_capture(
     let source_kind = match source.media_type.as_str() {
         "application/pdf" => "pdf",
         "image/png" | "image/jpeg" => "image",
-        media_type if RECORDING_MEDIA_TYPES.contains(&media_type) => "audio",
+        media_type if RECORDING_MEDIA_TYPES.contains(&media_type) => "recording",
         _ => return Err("Capture source media type is unsupported.".into()),
     };
     if let Some(page_numbers) = input.pdf_page_numbers.as_deref() {
@@ -210,7 +214,7 @@ pub(crate) fn create_capture(
     finish_capture_start(&config, &ingestion_id, result)
 }
 
-fn validate_streaming_capture_input(input: &RuntimeStreamingCaptureInput) -> Result<(), String> {
+fn validate_recording_capture_input(input: &RuntimeRecordingCaptureInput) -> Result<(), String> {
     validate_document_id(&input.document_id)?;
     validate_client_request_id(&input.client_request_id)?;
     validate_structuring_mode(&input.structuring_mode)?;
@@ -220,23 +224,23 @@ fn validate_streaming_capture_input(input: &RuntimeStreamingCaptureInput) -> Res
     Ok(())
 }
 
-pub(crate) fn start_streaming_capture(
+pub(crate) fn start_recording_capture(
     state: &DesktopState,
     library: &LibraryStore,
-    input: RuntimeStreamingCaptureInput,
+    input: RuntimeRecordingCaptureInput,
     upload: &Upload,
 ) -> Result<Value, String> {
-    validate_streaming_capture_input(&input)?;
+    validate_recording_capture_input(&input)?;
     let source = library.runtime_source_file(&input.document_id)?;
     // Audio, or video whose audio track is transcribed.
     if !RECORDING_MEDIA_TYPES.contains(&source.media_type.as_str()) {
         return Err("Progressive capture is available only for recordings.".into());
     }
     let config = state.backend_config()?;
-    start_streaming_capture_inner(&config, &source, &input, upload)
+    start_recording_capture_inner(&config, &source, &input, upload)
 }
 
-fn streaming_capture_body(input: &RuntimeStreamingCaptureInput, ingestion_id: &str) -> Value {
+fn recording_capture_body(input: &RuntimeRecordingCaptureInput, ingestion_id: &str) -> Value {
     let mut body = serde_json::Map::new();
     body.insert("clientRequestId".into(), json!(input.client_request_id));
     body.insert("ingestionId".into(), json!(ingestion_id));
@@ -249,16 +253,16 @@ fn streaming_capture_body(input: &RuntimeStreamingCaptureInput, ingestion_id: &s
     Value::Object(body)
 }
 
-fn start_streaming_capture_inner(
+fn start_recording_capture_inner(
     config: &BackendConfig,
     source: &RuntimeSourceFile,
-    input: &RuntimeStreamingCaptureInput,
+    input: &RuntimeRecordingCaptureInput,
     upload: &Upload,
 ) -> Result<Value, String> {
     let open_body = RequestBody {
         bytes: serde_json::to_vec(&json!({
             "clientRequestId": format!("{}-ingestion", input.client_request_id),
-            "kind": "audio",
+            "kind": "recording",
             "mode": "file",
             "fileName": source.file_name.clone(),
             "mediaType": source.media_type.clone(),
@@ -270,7 +274,7 @@ fn start_streaming_capture_inner(
     let ingestion_id =
         upload_ingestion_source(config, source, open_body, &input.client_request_id, upload)?;
     let capture_body = RequestBody {
-        bytes: serde_json::to_vec(&streaming_capture_body(input, &ingestion_id))
+        bytes: serde_json::to_vec(&recording_capture_body(input, &ingestion_id))
             .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
         content_type: "application/json".into(),
     };
@@ -379,66 +383,28 @@ fn upload_ingestion_source(
     Ok(ingestion_id.to_string())
 }
 
-pub(crate) fn streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    streaming_value(state, "GET", &input.id, "", None, None)
-}
-
-pub(crate) fn streaming_partial(
+pub(crate) fn capture_partial(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
     null_for_http_rejection(
-        streaming_value(state, "GET", &input.id, "/partial", None, None),
+        capture_value(state, "GET", &input.id, "/partial", None),
         409,
     )
 }
 
-pub(crate) fn streaming_result(
+/// Reads the capture's events after `lastEventId` from the runtime's SSE stream.
+pub(crate) fn capture_events(
     state: &DesktopState,
-    input: RuntimeIdInput,
+    input: RuntimeCaptureEventsInput,
 ) -> Result<Value, String> {
-    streaming_value(state, "GET", &input.id, "/result", None, None)
-}
-
-pub(crate) fn streaming_structure(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    streaming_value(state, "POST", &input.id, "/structure", None, None)
-}
-
-pub(crate) fn streaming_events(
-    state: &DesktopState,
-    input: RuntimeStreamingEventsInput,
-) -> Result<Value, String> {
+    validate_opaque_id(&input.id)?;
+    let config = state.backend_config()?;
     let last_event_id = input.last_event_id.map(|value| value.to_string());
-    streaming_value(
-        state,
-        "GET",
-        &input.id,
-        "/events",
-        None,
+    request_sse(
+        &config,
+        &capture_path(&input.id, "/events"),
         last_event_id.as_deref(),
-    )
-}
-
-pub(crate) fn cancel_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    streaming_value(state, "POST", &input.id, "/cancel", None, None)
-}
-
-pub(crate) fn delete_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    null_for_http_rejection(
-        streaming_value(state, "DELETE", &input.id, "", None, None),
-        404,
     )
 }
 
@@ -534,10 +500,6 @@ pub(crate) fn capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Val
     capture_value(state, "GET", &input.id, "", None)
 }
 
-pub(crate) fn cancel_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "POST", &input.id, "/cancel", None)
-}
-
 pub(crate) fn raw_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
     null_for_http_rejection(capture_value(state, "GET", &input.id, "/raw", None), 409)
 }
@@ -577,23 +539,6 @@ fn capture_value(
 
 fn capture_path(capture_id: &str, suffix: &str) -> String {
     format!("/v2/captures/{capture_id}{suffix}")
-}
-
-fn streaming_value(
-    state: &DesktopState,
-    method: &str,
-    capture_id: &str,
-    suffix: &str,
-    body: Option<RequestBody>,
-    last_event_id: Option<&str>,
-) -> Result<Value, String> {
-    validate_opaque_id(capture_id)?;
-    let config = state.backend_config()?;
-    let path = format!("/v2/captures/{capture_id}{suffix}");
-    if suffix == "/events" {
-        return request_sse(&config, &path, last_event_id);
-    }
-    request_with_headers(&config, method, &path, body, None, &[])
 }
 
 fn request_json(
@@ -696,13 +641,13 @@ mod tests {
                 "captureId":"capture-1",
                 "status":"completed",
                 "source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":1024},
-                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
-                "pageCount":1,
+                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
+                "processedPageCount":1,
                 "runtimeVersion":""#,
                 env!("CARGO_PKG_VERSION"),
                 r#"",
-                "contractSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+                "contractSetSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
                 "createdAt":"2026-08-14T00:00:00Z"
             }"#
             );
@@ -1053,10 +998,10 @@ mod tests {
             let count = stream.read(&mut request).expect("request uninstall");
             let request = String::from_utf8_lossy(&request[..count]);
             assert!(request.starts_with(
-                "DELETE /v2/runtime/requirements/windowsml-ocr/installation HTTP/1.1"
+                "DELETE /v2/runtime/requirements/text-recognition/installation HTTP/1.1"
             ));
             assert!(request.contains("Authorization: Bearer secret-token"));
-            let body = r#"{"requirementId":"windowsml-ocr","kind":"runtime","displayName":"WindowsML OCR","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
+            let body = r#"{"requirementId":"text-recognition","kind":"text-recognition","displayName":"Text recognition","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1091,19 +1036,38 @@ mod tests {
         assert!(uninstall_requirement(
             &state,
             RuntimeRequirementInput {
-                requirement_id: "../windowsml-ocr".into(),
+                requirement_id: "../text-recognition".into(),
             },
         )
         .is_err());
 
-        let removed = uninstall_requirement(
+        assert!(uninstall_requirement(
             &state,
             RuntimeRequirementInput {
                 requirement_id: "windowsml-ocr".into(),
             },
         )
+        .is_err());
+
+        for retired_id in ["ollama-runtime", "capture-ollama-model"] {
+            let error = uninstall_requirement(
+                &state,
+                RuntimeRequirementInput {
+                    requirement_id: retired_id.into(),
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error, "Capture Runtime requirement identifier is invalid.");
+        }
+
+        let removed = uninstall_requirement(
+            &state,
+            RuntimeRequirementInput {
+                requirement_id: "text-recognition".into(),
+            },
+        )
         .expect("uninstall");
-        assert_eq!(removed["requirementId"], "windowsml-ocr");
+        assert_eq!(removed["requirementId"], "text-recognition");
         assert_eq!(removed["status"], "installable");
 
         let conflict = uninstall_requirement(
@@ -1267,7 +1231,7 @@ mod tests {
                 &vec![b'x'; STREAM_CHUNK_BYTES + 1],
                 "audio/mpeg",
             );
-            let input = RuntimeStreamingCaptureInput {
+            let input = RuntimeRecordingCaptureInput {
                 document_id: "0123456789abcdef0123456789abcdef".into(),
                 client_request_id: "cancel-boundary".into(),
                 structuring_mode: "host".into(),
@@ -1326,7 +1290,7 @@ mod tests {
             });
             let result = (|| {
                 let upload = registry.begin(&input.client_request_id)?;
-                start_streaming_capture_inner(&config, &source, &input, &upload)
+                start_recording_capture_inner(&config, &source, &input, &upload)
             })();
             server.join().expect("server");
             match boundary {
@@ -1354,7 +1318,7 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
         let config = test_backend_config(listener.local_addr().expect("address").port());
         let (_guard, source) = create_test_source_file("cancel-retry", b"ID3audio", "audio/mpeg");
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "cancel-retry".into(),
             structuring_mode: "host".into(),
@@ -1398,7 +1362,7 @@ mod tests {
         });
         let result = (|| {
             let upload = registry.begin(&input.client_request_id)?;
-            start_streaming_capture_inner(&config, &source, &input, &upload)
+            start_recording_capture_inner(&config, &source, &input, &upload)
         })();
         server.join().expect("server");
         assert_eq!(
@@ -1414,7 +1378,7 @@ mod tests {
         let (_guard, source) =
             create_test_source_file("streaming-rec", b"small audio content", "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
@@ -1471,12 +1435,12 @@ mod tests {
             (ingestion_key, capture_key)
         });
 
-        let result = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+        let result = start_recording_capture_inner(&config, &source, &input, &test_upload())
             .expect("capture call succeeds");
         let (ingestion_key, capture_key) = server.join().expect("server thread");
 
         assert_eq!(result["captureId"], "capture-stream-1");
-        assert_eq!(result["status"], "created");
+        assert_eq!(result["status"], "extracting");
         assert_eq!(ingestion_key, "test-client-req-ingestion");
         assert_eq!(capture_key, "test-client-req");
     }
@@ -1488,7 +1452,7 @@ mod tests {
         let (_guard, source) =
             create_test_source_file("streaming-invalid-id", b"audio-bytes", "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
@@ -1510,7 +1474,7 @@ mod tests {
             .expect("write response");
         });
 
-        let error = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+        let error = start_recording_capture_inner(&config, &source, &input, &test_upload())
             .expect_err("should reject invalid ingestionId");
         assert_eq!(error, "Capture Runtime identifier is invalid.");
         server.join().expect("server thread");
@@ -1523,7 +1487,7 @@ mod tests {
         let (_guard, source) =
             create_test_source_file("streaming-fail", b"audio-bytes", "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
@@ -1591,7 +1555,7 @@ mod tests {
             .expect("write delete response");
         });
 
-        let error = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+        let error = start_recording_capture_inner(&config, &source, &input, &test_upload())
             .expect_err("capture start should fail");
         assert!(error.contains("HTTP 500"));
         server.join().expect("server thread");
@@ -1601,8 +1565,8 @@ mod tests {
             "protocolVersion": "2",
             "captureId": capture_id,
             "ingestionId": ingestion_id,
-            "kind": "audio",
-            "status": "created",
+            "kind": "recording",
+            "status": "extracting",
             "progress": 0.0,
             "partialRevision": 0,
             "lastEventSequence": 0,
@@ -1623,7 +1587,7 @@ mod tests {
         let expected_digest = hex_digest(&content);
         let (_guard, source) = create_test_source_file("replay", &content, "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "replay-request".into(),
             structuring_mode: "host".into(),
@@ -1708,7 +1672,7 @@ mod tests {
             // forbidden extra request is observed rather than connection-refused.
             listener
         });
-        let result = start_streaming_capture_inner(&config, &source, &input, &test_upload());
+        let result = start_recording_capture_inner(&config, &source, &input, &test_upload());
         let listener = server.join().expect("server");
         assert!(listener.accept().is_err(), "unexpected additional request");
         if succeeds {
@@ -1761,8 +1725,8 @@ mod tests {
     }
 
     #[test]
-    fn streaming_capture_body_serializes_with_and_without_spoken_language() {
-        let with_language: RuntimeStreamingCaptureInput = serde_json::from_value(json!({
+    fn recording_capture_body_serializes_with_and_without_spoken_language() {
+        let with_language: RuntimeRecordingCaptureInput = serde_json::from_value(json!({
             "documentId": "0123456789abcdef0123456789abcdef",
             "clientRequestId": "lang-req",
             "structuringMode": "runtime",
@@ -1770,34 +1734,34 @@ mod tests {
             "spokenLanguage": "ja",
         }))
         .expect("input with spokenLanguage");
-        validate_streaming_capture_input(&with_language).expect("valid language");
-        let encoded_with = streaming_capture_body(&with_language, "ing-1");
+        validate_recording_capture_input(&with_language).expect("valid language");
+        let encoded_with = recording_capture_body(&with_language, "ing-1");
         assert_eq!(encoded_with["spokenLanguage"], "ja");
         assert_eq!(encoded_with["identifySpeakers"], true);
 
-        let without_language: RuntimeStreamingCaptureInput = serde_json::from_value(json!({
+        let without_language: RuntimeRecordingCaptureInput = serde_json::from_value(json!({
             "documentId": "0123456789abcdef0123456789abcdef",
             "clientRequestId": "nolang-req",
             "structuringMode": "runtime",
         }))
         .expect("input without spokenLanguage");
-        validate_streaming_capture_input(&without_language).expect("none language");
-        let encoded_without = streaming_capture_body(&without_language, "ing-2");
+        validate_recording_capture_input(&without_language).expect("none language");
+        let encoded_without = recording_capture_body(&without_language, "ing-2");
         assert!(encoded_without.get("spokenLanguage").is_none());
         assert_eq!(encoded_without["identifySpeakers"], false);
     }
 
     #[test]
-    fn streaming_capture_rejects_invalid_spoken_language_without_paths() {
+    fn recording_capture_rejects_invalid_spoken_language_without_paths() {
         for bad in ["", "tlh", "zh-TW", "C:\\recordings\\secret.mp3"] {
-            let input = RuntimeStreamingCaptureInput {
+            let input = RuntimeRecordingCaptureInput {
                 document_id: "0123456789abcdef0123456789abcdef".into(),
                 client_request_id: "bad-lang".into(),
                 structuring_mode: "runtime".into(),
                 identify_speakers: false,
                 spoken_language: Some(bad.into()),
             };
-            let error = validate_streaming_capture_input(&input).expect_err("invalid rejected");
+            let error = validate_recording_capture_input(&input).expect_err("invalid rejected");
             assert_eq!(error, "Capture spoken language is invalid.");
             assert!(!error.contains("secret.mp3"));
         }

@@ -46,17 +46,73 @@ function candidateManifest(version: string) {
   });
 }
 
-function releaseManifest(version: string, classification = 'additive') {
+function releaseManifest(
+  version: string,
+  classification = 'additive',
+  schemaVersion = '1',
+) {
   return JSON.stringify({
-    schemaVersion: '1',
+    schemaVersion,
     status: 'released',
     candidateId: id(version),
     releaseTag: `v${version}`,
     releaseVersion: version,
     components: { candidateManifestSha256: sha(candidateManifest(version)) },
     contractClassification: { classification, baselineRelease: '0.6.3' },
+    ...(schemaVersion === '1' ? { runtimeAssets: [] } : { releaseAssets: [] }),
   });
 }
+
+test('stable resolves v2 using the filename in the protected pointer', () => {
+  const github = new FakeGitHub();
+  const version = '0.8.0';
+  const tag = 'v0.8.0';
+  const name = 'capture-release-manifest-v2.json';
+  const bytes = releaseManifest(version, 'additive', '2');
+  const digest = sha(bytes);
+  github.stable.manifestAssetName = name;
+  github.stable.manifestSha256 = digest;
+  github.index[tag].manifestSha256 = digest;
+  github.setAsset(version, name, bytes, [FULL_SIGNER]);
+
+  const release = resolveCaptureRelease(github, {
+    mode: 'stable',
+    currentVersion: '0.7.2',
+  });
+  assert.equal(release.tag, tag);
+  assert.equal(release.manifestSha256, digest);
+  assert.equal(release.contractSetSha256, contractSet(version));
+
+  github.setAsset(version, name, bytes, [RUNTIME_SIGNER]);
+  assert.throws(
+    () => resolveCaptureRelease(github, { mode: 'stable', currentVersion: '0.7.2' }),
+    /no attestation from .*_publish-github-release.yml/u,
+  );
+  github.setAsset(version, name, bytes + '\n', [FULL_SIGNER]);
+  assert.throws(
+    () => resolveCaptureRelease(github, { mode: 'stable', currentVersion: '0.7.2' }),
+    /digest does not match release-index\/stable.json/u,
+  );
+});
+
+test('stable rejects either filename and schema mismatch after verifying digest and signer', () => {
+  for (const [name, schemaVersion] of [
+    ['capture-release-manifest-v1.json', '2'],
+    ['capture-release-manifest-v2.json', '1'],
+  ]) {
+    const github = new FakeGitHub();
+    const bytes = releaseManifest('0.8.0', 'additive', schemaVersion);
+    const digest = sha(bytes);
+    github.stable.manifestAssetName = name;
+    github.stable.manifestSha256 = digest;
+    github.index['v0.8.0'].manifestSha256 = digest;
+    github.setAsset('0.8.0', name, bytes, [FULL_SIGNER]);
+    assert.throws(
+      () => resolveCaptureRelease(github, { mode: 'stable', currentVersion: '0.7.2' }),
+      /incompatible manifest schema/u,
+    );
+  }
+});
 
 /**
  * A fake GitHub: v0.6.3 and v0.8.0 went through the full route, v0.7.2 and

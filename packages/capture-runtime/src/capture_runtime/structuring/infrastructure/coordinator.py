@@ -34,7 +34,7 @@ from .structuring import (
     validate_structuring_batch,
 )
 
-_QWEN_SINGLE_SEGMENT_PROFILE_ID = "capture-workbench-qwen3.5-0.8b-structure-v1"
+_QWEN_SINGLE_SEGMENT_PROFILE_ID = "qwen3.5-0.8b-structure-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,9 +156,9 @@ class StructuringCoordinator:
     ) -> tuple[StructuringGenerationRequest, ...]:
         """Prepare deterministic provider-ready requests without generating output.
 
-        Pull-session routes use this read-only projection so provider prompts,
-        schemas, and adaptive budgets are produced by the same coordinator as
-        the direct provider adapters.
+        Pull-session routes use this read-only projection to share provider prompts,
+        schemas, session context length, and adaptive output budgets with the
+        direct provider adapters.
         """
 
         requests: list[StructuringGenerationRequest] = []
@@ -186,6 +186,11 @@ class StructuringCoordinator:
             )
         return tuple(requests)
 
+    def _is_single_segment_profile(self, profile_id: str) -> bool:
+        if self._single_segment_profile_id is None:
+            return False
+        return profile_id == self._single_segment_profile_id
+
     def _plans(
         self,
         raw: RawCapture,
@@ -193,7 +198,7 @@ class StructuringCoordinator:
         target_language: str | None,
         profile_id: str,
     ) -> list[StructuringBatchPlan]:
-        if profile_id == self._single_segment_profile_id:
+        if self._is_single_segment_profile(profile_id):
             return [
                 plan
                 for segment in raw.segments
@@ -223,7 +228,7 @@ class StructuringCoordinator:
         target_language: str | None,
         profile_id: str,
     ) -> dict[str, object]:
-        if profile_id == self._single_segment_profile_id:
+        if self._is_single_segment_profile(profile_id):
             return single_segment_generation_schema(
                 segments,
                 target_language=target_language,

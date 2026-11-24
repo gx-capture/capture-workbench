@@ -16,13 +16,14 @@ export interface DiagnosticsRuntimeView {
   readonly runtimeVersion: string | null;
   readonly apiVersion: string | null;
   readonly contractSetVersion: string | null;
-  readonly contractSha256: string | null;
+  readonly contractSetSha256: string | null;
 }
 
 export interface EngineProvenanceView {
   readonly engine: string;
   readonly model: string;
   readonly device: string | null;
+  readonly deviceName: string | null;
   readonly digest: string;
 }
 
@@ -76,7 +77,7 @@ export function buildDiagnosticsRuntimeView(input: {
     contractSetVersion: nonEmpty(
       runtimeStatus?.contractSetVersion ?? ocrCompute?.contractSetVersion,
     ),
-    contractSha256: nonEmpty(ocrCompute?.contractSha256),
+    contractSetSha256: nonEmpty(ocrCompute?.contractSetSha256),
   };
 }
 
@@ -120,6 +121,7 @@ function toEngineProvenance(source: CaptureEngine): EngineProvenanceView {
     engine: source.engine,
     model: source.model,
     device: nonEmpty(source.device),
+    deviceName: nonEmpty(source.deviceName),
     digest: source.digest,
   };
 }

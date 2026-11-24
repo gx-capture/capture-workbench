@@ -8,7 +8,7 @@ This prevents a renderer or consumer app from injecting an arbitrary Ollama
 model or profile. The active selection is persisted by the runtime, not in Web
 Storage, so a restart observes the same verified selection.
 
-The `capture-ollama-model` requirement reports `manual_action_required` until
+The `structuring-model` requirement reports `manual_action_required` until
 an active model option exists. The standalone launch policy does not force a
 fixed model profile.
 

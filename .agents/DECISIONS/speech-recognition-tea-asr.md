@@ -61,7 +61,7 @@ boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Intern
 - The release model-source lock pins the TEA-ASR and aligner files (about 7.5 GB).
   Install-time bounds were raised to admit them (4 GiB per file, 8 GiB per unit, 10 GiB
   across the lock).
-- The `whisper-private-reference` fixture is the owner's 40-minute Taiwanese Mandarin interview
+- The `speech-recognition-private-reference` fixture is the owner's 40-minute Taiwanese Mandarin interview
   (M4A, 39,199,307 bytes), which replaced the earlier MP3 when that file could not be found. Two
   identical runs of the published 0.7.1 worker on CUDA froze its expected normalized output
   (`tea-asr-1.1`, 106 segments) on 2026-10-25. The file stays private and is never committed.
@@ -128,10 +128,10 @@ is CPU PyTorch, so that process has no GPU and stays on CPU.
 
 A development test that transcribes real audio sets
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and
-`CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false`, then checks provenance
+`CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false`, then checks provenance
 `tea-asr-1.1-mini` with device `cuda`, as
 [the research note](../RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md) specifies.
-Release smokes and `whisper-private-reference` stay on `tea-asr-1.1` / `cuda`, and
+Release smokes and `speech-recognition-private-reference` stay on `tea-asr-1.1` / `cuda`, and
 those smokes force the `cuda` pack.
 
 ## Two packs per machine (2026-11-11)

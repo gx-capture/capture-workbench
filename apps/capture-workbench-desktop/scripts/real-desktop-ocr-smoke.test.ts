@@ -13,45 +13,48 @@ import test from 'node:test';
 import type { Browser, Page } from '@playwright/test';
 
 import {
-  acceptanceScreenshot,
   assertDiagnosticsMatchesDurableOcr,
   assertPdfPageOneSemanticEvidence,
   assertExpectedOcrDevice,
   assertOcrExecutionProofMatchesInstalledJourney,
   assertRealDesktopSmokeEvidence,
-  closeOwnedDesktopRoot,
-  connectToPackagedPage,
-  deleteCompletedDocument,
   DesktopOcrTerminalFailure,
   DesktopOcrLifecycleFailure,
   emitAcceptanceSemanticEvidence,
-  establishOwnedDesktopLaunch,
   extractDurableOcrSegments,
-  finalizeDesktopTeardown,
   isRealOcrWorkerFailure,
   isOwnedSmokeDocumentName,
   parseOcrProvenance,
-  pinViewportToWindow,
   readAndAssertVisibleOcrPages,
   readDurableOcrProvenance,
   readOcrComputeModeFromSettings,
   readOcrProvenance,
-  readWindowsMlOcrRequirementStatus,
-  requestDesktopTeardown,
+  readOcrRequirementStatus,
   realDesktopRuntimeReadyTimeoutMs,
-  realDesktopTeardownTimeoutMs,
   resolveDesktopRuntimePreflight,
-  resolveLocalInstalledRuntimeIdentity,
-  resolveDesktopTeardownMode,
   resolveExpectedOcrDevice,
+  resolveLocalInstalledRuntimeIdentity,
   runOcrFirstRunSetup,
   runtimeSetupDiagnostics,
-  scrubLocalModelEnvironment,
   safeTerminalDesktopOcrFailure,
   verifyInstalledOcrExecutionProof,
-  visibleRuntimeError,
   waitForDesktopOcrCompletion,
 } from './real-desktop-ocr-smoke.ts';
+import {
+  checkpointScreenshot,
+  closeOwnedDesktopRoot,
+  connectToPackagedPage,
+  deleteCompletedDocument,
+  establishOwnedDesktopLaunch,
+  finalizeDesktopTeardown,
+  pinViewportToWindow,
+  requestDesktopTeardown,
+  realDesktopTeardownTimeoutMs,
+  resolveDesktopTeardownMode,
+  scrubLocalModelEnvironment,
+  visibleRuntimeError,
+} from './packaged-workbench-session.ts';
+
 import type { OcrSemanticEvidenceV1 } from './ocr-semantic-evidence.ts';
 // eslint-disable-next-line @nx/enforce-module-boundaries -- test crosses the workspace journal seam.
 import { openAcceptanceCheckpointWriter } from '../../../tools/acceptance-checkpoint-journal.ts';
@@ -123,7 +126,7 @@ function executionProofFixture(): Record<string, unknown> {
     runtimeSha256: 'e'.repeat(64),
     workerSha256: 'f'.repeat(64),
     modelSha256: '1'.repeat(64),
-    profileId: 'capture-workbench-ocr-pipeline-v1',
+    profileId: 'ocr-pipeline-v1',
     profileSpecSha256: '2'.repeat(64),
     contractSetSha256: '3'.repeat(64),
   };
@@ -143,7 +146,7 @@ function phase1PageOnePdfSemanticFixture(): OcrSemanticEvidenceV1 {
     sourceSha256: '4'.repeat(64),
     captureId: 'capture-1',
     status: 'completed',
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     pageCount: 1,
     pages: [{
       page: 1,
@@ -162,11 +165,11 @@ function phase1PageOnePdfSemanticFixture(): OcrSemanticEvidenceV1 {
     provenance: {
       runtimeVersion: RELEASE_VERSION,
       contractSha256: '5'.repeat(64),
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'6'.repeat(64)}`,
-      device: 'windowsml-dml',
-      profileId: 'capture-workbench-ocr-pipeline-v1',
+      device: 'directml',
+      profileId: 'ocr-pipeline-v1',
       profileSpecSha256: '7'.repeat(64),
       workerSha256: '8'.repeat(64),
     },
@@ -885,7 +888,7 @@ test('non-acceptance desktop OCR evidence requires OCR-only checkpoint invariant
     structuredBlockCount: 0,
     expectedAnchorCount: 4,
     matchedAnchorCount: 4,
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     documentDeletedAfterVerification: true,
   };
 
@@ -938,7 +941,7 @@ test('Phase 1 OCR-only acceptance keeps OCR semantic, projection, GPU, and clean
     structuredBlockCount: 0,
     expectedAnchorCount: 4,
     matchedAnchorCount: 4,
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     documentDeletedAfterVerification: true,
     ocrExecutionProof: proof,
   };
@@ -957,7 +960,7 @@ test('Phase 1 OCR-only acceptance keeps OCR semantic, projection, GPU, and clean
       sourceSha256: 'd'.repeat(64),
       runtimeSha256: 'e'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      contractSha256: '3'.repeat(64),
+      contractSetSha256: '3'.repeat(64),
       sourceKind: 'pdf',
     });
     for (const item of [
@@ -973,7 +976,7 @@ test('Phase 1 OCR-only acceptance keeps OCR semantic, projection, GPU, and clean
           sourceSha256: 'd'.repeat(64),
           runtimeSha256: 'e'.repeat(64),
           workerSha256: 'f'.repeat(64),
-          contractSha256: '3'.repeat(64),
+          contractSetSha256: '3'.repeat(64),
           sourceKind: 'pdf',
         }),
         item[2],
@@ -1223,7 +1226,7 @@ test('Phase 1 installed acceptance wires OCR proof validation before deferred st
       sourceSha256: 'd'.repeat(64),
       runtimeSha256: 'e'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      contractSha256: '3'.repeat(64),
+      contractSetSha256: '3'.repeat(64),
     };
     const verified = await verifyInstalledOcrExecutionProof({
       artifactRoot: proofRoot,
@@ -1380,21 +1383,21 @@ test('real desktop OCR cleanup owns only UUID-named smoke documents', () => {
 test('DirectML smoke CLI requirement rejects CPU provenance', () => {
   assert.equal(
     resolveExpectedOcrDevice(
-      ['--expected-ocr-device', 'windowsml-dml'],
+      ['--expected-ocr-device', 'directml'],
       'cpu',
     ),
-    'windowsml-dml',
+    'directml',
   );
   assert.doesNotThrow(() =>
-    assertExpectedOcrDevice('windowsml-dml', 'windowsml-dml'),
+    assertExpectedOcrDevice('directml', 'directml'),
   );
   assert.throws(
-    () => assertExpectedOcrDevice('cpu', 'windowsml-dml'),
-    /used cpu; expected windowsml-dml/u,
+    () => assertExpectedOcrDevice('cpu', 'directml'),
+    /used cpu; expected directml/u,
   );
   assert.throws(
     () => resolveExpectedOcrDevice(['--expected-ocr-device', 'unknown']),
-    /must be windowsml-dml or cpu/u,
+    /must be directml or cpu/u,
   );
 });
 
@@ -1821,7 +1824,7 @@ test('real desktop teardown rejects unknown modes instead of selecting a PID fal
   );
 });
 
-test('OCR screenshot evidence masks whole privacy-sensitive result panes and metadata', async () => {
+test('checkpoint screenshots mask private OCR and ASR content and values that change between runs', async () => {
   const selectors: string[] = [];
   const testIds: string[] = [];
   let capturedOptions: { mask?: unknown[] } | undefined;
@@ -1842,11 +1845,10 @@ test('OCR screenshot evidence masks whole privacy-sensitive result panes and met
     },
   } as unknown as Page;
   const screenshots: string[] = [];
-  const acceptance = { artifactRoot: 'C:\\artifacts' } as unknown as Parameters<typeof acceptanceScreenshot>[1];
 
-  await acceptanceScreenshot(
+  await checkpointScreenshot(
     fakePage,
-    acceptance,
+    'C:\\artifacts',
     screenshots,
     '01-consent-required',
     async () => {
@@ -1870,8 +1872,19 @@ test('OCR screenshot evidence masks whole privacy-sensitive result panes and met
       { kind: 'testId', testId: 'diagnostics-document-filename' },
       { kind: 'locator', selector: '[data-testid="ocr-queue-row"] td:first-child' },
       { kind: 'locator', selector: '[data-testid="history-row"] td:nth-child(2)' },
+      { kind: 'locator', selector: '[data-testid="history-row"] td:nth-child(5)' },
       { kind: 'testId', testId: 'result-source-pane' },
       { kind: 'testId', testId: 'result-text-pane' },
+      { kind: 'locator', selector: '[data-testid="asr-queue-row"] td:first-child' },
+      { kind: 'testId', testId: 'asr-row-duration' },
+      { kind: 'locator', selector: '[data-testid="asr-live-card"] h2' },
+      { kind: 'testId', testId: 'asr-live-heard' },
+      { kind: 'testId', testId: 'streaming-partial' },
+      { kind: 'testId', testId: 'asr-live-line' },
+      { kind: 'testId', testId: 'result-player' },
+      { kind: 'testId', testId: 'result-transcript-table' },
+      { kind: 'testId', testId: 'result-speaker-name' },
+      { kind: 'testId', testId: 'result-speaker-input' },
     ],
   );
   assert.deepEqual(screenshots, [join('C:\\artifacts', '01-consent-required.png')]);
@@ -1880,14 +1893,14 @@ test('OCR screenshot evidence masks whole privacy-sensitive result panes and met
 test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   assert.deepEqual(
     parseOcrProvenance({
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
-      device: 'windowsml-dml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
+      device: 'directml',
     }),
     {
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
-      device: 'windowsml-dml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
+      device: 'directml',
     },
   );
   assert.throws(
@@ -1900,148 +1913,150 @@ test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   );
 });
 
-test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem failure, and returns to /ocr', async () => {
-  let route: 'ocr' | 'settings-engines' = 'ocr';
-  let ocrChecked = false;
-  let asrChecked = true;
-  let speakersChecked = true;
-  let installClicks = 0;
-  let retryClicks = 0;
-  let detailsExpanded = false;
-  let ocrEngineStatus: 'installable' | 'running' | 'failed' | 'ready' = 'installable';
-  let pollCount = 0;
-  const events: string[] = [];
+for (const retriedCode of ['installation_io_failed', 'installation_timeout'] as const) {
+  test(`first-run OCR setup unchecks ASR and speakers, retries once on ${retriedCode}, and returns to /ocr`, async () => {
+    let route: 'ocr' | 'settings-engines' = 'ocr';
+    let ocrChecked = false;
+    let asrChecked = true;
+    let speakersChecked = true;
+    let installClicks = 0;
+    let retryClicks = 0;
+    let detailsExpanded = false;
+    let ocrEngineStatus: 'installable' | 'running' | 'failed' | 'ready' = 'installable';
+    let pollCount = 0;
+    const events: string[] = [];
 
-  const testIdLocator = (testId: string) => ({
-    waitFor: async () => undefined,
-    isVisible: async () => {
-      if (testId === 'page-ocr') return route === 'ocr';
-      if (testId === 'page-settings-engines') return route === 'settings-engines';
-      if (testId === 'first-run-card') return route === 'ocr' && ocrEngineStatus === 'installable';
-      if (testId === 'first-run-checkbox-ocr' || testId === 'first-run-checkbox-asr' || testId === 'first-run-checkbox-speakers') {
-        return route === 'ocr' && ocrEngineStatus === 'installable';
-      }
-      if (testId === 'diagnostics-runtime-error') return false;
-      return route === 'ocr';
-    },
-    isEnabled: async () => {
-      if (testId === 'first-run-install') return ocrChecked && !asrChecked && !speakersChecked;
-      return true;
-    },
-    count: async () => (testId.startsWith('first-run-checkbox-') && ocrEngineStatus !== 'installable' ? 0 : 1),
-    isChecked: async () => {
-      if (testId === 'first-run-checkbox-ocr') return ocrChecked;
-      if (testId === 'first-run-checkbox-asr') return asrChecked;
-      if (testId === 'first-run-checkbox-speakers') return speakersChecked;
-      return false;
-    },
-    check: async () => {
-      if (testId === 'first-run-checkbox-ocr') ocrChecked = true;
-    },
-    uncheck: async () => {
-      if (testId === 'first-run-checkbox-asr') asrChecked = false;
-      if (testId === 'first-run-checkbox-speakers') speakersChecked = false;
-    },
-    click: async () => {
-      if (testId === 'first-run-install') {
-        assert.equal(ocrChecked, true);
-        assert.equal(asrChecked, false);
-        assert.equal(speakersChecked, false);
-        installClicks += 1;
-        ocrEngineStatus = 'failed';
-      } else if (testId === 'nav-settings') {
-        route = 'settings-engines';
-      } else if (testId === 'nav-ocr') {
-        route = 'ocr';
-      }
-    },
-    getAttribute: async (name: string) => {
-      if (testId === 'runtime-status' && name === 'data-state') return 'ready';
-      return null;
-    },
-    textContent: async () => null,
-    evaluateAll: async () => (testId === 'engine-row'
-      ? [{ id: 'windowsml-ocr', status: ocrEngineStatus, text: 'OCR' }]
-      : []),
+    const testIdLocator = (testId: string) => ({
+      waitFor: async () => undefined,
+      isVisible: async () => {
+        if (testId === 'page-ocr') return route === 'ocr';
+        if (testId === 'page-settings-engines') return route === 'settings-engines';
+        if (testId === 'first-run-card') return route === 'ocr' && ocrEngineStatus === 'installable';
+        if (testId === 'first-run-checkbox-ocr' || testId === 'first-run-checkbox-asr' || testId === 'first-run-checkbox-speakers') {
+          return route === 'ocr' && ocrEngineStatus === 'installable';
+        }
+        if (testId === 'diagnostics-runtime-error') return false;
+        return route === 'ocr';
+      },
+      isEnabled: async () => {
+        if (testId === 'first-run-install') return ocrChecked && !asrChecked && !speakersChecked;
+        return true;
+      },
+      count: async () => (testId.startsWith('first-run-checkbox-') && ocrEngineStatus !== 'installable' ? 0 : 1),
+      isChecked: async () => {
+        if (testId === 'first-run-checkbox-ocr') return ocrChecked;
+        if (testId === 'first-run-checkbox-asr') return asrChecked;
+        if (testId === 'first-run-checkbox-speakers') return speakersChecked;
+        return false;
+      },
+      check: async () => {
+        if (testId === 'first-run-checkbox-ocr') ocrChecked = true;
+      },
+      uncheck: async () => {
+        if (testId === 'first-run-checkbox-asr') asrChecked = false;
+        if (testId === 'first-run-checkbox-speakers') speakersChecked = false;
+      },
+      click: async () => {
+        if (testId === 'first-run-install') {
+          assert.equal(ocrChecked, true);
+          assert.equal(asrChecked, false);
+          assert.equal(speakersChecked, false);
+          installClicks += 1;
+          ocrEngineStatus = 'failed';
+        } else if (testId === 'nav-settings') {
+          route = 'settings-engines';
+        } else if (testId === 'nav-ocr') {
+          route = 'ocr';
+        }
+      },
+      getAttribute: async (name: string) => {
+        if (testId === 'runtime-status' && name === 'data-state') return 'ready';
+        return null;
+      },
+      textContent: async () => null,
+      evaluateAll: async () => (testId === 'engine-row'
+        ? [{ id: 'text-recognition', status: ocrEngineStatus, text: 'OCR' }]
+        : []),
+    });
+
+    const engineRowLocator = {
+      waitFor: async () => undefined,
+      getAttribute: async (name: string) => {
+        if (name !== 'data-status') return null;
+        pollCount += 1;
+        if (pollCount >= 2 && retryClicks === 1) ocrEngineStatus = 'ready';
+        return ocrEngineStatus;
+      },
+      textContent: async () => 'OCR engine',
+      getByTestId: (childId: string) => {
+        if (childId === 'engine-row-toggle') {
+          return {
+            click: async () => {
+              detailsExpanded = true;
+            },
+          };
+        }
+        if (childId === 'engine-row-retry') {
+          return {
+            isEnabled: async () => true,
+            click: async () => {
+              retryClicks += 1;
+              ocrEngineStatus = 'running';
+            },
+          };
+        }
+        return {};
+      },
+    };
+
+    const engineDetailsLocator = {
+      isVisible: async () => detailsExpanded && ocrEngineStatus === 'failed',
+      getByTestId: (childId: string) => ({
+        textContent: async () => (childId === 'engine-row-error' ? 'Transient disk lock' : ''),
+      }),
+    };
+
+    const fakePage = {
+      url: () => (route === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
+      getByTestId: testIdLocator,
+      locator: (selector: string) => {
+        if (selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]') return engineRowLocator;
+        if (selector === '[data-testid="engine-row-details"][data-requirement-id="text-recognition"]') return engineDetailsLocator;
+        return {};
+      },
+      evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
+        if (payload?.commandName === 'runtime_requirements') {
+          return { items: [{ requirementId: 'text-recognition', status: 'installable' }] };
+        }
+        if (payload?.commandName === 'runtime_list_installations') {
+          return {
+            items: ocrEngineStatus === 'failed'
+              ? [{
+                  requirementId: 'text-recognition',
+                  status: 'failed',
+                  error: { code: retriedCode, message: 'Transient disk lock' },
+                }]
+              : [],
+          };
+        }
+        return {};
+      },
+    } as unknown as Page;
+
+    const result = await runOcrFirstRunSetup(fakePage, {
+      onConsentRequired: async () => { events.push('consent'); },
+      onInstallStarted: () => { events.push('install-started'); },
+      onInstallProgress: async () => { events.push('install-progress'); },
+      onInstallRetry: async () => { events.push('install-retry'); },
+    });
+
+    assert.deepEqual(result, { installRequired: true });
+    assert.equal(installClicks, 1);
+    assert.equal(retryClicks, 1);
+    assert.equal(route, 'ocr');
+    assert.deepEqual(events, ['consent', 'install-started', 'install-progress', 'install-started', 'install-retry']);
   });
-
-  const engineRowLocator = {
-    waitFor: async () => undefined,
-    getAttribute: async (name: string) => {
-      if (name !== 'data-status') return null;
-      pollCount += 1;
-      if (pollCount >= 2 && retryClicks === 1) ocrEngineStatus = 'ready';
-      return ocrEngineStatus;
-    },
-    textContent: async () => 'OCR engine',
-    getByTestId: (childId: string) => {
-      if (childId === 'engine-row-toggle') {
-        return {
-          click: async () => {
-            detailsExpanded = true;
-          },
-        };
-      }
-      if (childId === 'engine-row-retry') {
-        return {
-          isEnabled: async () => true,
-          click: async () => {
-            retryClicks += 1;
-            ocrEngineStatus = 'running';
-          },
-        };
-      }
-      return {};
-    },
-  };
-
-  const engineDetailsLocator = {
-    isVisible: async () => detailsExpanded && ocrEngineStatus === 'failed',
-    getByTestId: (childId: string) => ({
-      textContent: async () => (childId === 'engine-row-error' ? 'Transient disk lock' : ''),
-    }),
-  };
-
-  const fakePage = {
-    url: () => (route === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
-    getByTestId: testIdLocator,
-    locator: (selector: string) => {
-      if (selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]') return engineRowLocator;
-      if (selector === '[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]') return engineDetailsLocator;
-      return {};
-    },
-    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
-      if (payload?.commandName === 'runtime_requirements') {
-        return { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] };
-      }
-      if (payload?.commandName === 'runtime_list_installations') {
-        return {
-          items: ocrEngineStatus === 'failed'
-            ? [{
-                requirementId: 'windowsml-ocr',
-                status: 'failed',
-                error: { code: 'installation_filesystem', message: 'Transient disk lock' },
-              }]
-            : [],
-        };
-      }
-      return {};
-    },
-  } as unknown as Page;
-
-  const result = await runOcrFirstRunSetup(fakePage, {
-    onConsentRequired: async () => { events.push('consent'); },
-    onInstallStarted: () => { events.push('install-started'); },
-    onInstallProgress: async () => { events.push('install-progress'); },
-    onInstallRetry: async () => { events.push('install-retry'); },
-  });
-
-  assert.deepEqual(result, { installRequired: true });
-  assert.equal(installClicks, 1);
-  assert.equal(retryClicks, 1);
-  assert.equal(route, 'ocr');
-  assert.deepEqual(events, ['consent', 'install-started', 'install-progress', 'install-started', 'install-retry']);
-});
+}
 
 test('first-run OCR setup handles already-ready, active-installation, dismissed-card, and non-filesystem failure paths', async () => {
   const readyPage = {
@@ -2054,12 +2069,12 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
     }),
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => (
       payload?.commandName === 'runtime_requirements'
-        ? { items: [{ requirementId: 'windowsml-ocr', status: 'ready' }] }
+        ? { items: [{ requirementId: 'text-recognition', status: 'ready' }] }
         : { items: [] }
     ),
   } as unknown as Page;
 
-  assert.equal(await readWindowsMlOcrRequirementStatus(readyPage), 'ready');
+  assert.equal(await readOcrRequirementStatus(readyPage), 'ready');
   assert.deepEqual(await runOcrFirstRunSetup(readyPage), { installRequired: false });
   await assert.rejects(
     () => runOcrFirstRunSetup(readyPage, { failIfAlreadyReady: true }),
@@ -2101,11 +2116,11 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
       evaluateAll: async () => [],
     }),
     locator: (selector: string) => (
-      selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]' ? dismissedRow : {}
+      selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]' ? dismissedRow : {}
     ),
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => (
       payload?.commandName === 'runtime_requirements'
-        ? { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] }
+        ? { items: [{ requirementId: 'text-recognition', status: 'installable' }] }
         : { items: [] }
     ),
   } as unknown as Page;
@@ -2145,8 +2160,8 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
       evaluateAll: async () => [],
     }),
     locator: (selector: string) => {
-      if (selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]') return failingRow;
-      if (selector === '[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]') {
+      if (selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]') return failingRow;
+      if (selector === '[data-testid="engine-row-details"][data-requirement-id="text-recognition"]') {
         return {
           isVisible: async () => detailsShown,
           getByTestId: () => ({ textContent: async () => 'Checksum mismatch while downloading OCR pack' }),
@@ -2156,12 +2171,12 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
     },
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
       if (payload?.commandName === 'runtime_requirements') {
-        return { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] };
+        return { items: [{ requirementId: 'text-recognition', status: 'installable' }] };
       }
       if (payload?.commandName === 'runtime_list_installations') {
         return {
           items: [{
-            requirementId: 'windowsml-ocr',
+            requirementId: 'text-recognition',
             status: 'failed',
             error: { code: 'download_failed', message: 'Checksum mismatch while downloading OCR pack' },
           }],
@@ -2181,7 +2196,7 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
 
 test('Settings › Compute observation navigates cleanly and supports DML and CPU variants', async () => {
   for (const scenario of [
-    { targetTestId: 'ocr-compute-status', modeAttr: 'gpu-dml', expected: { visible: true, mode: 'gpu-dml' } },
+    { targetTestId: 'ocr-compute-status', modeAttr: 'gpu', expected: { visible: true, mode: 'gpu' } },
     { targetTestId: 'ocr-compute-notice', modeAttr: 'cpu-fallback', expected: { visible: true, mode: 'cpu-fallback' } },
     { targetTestId: 'compute-ocr-detected', modeAttr: null, expected: { visible: true, mode: 'cpu-fallback' } },
   ] as const) {
@@ -2234,9 +2249,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
       getAttribute: async (attr: string) => {
         if (id === 'diagnostics-document' && attr === 'data-document-id') return 'doc-1';
         if (id === 'diagnostics-extraction-provenance') {
-          if (attr === 'data-engine') return 'windowsml-ocr';
-          if (attr === 'data-model') return 'pp-ocrv6-medium-windowsml';
-          if (attr === 'data-device') return 'windowsml-dml';
+          if (attr === 'data-engine') return 'text-recognition';
+          if (attr === 'data-model') return 'pp-ocrv6-medium';
+          if (attr === 'data-device') return 'directml';
           if (attr === 'data-digest') return 'a'.repeat(64);
         }
         return null;
@@ -2258,9 +2273,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
   const provenance = await readOcrProvenance(fakePage, 'doc-1');
   assert.equal(route, 'diagnostics');
   assert.deepEqual(provenance, {
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
-    device: 'windowsml-dml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
+    device: 'directml',
     digest: 'a'.repeat(64),
   });
 
@@ -2276,17 +2291,17 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
   const durable = readDurableOcrProvenance({
     raw: {
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        device: 'windowsml-dml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
+        device: 'directml',
         digest: 'a'.repeat(64),
       },
     },
   });
   assert.deepEqual(durable, {
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
-    device: 'windowsml-dml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
+    device: 'directml',
     digest: 'a'.repeat(64),
   });
 
@@ -2301,9 +2316,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
       getAttribute: async (attr: string) => {
         if (id === 'diagnostics-document' && attr === 'data-document-id') return 'doc-1';
         if (id === 'diagnostics-extraction-provenance') {
-          if (attr === 'data-engine') return 'windowsml-ocr';
-          if (attr === 'data-model') return 'pp-ocrv6-medium-windowsml';
-          if (attr === 'data-device') return 'windowsml-dml';
+          if (attr === 'data-engine') return 'text-recognition';
+          if (attr === 'data-model') return 'pp-ocrv6-medium';
+          if (attr === 'data-device') return 'directml';
           if (attr === 'data-digest') return extractionDigest;
         }
         return null;
@@ -2315,9 +2330,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
   const matchingDetail = {
     raw: {
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        device: 'windowsml-dml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
+        device: 'directml',
         digest: extractionDigest,
       },
     },
@@ -2340,9 +2355,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
         ...matchingDetail,
         raw: {
           extractionEngine: {
-            engine: 'windowsml-ocr',
-            model: 'pp-ocrv6-medium-windowsml',
-            device: 'windowsml-dml',
+            engine: 'text-recognition',
+            model: 'pp-ocrv6-medium',
+            device: 'directml',
             digest: 'e'.repeat(64),
           },
         },
@@ -2424,7 +2439,7 @@ test('runtime error and diagnostics helpers inspect runtime-status and engine ro
       }
       if (id === 'engine-row') {
         return {
-          evaluateAll: async () => [{ id: 'windowsml-ocr', status: 'failed', text: 'OCR' }],
+          evaluateAll: async () => [{ id: 'text-recognition', status: 'failed', text: 'OCR' }],
         };
       }
       return { isVisible: async () => false };
@@ -2447,6 +2462,58 @@ test('runtime error and diagnostics helpers inspect runtime-status and engine ro
   } as unknown as Page;
   assert.equal(await visibleRuntimeError(brokenPage), undefined);
   assert.equal(await runtimeSetupDiagnostics(brokenPage), 'diagnostics-unavailable');
+});
+
+test('reading the runtime error text is bounded when no error element exists', async () => {
+  // Like Playwright Test without an action timeout: textContent on an absent
+  // element waits until its own timeout, and forever without one (0 included).
+  const requestedTimeouts: Array<number | undefined> = [];
+  const absentText = (options?: { timeout?: number }) => {
+    requestedTimeouts.push(options?.timeout);
+    return !options?.timeout
+      ? new Promise<never>(() => undefined)
+      : Promise.reject(new Error(`locator.textContent: Timeout ${options.timeout}ms exceeded.`));
+  };
+  const page = (runtimeState: string) => ({
+    url: () => 'http://tauri.localhost/ocr',
+    getByTestId: (id: string) => {
+      if (id === 'diagnostics-runtime-error') {
+        return {
+          waitFor: async () => { throw new Error('not visible'); },
+          isVisible: async () => false,
+          textContent: absentText,
+        };
+      }
+      if (id === 'runtime-status') {
+        return { getAttribute: async () => runtimeState, click: async () => undefined };
+      }
+      if (id === 'engine-row') return { evaluateAll: async () => [] };
+      return { isVisible: async () => false };
+    },
+  } as unknown as Page);
+  const settled = async <T>(work: Promise<T>): Promise<T | 'unbounded'> => {
+    let guard: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<'unbounded'>((resolve) => { guard = setTimeout(() => resolve('unbounded'), 2_000); }),
+      ]);
+    } finally {
+      clearTimeout(guard);
+    }
+  };
+
+  const diagnostics = await settled(runtimeSetupDiagnostics(page('starting')));
+  assert.notEqual(diagnostics, 'unbounded');
+  assert.equal((JSON.parse(diagnostics as string) as { runtimeError?: string }).runtimeError, undefined);
+  assert.equal(
+    await settled(visibleRuntimeError(page('error'))),
+    'Capture Workbench runtime entered an error state: no detail was rendered.',
+  );
+  assert.ok(requestedTimeouts.length > 0);
+  for (const timeout of requestedTimeouts) {
+    assert.ok(timeout !== undefined && timeout > 0 && timeout <= 1_000, `text read timeout ${timeout} is not a short bound`);
+  }
 });
 
 test('the viewport is pinned to the size the native window really has', async () => {

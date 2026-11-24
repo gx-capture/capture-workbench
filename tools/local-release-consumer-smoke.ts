@@ -49,7 +49,7 @@ export const RUNTIME_ASSET_NAMES = CORE_RUNTIME_ASSET_NAMES;
 
 const ENGINE_CATALOG_NAME = 'capture-engine-catalog.json';
 const WORKER_PROTOCOL_VERSION = '1';
-const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'speech-recognition'] as const;
+const MODEL_REQUIREMENT_IDS = ['text-recognition', 'speech-recognition'] as const;
 // Units a release may or may not carry; when present they are checked like the others.
 const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = [
   'speaker-diarization',

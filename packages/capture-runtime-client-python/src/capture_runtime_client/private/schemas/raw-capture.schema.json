@@ -31,6 +31,19 @@
           "default": null,
           "title": "Device"
         },
+        "deviceName": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Devicename"
+        },
         "elapsedMs": {
           "anyOf": [
             {
@@ -147,7 +160,7 @@
       "title": "CaptureSpeaker",
       "type": "object"
     },
-    "OcrPageScopeV2": {
+    "OcrPageScope": {
       "additionalProperties": false,
       "description": "Public evidence describing which PDF pages entered OCR.\n\nPage numbers are the source PDF's, in ascending order. A selection may\nleave pages out, so the source can have more pages than were read.",
       "properties": {
@@ -182,7 +195,7 @@
         "requestedPageNumbers",
         "processedPageNumbers"
       ],
-      "title": "OcrPageScopeV2",
+      "title": "OcrPageScope",
       "type": "object"
     },
     "PageLocator": {
@@ -381,20 +394,20 @@
       "title": "Speakers",
       "type": "array"
     },
-    "suggestedUnits": {
+    "suggestedRequirementIds": {
       "items": {
         "enum": [
-          "windowsml-ocr",
+          "text-recognition",
           "speech-recognition",
           "speaker-diarization",
           "vertical-japanese-reader",
-          "ollama-runtime",
-          "capture-ollama-model"
+          "structuring-runtime",
+          "structuring-model"
         ],
         "type": "string"
       },
       "maxItems": 8,
-      "title": "Suggestedunits",
+      "title": "Suggestedrequirementids",
       "type": "array"
     },
     "warnings": {
@@ -409,7 +422,7 @@
     "ocrPageScope": {
       "anyOf": [
         {
-          "$ref": "#/$defs/OcrPageScopeV2"
+          "$ref": "#/$defs/OcrPageScope"
         },
         {
           "type": "null"

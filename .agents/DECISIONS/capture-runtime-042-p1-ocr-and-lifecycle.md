@@ -3,7 +3,7 @@
 ## Approved decisions
 
 1. **OCR-only source of truth.** PDFium rasterizes every PDF page and image
-   normalization feeds the canonical PaddleOCR WindowsML worker. Embedded PDF
+   normalization feeds the canonical PaddleOCR OCR worker. Embedded PDF
    text is never inspected. There is no hybrid arbitration and no LLM route
    selection.
 2. **Version identity.** The existing authenticated `/v2` API remains API
@@ -18,11 +18,11 @@
    including an `empty` page. Raw schema 2 continues to contain only non-empty
    `RawCaptureSegment` values; the projection is the page-complete typed seam.
 5. **Failure readability.** A failed terminal capture returns a projection with
-   `status: "failed"` and a sanitized `CaptureFailureV2`; consumers need not
+   `status: "failed"` and a sanitized `OperationFailure`; consumers need not
    infer failure from a missing body. No partial successful raw document is
    emitted as a substitute for an OCR failure.
 6. **Ownership.** Windows Job Object ownership is implemented in one Rust
-   `OwnedRuntimeSession` per launch attempt. Host adapters own graceful intent;
+   `OwnedSidecarSession` per launch attempt. Host adapters own graceful intent;
    they do not share or duplicate native Job handles. Runtime-root exit is
    observed and invokes the same terminate-and-prove path. After a host crash
    the system closes the Job and stops the runtime tree; after an OS crash or
@@ -57,14 +57,14 @@
    exposed and recording is enabled by the installed ORT, with that
    prediction's execution profile as the fallback when the graph option is
    unavailable; at least one `DmlExecutionProvider` node is required before
-   emitting `windowsml-dml`; missing/unreadable evidence or zero DML nodes
+   emitting `directml`; missing/unreadable evidence or zero DML nodes
    fails closed. The worker does not emit its header or recognized page frame
    until this provenance is resolved.
    When DML is not available, one explicit CPU-only session is allowed and its
    provenance is `cpu`. The internal evidence adapter is injectable for unit
    seams, while real acceptance must preserve and inspect ORT evidence.
 10. **Canonical Paddle profile identity.** The packaged
-    `model-sources/commit-a/model/pipeline.json` is the sole OCR profile
+    `model-sources/text-recognition/model/pipeline.json` is the sole OCR profile
     source. Canonical JSON bytes are copied to the runtime asset and model
     directory; their SHA-256 derives `profileSpecSha256`, and a hash-prefixed
     profile ID is derived from the same bytes. The profile fixes PP-OCRv6
@@ -133,6 +133,6 @@
   empty pages, and typed failures.
 - Authenticated route plus repository fixture: test 401, 404, pending/unavailable,
   completed projection, and readable failed projection.
-- `OwnedRuntimeSession` with a native-process test seam: test assignment before
+- `OwnedSidecarSession` with a native-process test seam: test assignment before
   resume, breakaway rejection, root exit, idempotent terminate-and-prove, and
   no descendant residue.

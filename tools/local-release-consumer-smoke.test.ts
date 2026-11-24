@@ -68,7 +68,7 @@ async function createModelFixture(
 ): Promise<string> {
   const directory = await createFixture();
   const workerAssets = [
-    ['windowsml-ocr', ("capture-engine-ocr-" + RELEASE_VERSION + "-windows-x64.zip")],
+    ['text-recognition', ("capture-engine-ocr-" + RELEASE_VERSION + "-windows-x64.zip")],
     ['speech-recognition', ("capture-engine-speech-recognition-" + RELEASE_VERSION + "-windows-x64.zip")],
     ...extraUnits,
   ] as const;

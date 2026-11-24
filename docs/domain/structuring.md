@@ -1,5 +1,7 @@
 # 結構化
 
+結構化使用 `structuring-runtime` 與 `structuring-model` 兩項需求。需求清單的 `kind` 與 `requirementId` 使用相同的 ID。
+
 ## 負責什麼、不負責什麼
 
 把原始擷取整理為擷取文件，支援 runtime 供應者及主機分批提交，並管理允許的模型安裝作業。不執行 OCR 或語音推論。
@@ -16,12 +18,12 @@
 | 取得模型安裝 | `GetModelInstallation` | 讀取安裝狀態與進度。 |
 | 取得工作階段 | `GetStructuringSession` | 依擷取識別碼讀取主機工作階段。 |
 | 安裝模型 | `InstallModelOption` | 建立允許的模型作業，只對新作業排程。 |
-| 開啟工作階段 | `OpenStructuringSession` | 檢查來源與方言，建立批次計畫。 |
+| 開啟工作階段 | `OpenStructuringSession` | 擷取取自路由、請求識別取自 `X-Idempotency-Key`，本文只帶 `profileId`、供應者與方言；檢查來源與方言，依 `profileId` 建立批次計畫；新請求帶有消費者前綴的舊 profile 識別碼回答 422 `validation_error`。0.10.x 存下的工作階段（本文帶 `captureId`、`clientRequestId`、`capability`）以原本的形式驗證指紋後照常讀取；之後接受的批次讓紀錄維持原本的形式：請求、請求指紋與先前批次的重播回應不變，新的檢查點以同一形式計算摘要。 |
 | 提交批次 | `SubmitStructuringBatch` | 先檢查重播、摘要及順序，再驗證語意與持久化。 |
 
 ## 聚合與不變條件
 
-`StructuringSession.require_next_batch/accept_batch` 守住開放狀態與批次順序；`StructuringBatch.verify_digest/accept` 守住摘要及接受狀態。`BatchPlanningPolicy` 計算輸入、輸出與保留 token 的限制。`ModelInstallation` 管理模型安裝的執行、進度、完成、失敗與取消，終態不可覆寫。領域錯誤包含 `SessionTransitionError`、`StructuringValidationError` 與 `StructuringSessionDigestConflictError`。
+`StructuringSession.require_next_batch/accept_batch` 守住開放狀態與批次順序；`StructuringBatch.verify_digest/accept` 守住摘要及接受狀態。`BatchPlanningPolicy` 計算輸入、輸出與保留 token 的限制。`ModelInstallation` 管理模型安裝的執行、進度、完成、失敗與取消，終態不可覆寫。領域錯誤包含 `SessionTransitionError`、`RetiredStructuringProfileError`、`StructuringValidationError` 與 `StructuringSessionDigestConflictError`。
 
 ```mermaid
 classDiagram
@@ -54,7 +56,7 @@ sequenceDiagram
 
 ## 與其他上下文的關係
 
-讀取擷取上下文的公開結果；Ollama adapter 負責模型及 HTTP 技術機制。模型選項（`/runtime/model-options`）與模型安裝（`/runtime/model-installations`）路由位於 `capture_runtime.structuring.api.model_routes`。模型安裝 API 經 `InstallModelOption`、`GetModelInstallation`、`CancelModelInstallation`。
+讀取擷取上下文的公開結果；Ollama adapter 負責模型及 HTTP 技術機制。模型選項（`/v2/runtime/structuring-model-options`）與模型安裝（`/v2/runtime/structuring-model-installations`）路由位於 `capture_runtime.structuring.api.model_routes`。模型安裝 API 經 `InstallModelOption`、`GetModelInstallation`、`CancelModelInstallation`。
 
 `OllamaRequirementInstaller` 實作引擎供應的 `StructuringRequirementInstaller`，查詢 Ollama 需求並處理應用程式的安裝。同一個介接器也供 `ModelInstallationService` 安裝選定的模型。
 
@@ -62,4 +64,16 @@ sequenceDiagram
 
 重播先於語意驗證；順序檢查先於最後批次的文件組裝，錯序回傳 409。Repository 的鎖內檢查仍為寫入的權威。模型下載的鎖、任務 registry 與取消等待由生命週期服務持有。
 
+擷取 API 的 `POST /v2/captures/{id}/structure` 在 runtime 供應者未設定，或供應者回報不可用時，回答 503，問題代碼 `requirement_unavailable`，擷取留在 `awaiting_structuring`。供應者的結果通不過驗證，或結構化引擎與供應者身份不符時，回答 422，問題代碼 `structuring_invalid_output`，訊息固定為「Structuring output failed strict schema or provenance validation.」，擷取回到 `awaiting_structuring`，呼叫端可以再送一次，作業不會被記成失敗。runtime 自己跑的擷取沒有呼叫端可重試，仍以同一個問題代碼把擷取記成失敗。供應者工作中若擷取被取消，作業停在 `cancelled`，這條路由回答 409，問題代碼 `invalid_capture_state`，訊息固定為「The capture was cancelled.」。取消不會把作業退回 `awaiting_structuring`。其他供應者錯誤（含逾時）也把擷取退回 `awaiting_structuring`，回應維持該錯誤原本的伺服器錯誤。開啟工作階段、提交批次與 commit 是主機路徑，不呼叫該供應者，也不宣告這些問題代碼。
+
 隔離的 Ollama 程序在 PID 檔寫下程序識別碼，以及作業系統回報的原始建立時間（`processCreationTime`：Windows `GetProcessTimes` 的 FILETIME 整數，或 Linux `/proc/<pid>/stat` 的 starttime；該平台讀不到時不寫此欄）。下次啟動時：識別碼已結束就刪除檔案並繼續；識別碼仍在且建立時間相同就拒絕再啟動；建立時間不同表示該識別碼已交給別的程序，刪除過期檔案並繼續。舊檔沒有建立時間，或當時讀不到建立時間，仍拒絕。程序映像名稱與命令列不用來判斷。
+
+## Ollama 的執行出處
+
+runtime 自己啟動的 Windows Ollama 供應者，把 `/api/tags` 回報的模型與摘要，和 runner 的執行證據合併。裝置不符的情形在允許的那一次修正重啟之後仍然存在，或無法導出修正時，結構化照常進行，並記錄實際執行的後端。未受管理（`unmanaged`）的執行，仍可回報觀察到的裝置證據。缺少證據時，兩個裝置欄位（`device`、`deviceName`）都是 null。外部 Ollama 回報模型與摘要，兩個裝置欄位是 null。runtime 在儲存完成的文件之前，會比對供應者身份與 `structuringEngine`。
+
+## 工作階段的上下文長度
+
+`num_ctx` 每個工作階段固定為 8192（`DEFAULT_STRUCTURING_NUM_CTX`），所有批次使用相同值；只有 `num_predict` 依批次調整。批次規劃規則不變，自有 Ollama、外部 Ollama 與主機供應者皆適用。Ollama 在 `num_ctx` 改變時會重新載入模型，Windows CUDA 每次重新載入可能耗費數十秒。
+
+自有 CUDA 程序啟動時，先在 PATH 尋找 `nvidia-smi`，再檢查 SystemRoot/System32，查詢逾時為 15 秒，讓閒置的筆電 GPU 有時間喚醒。每次一般啟動只解析一次裝置策略；UUID 尚未取得時，於下一次一般啟動重新查詢。連接埠與擁有權重試沿用同一策略，修正重啟則保留傳入的策略。查詢在工作執行緒執行，讓事件迴圈繼續處理請求與取消。每次啟動依實際傳入的環境記錄目標、UUID 固定狀態及不含敏感資訊的失敗原因，不記錄命令輸出、憑證或本機路徑。

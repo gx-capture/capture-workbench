@@ -12,7 +12,7 @@ Everything here comes from reading the `main` checkouts. Producer tip is `055e0f
    It also runs on `release-desktop.yml:83-89`, which downloads the catalog asset. LAW therefore needs a code change, so the plan file's line 3 ("Cert Prep and LAW get no code change") and line 17 are wrong.
 2. **Cert Prep is not broken by this slice, but it has an old exact list.** `cert-prep/tools/capture-candidate-gate.mts:176-184` is the pinned inventory. It holds 14 required paths: 3 runtime assets, the catalog, the OCR zip and `-files.json`, `capture-engine-whisper-<v>` zip and `-files.json`, the Python wheel and sdist, the crate, and 3 contract files. Lines 186-194 add up to 6 optional `.sha256` sidecars.
    - It still names the old speech worker. That worker was renamed at 0.7.0 and diarization is missing, so this "strict local candidate" path (its only caller was a removed desktop options module) already fails on any real runtime candidate. S7 does not make it worse.
-   - The release-candidate gate itself has no fixed list: it compares the manifest to the files on disk (`:917-935`). Its catalog reads look only at `windowsml-ocr` (`:301-303`, `:1323-1345`), and so does `build_backend_runtime.py:150-163`.
+   - The release-candidate gate itself has no fixed list: it compares the manifest to the files on disk (`:917-935`). Its catalog reads look only at `text-recognition` (`:301-303`, `:1323-1345`), and so does `build_backend_runtime.py:150-163`.
    - `install-capture-runtime.mts:42-55, 248-266` downloads only the exe, the runtime manifest, the schema and an optional sidecar.
 3. **Neither consumer installs speech by itself.** Both go through the runtime API, so the runtime picks the content and neither needs to know about contents (details in section 3).
 4. **Push CI never runs `generate-release-engine-catalog` or `build-release-artifacts`.** The `ci.yml` runtime job runs `verify-worker-boundaries` and the worker targets (`:254-266`), and the installer job is core-only (`:328-331`). The first real exercise of the catalog switch is `runtime-candidate.yml:133`, so the switch PR must be built locally before merge.
@@ -39,7 +39,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 | `real-media-smoke.ts:212-217` | needs `artifacts` and `modelFiles` | Reports speech "not complete" in preflight |
 | `installed-process-cleanup.ts:31-40` | list of owned exe names | Misses `capture-engine-speech-recognition-cpu.exe` silently (diarization is already missing) |
 | `local-candidate-worker-mirror.ts:302, 377-381` | OCR only | Not affected; also cannot serve speech |
-| `progressive-audio-oracle.ts:172-174` | serves a single speech `.zip` | Not affected; it has been stale since 0.7.0, when speech became parts |
+| `progressive-audio-oracle.ts` | the speech pack it installs | The progressive oracle selects the speech pack that matches the environment under test and serves that content's catalog archive or parts (#452) |
 | `verify-release-candidate.ts:140-162` | `some` requirement has artifacts → model-enabled | Not affected (OCR keeps `artifacts`) |
 | `verify-runtime-candidate.ts:181-238`, `assemble-runtime-candidate.ts:156,205`, `assemble-release-candidate.ts:77,101`, `create-release-manifest.ts:61-63`, `create-github-release.ts:20-45`, `create-runtime-github-release.ts:101-108`, `github-release-support.ts:29-39`, `verify-runtime-candidate-binding.ts:83-90` | read the directory; no fixed count | Not affected; `runtimeAssets` grows by 2 |
 | `engine-catalog-parts.ts` | one artifact at a time | Not affected |
@@ -82,9 +82,9 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 - Plain audio → `ProgressiveSpeechProcessor.process` → `_resolve_engine` (`progressive_capture.py:443-449`) → `_acquire` (`:337-343`).
 
 **Existing codes and fields.**
-- `CaptureFailureV2.code` is a pattern string, not an enum (`contracts/__init__.py:720-724`).
+- `OperationFailure.code` is a pattern string, not an enum (`contracts/__init__.py:720-724`).
 - `requirement_unavailable` already exists in the problem registry (`problem_registry.py:198-203`) and is already used as a capture failure (`streaming_capture_service.py:409`, `490-495`).
-- `RuntimeRequirementV2.detail` (string or null) already exists. It is `None` for installed contents (`system_requirement_installer.py:234-253`).
+- `RuntimeRequirement.detail` (string or null) already exists. It is `None` for installed contents (`system_requirement_installer.py:234-253`).
 - The worker's own errors become generic `worker_failed`, retryable (`workers/server.py:166, 214, 313, 337`).
 - `_safe_failure_message` forwards text only from `CaptureProcessingError` (`:838-841`).
 
@@ -173,7 +173,7 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
    - Done: `generate-release-engine-catalog` depends on `build-speech-recognition-cpu-worker` and passes its archive and manifest; `build-release-artifacts` also depends on `verify-speech-recognition-cpu-boundary`. `core-only` still yields an empty catalog (the generator ignores the CPU flags there).
    - Done: `release.py` (`assert_release_speech_contents`), `verify_release_model_candidate.py` (not in `--preflight-speech-recognition`) and `local-release-consumer-smoke.ts` fail a model-enabled release whose speech requirement is legacy or has one content (decision 3 below). `practical-installed.ts` and `real-media-smoke.ts` still read both shapes, so a published 0.9.0 release can still be checked; the tag audit, `resolve-capture-release.ts` and `verify-release-candidate.ts` never read the speech shape.
    - Done: the candidate verifier runs a second pass that installs the candidate's own `cpu` archive and model subset (variant pinned `cpu`, own install root), probes it and transcribes the same private fixture the `cuda` pass uses, asserting `tea-asr-1.1-mini` / `cpu`, a non-empty transcript and ordered segments. Nothing is frozen for it (decision 2).
-   - Done: `real-media-smoke.ts` and `progressive-audio-oracle.ts` force `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`; the oracle's mirror now serves the `cuda` content's parts from the catalog.
+   - Done: `real-media-smoke.ts` forces `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The progressive oracle selects the speech pack that matches the environment under test and serves that content's archive or parts from the catalog (#452).
    - Done: `CAPTURE_SPEECH_RECOGNITION_*` joins the ambient guard in `release-candidate.yml`. `runtime-candidate.yml` has no such guard.
    - Workflows: only `runtime-candidate.yml` runs `build-release-artifacts` (`release-candidate.yml` reuses the runtime candidate). Its 90-minute timeout covers the extra CPU build; push CI's `runtime` job already builds all four workers on one runner. Assembly, the release manifest and both publishers list the runtime directory, so the two new assets needed no code change.
    - Behavior test: the generated catalog keeps the id `speech-recognition`, with contents `["cuda","cpu"]`, and the consumer smoke lists both zips.

@@ -18,15 +18,15 @@ classified CUDA failure otherwise retries the same mini checkpoint on CPU, and
 the model name alone no longer shows which device ran.
 
 Release checks stay on the frozen pair. The private fixture
-`whisper-private-reference` expects `tea-asr-1.1` on `cuda`, and
+`speech-recognition-private-reference` expects `tea-asr-1.1` on `cuda`, and
 `model_source_lock.py` accepts `(tea-asr-1.1, cuda)`, `(tea-asr-1.1, cpu)`,
-and `(tea-asr-1.1-mini, cpu)`. `smoke-real-media` and `smoke-real-engines`
-follow that lock. Do not retarget them.
+and `(tea-asr-1.1-mini, cpu)`. `smoke-real-media` and the localhost real-engine
+journeys follow that lock. Do not retarget them.
 
 There is no import-linter or CI check for this. Set
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini`,
-`CAPTURE_WHISPER_PREFER_GPU=true`, and
-`CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` on the runtime, then check the result's
+`CAPTURE_SPEECH_PREFER_GPU=true`, and
+`CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false` on the runtime, then check the result's
 model and device. The desktop's fixed launch environment does not expose the
 model setting yet; its GPU switch only selects the device.
 

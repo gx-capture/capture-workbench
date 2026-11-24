@@ -1,9 +1,13 @@
-"""Canonical remote problem metadata for the Capture Runtime wire contract.
+"""Canonical remote error metadata for the Capture Runtime wire contract.
+
+Two catalogues: HTTP problems (`problems`), the codes of error responses, and
+job failure codes (`failureCodes`), the codes of the `error` a failed capture
+or installation reports. A code is in both only when both paths emit it.
 
 The HTTP adapters may choose the safe message/details for a particular
 request, but they must not invent a second error taxonomy.  This small module
-contains the immutable registry primitive; the runtime contract-set builder
-owns the concrete release catalog and serializes it into the discovery bundle.
+contains the immutable registry primitives; the runtime contract-set builder
+owns the concrete release catalogs and serializes them into the discovery bundle.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ class ProblemDefinition:
     message: str
     category: str
     retryable: bool = False
-    details_schema: str | None = "ErrorDetailsV2"
+    details_schema: str | None = "ErrorDetails"
 
     def __post_init__(self) -> None:
         if not self.code or self.code != self.code.strip():
@@ -195,6 +199,7 @@ DEFAULT_PROBLEM_REGISTRY = ProblemRegistry(
             "conflict",
             retryable=True,
         ),
+        _definition("uninstall_failed", 500, "The requirement could not be uninstalled."),
         _definition(
             "requirement_unavailable",
             503,
@@ -205,55 +210,6 @@ DEFAULT_PROBLEM_REGISTRY = ProblemRegistry(
             "model_option_unknown", 422, "The model option is not allowlisted.", "validation"
         ),
         _definition("installation_not_found", 404, "Installation job was not found.", "not_found"),
-        _definition("installation_cancelled", 409, "Installation was cancelled.", "conflict"),
-        _definition(
-            "runtime_restarted",
-            503,
-            "Runtime restarted while installation was active.",
-            retryable=True,
-        ),
-        _definition(
-            "manual_action_required",
-            422,
-            "Runtime installation requires manual action.",
-            "validation",
-        ),
-        _definition(
-            "installation_filesystem", 500, "Runtime installation filesystem operation failed."
-        ),
-        _definition("installation_unexpected", 500, "Runtime installation failed unexpectedly."),
-        _definition(
-            "direct_model_retries_exhausted",
-            502,
-            "Runtime model download retries were exhausted.",
-            retryable=True,
-        ),
-        _definition("direct_model_checksum", 502, "Runtime model checksum verification failed."),
-        _definition("engine_probe_failed", 502, "Runtime engine probe failed.", retryable=True),
-        _definition(
-            "streaming_source_unavailable", 409, "Streaming source is unavailable.", "conflict"
-        ),
-        _definition(
-            "extraction_runtime_unavailable",
-            503,
-            "Extraction runtime is unavailable.",
-            retryable=True,
-        ),
-        _definition(
-            "unsupported_media_type", 415, "Uploaded media type is unsupported.", "validation"
-        ),
-        _definition(
-            "source_kind_mismatch",
-            422,
-            "Declared source kind does not match content.",
-            "validation",
-        ),
-        _definition(
-            "progressive_no_text_at_sample",
-            422,
-            "Progressive audio produced no text at the sample.",
-            "validation",
-        ),
         _definition(
             "structuring_invalid_output",
             422,
@@ -300,8 +256,146 @@ DEFAULT_PROBLEM_REGISTRY = ProblemRegistry(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class FailureCodeDefinition:
+    """One code a failed job reports; its retryability belongs to each failure."""
+
+    code: str
+    message: str
+
+    def __post_init__(self) -> None:
+        if not self.code or self.code != self.code.strip():
+            raise ProblemRegistryError("failure code must be a non-empty trimmed string")
+        if not self.message or self.message != self.message.strip():
+            raise ProblemRegistryError(f"failure code {self.code!r} has an invalid message")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"code": self.code, "message": self.message}
+
+
+class FailureCodeRegistry:
+    """Immutable, deterministically ordered job failure codes."""
+
+    def __init__(self, definitions: Iterable[FailureCodeDefinition]) -> None:
+        ordered: dict[str, FailureCodeDefinition] = {}
+        for definition in definitions:
+            if definition.code in ordered:
+                raise ProblemRegistryError(f"duplicate failure code: {definition.code}")
+            ordered[definition.code] = definition
+        self._definitions = MappingProxyType({code: ordered[code] for code in sorted(ordered)})
+
+    @property
+    def definitions(self) -> Mapping[str, FailureCodeDefinition]:
+        return self._definitions
+
+    def as_dicts(self) -> list[dict[str, Any]]:
+        return [definition.as_dict() for definition in self._definitions.values()]
+
+
+def _failure(code: str, message: str) -> FailureCodeDefinition:
+    return FailureCodeDefinition(code=code, message=message)
+
+
+# Every code the runtime puts in a failed capture's, installation's or model
+# installation's `error`, and in an OCR projection's failures. A host's own
+# structuring failure report keeps the code the host chose.
+DEFAULT_FAILURE_CODE_REGISTRY = FailureCodeRegistry(
+    [
+        # Capture: input and request
+        _failure("ingestion_source_unavailable", "The ingested source is unavailable."),
+        _failure("unsupported_media_type", "The source content is not a supported kind."),
+        _failure("source_kind_mismatch", "The source content does not match its declared kind."),
+        _failure("invalid_pdf_page_selection", "The PDF page selection is invalid."),
+        _failure("invalid_speaker_identification", "Speakers are identified only in recordings."),
+        _failure("invalid_spoken_language", "A spoken language is valid only for recordings."),
+        # Capture: extraction
+        _failure("capture_interrupted", "The capture was interrupted."),
+        _failure("extraction_failed", "Capture extraction failed."),
+        _failure("extraction_output_invalid", "Extraction output failed strict validation."),
+        _failure("extraction_no_text", "Extraction produced no text."),
+        _failure(
+            "extraction_runtime_unavailable",
+            "This runtime has no extractor for the capture kind.",
+        ),
+        _failure(
+            "requirement_unavailable", "A runtime requirement the capture needs is unavailable."
+        ),
+        _failure("speech_recognition_worker_failed", "The speech recognition worker failed."),
+        _failure(
+            "speaker_identification_worker_failed", "The speaker identification worker failed."
+        ),
+        _failure("worker_failed", "A worker operation failed."),
+        _failure("ocr_source_preflight_failed", "OCR source preflight failed."),
+        _failure("ocr_no_text", "OCR produced no text."),
+        _failure("ocr_page_failed", "OCR page processing failed."),
+        _failure("ocr_worker_failed", "The OCR worker failed before completing all pages."),
+        _failure("ocr_worker_protocol", "The OCR worker returned an invalid response."),
+        _failure("ocr_worker_timeout", "The OCR worker timed out before completing all pages."),
+        _failure(
+            "ocr_runtime_unavailable",
+            "The OCR runtime was unavailable before completing all pages.",
+        ),
+        # Capture: progressive transcription of a recording
+        _failure("progressive_decode_failed", "The recording could not be decoded."),
+        _failure("progressive_decoder_init_failed", "The audio decoder could not be prepared."),
+        _failure(
+            "progressive_engine_resolution_failed",
+            "The speech recognition engine could not be prepared.",
+        ),
+        _failure("progressive_event_persist_failed", "A transcription event could not be saved."),
+        _failure("progressive_partial_invalid", "A partial transcript failed validation."),
+        _failure("progressive_session_failed", "The transcription session failed."),
+        _failure("progressive_stall", "The transcription worker stopped making progress."),
+        _failure("progressive_worker_event_invalid", "The worker returned an invalid event."),
+        _failure("progressive_worker_exit", "The transcription worker exited."),
+        _failure(
+            "progressive_worker_finish_failed", "The worker failed while finishing the session."
+        ),
+        _failure(
+            "progressive_worker_frame_read_failed", "A frame from the worker could not be read."
+        ),
+        _failure("progressive_worker_input_failed", "The worker failed while processing audio."),
+        _failure("progressive_worker_start_failed", "The transcription worker did not start."),
+        _failure("session_backpressure", "The transcription session was over capacity."),
+        _failure("session_cancelled", "The transcription session was cancelled."),
+        _failure("session_closed", "The transcription session was already closed."),
+        _failure("session_conflict", "The transcription session had already started."),
+        _failure("session_credit_invalid", "The transcription session credit was invalid."),
+        _failure("session_credit_required", "The transcription session had no credit."),
+        _failure("session_failed", "The transcription session failed."),
+        _failure("session_frame_invalid", "A transcription session frame was invalid."),
+        _failure("session_frame_too_large", "A transcription session frame was too large."),
+        _failure("session_input_invalid", "Transcription session audio input was invalid."),
+        _failure("session_json_invalid", "A transcription session control payload was invalid."),
+        _failure("session_not_started", "The transcription session had not started."),
+        _failure("session_start_invalid", "The transcription session start was invalid."),
+        # Capture: structuring by the runtime
+        _failure("structuring_failed", "Capture structuring failed."),
+        _failure(
+            "structuring_invalid_output",
+            "Structuring output failed strict schema or provenance validation.",
+        ),
+        # Installation and structuring model installation
+        _failure("installation_cancelled", "The installation was cancelled."),
+        _failure("runtime_restarted", "The runtime restarted while the installation was active."),
+        _failure("manual_action_required", "The installation requires a manual action."),
+        _failure("installation_failed", "The installation failed."),
+        _failure("installation_timeout", "An installation step timed out."),
+        _failure("installation_io_failed", "An installation file operation failed."),
+        _failure("installation_unexpected", "The installation failed unexpectedly."),
+        _failure("direct_model_retries_exhausted", "Model download retries were exhausted."),
+        _failure("direct_model_checksum", "Model checksum verification failed."),
+        _failure("worker_archive_integrity", "Engine archive integrity verification failed."),
+        _failure("engine_probe_failed", "The installed engine probe failed."),
+    ]
+)
+
+
 __all__ = [
+    "DEFAULT_FAILURE_CODE_REGISTRY",
     "DEFAULT_PROBLEM_REGISTRY",
+    "FailureCodeDefinition",
+    "FailureCodeRegistry",
     "ProblemDefinition",
     "ProblemRegistry",
     "ProblemRegistryError",

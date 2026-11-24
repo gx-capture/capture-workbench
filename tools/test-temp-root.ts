@@ -6,6 +6,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// The temp directory this root replaced, for a child that must not run under
+// the private root (a test server whose socket path would grow too long). A
+// nested test process keeps the outermost one.
+process.env['CAPTURE_TEST_SHARED_TEMP'] ??= tmpdir();
 const root = mkdtempSync(join(tmpdir(), 'capture-test-'));
 for (const name of ['TEMP', 'TMP', 'TMPDIR']) process.env[name] = root;
 

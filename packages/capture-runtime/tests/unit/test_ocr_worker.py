@@ -21,9 +21,10 @@ from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
-    OcrComputePreflightV2,
-    OcrProvenanceV3,
+    OcrComputePreflight,
+    OcrProvenance,
 )
+from capture_runtime.ocr.infrastructure.ocr_onnx_adapter import OnnxOcrAdapter
 from capture_runtime.ocr.infrastructure.ocr_page_result import OcrRegion, OcrTextResult
 from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePlan,
@@ -40,7 +41,6 @@ from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrPageManifest,
 )
 from capture_runtime.ocr.infrastructure.ocr_reading_order import plan_reading_order
-from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import WindowsMLOcrAdapter
 from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     _assert_ocr_progress_matches_final,
     parse_ocr_progress,
@@ -83,7 +83,7 @@ def _gpu_plan_dict() -> dict[str, object]:
         assessment="positive-usable",
     )
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_StaticProbe(
             OcrGpuCapabilitySnapshot(
@@ -99,14 +99,14 @@ def _gpu_plan_dict() -> dict[str, object]:
     return selection.execution_plan.to_dict()
 
 
-def _resolved_test_provenance() -> OcrProvenanceV3:
-    return OcrProvenanceV3(
+def _resolved_test_provenance() -> OcrProvenance:
+    return OcrProvenance(
         status="resolved",
-        engine="windowsml-ocr",
+        engine="text-recognition",
         model="test-model",
         model_digest="sha256:" + "1" * 64,
-        device="windowsml-dml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        device="directml",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -273,7 +273,7 @@ def test_ocr_progress_rejects_unavailable_header_before_recognized_page() -> Non
         "pageCount": 1,
         "provenance": {
             "status": "unavailable",
-            "profileId": "capture-workbench-ocr-pipeline-v1",
+            "profileId": "ocr-pipeline-v1",
             "profileSpecSha256": "c" * 64,
             "reason": "protocol_failure",
         },
@@ -505,16 +505,16 @@ def test_ocr_compute_preflight_uses_worker_capability_probe_without_model_initia
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             raise AssertionError("compute preflight must not initialize the OCR adapter")
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", FailingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", FailingAdapter)
     result = ocr_main.handle(
         WorkerRequest(
             request_id="ocr-compute-preflight-test",
             operation="preflight",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": None,
-                "contractSha256": "a" * 64,
+                "contractSetSha256": "a" * 64,
                 "options": {},
             },
         ),
@@ -522,15 +522,15 @@ def test_ocr_compute_preflight_uses_worker_capability_probe_without_model_initia
     )
 
     expected_worker_sha256 = hashlib.sha256(Path(ocr_main.__file__).read_bytes()).hexdigest()
-    expected_readiness = OcrComputePreflightV2(
-        contract_sha256="a" * 64,
+    expected_readiness = OcrComputePreflight(
+        contract_set_sha256="a" * 64,
         worker_sha256=expected_worker_sha256,
-        mode=OcrComputeMode.GPU_DML,
+        mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
         user_notice_required=False,
     ).model_dump(mode="json", by_alias=True)
     assert result["readiness"] == expected_readiness
-    assert result["executionPlan"]["mode"] == "gpu-dml"
+    assert result["executionPlan"]["mode"] == "gpu"
     assert result["selectionProof"]["dmlDeviceId"] == 0
     assert (
         parse_ocr_compute_preflight(result).model_dump(mode="json", by_alias=True)
@@ -551,7 +551,7 @@ def test_ocr_compute_preflight_uses_worker_capability_probe_without_model_initia
                 adapters=(OcrGpuAdapter(0, OcrAdapterClass.INTEGRATED),),
                 dml_provider_available=False,
             ),
-            "dml_provider_unavailable",
+            "gpu_provider_unavailable",
             OcrAdapterClass.INTEGRATED,
         ),
     ],
@@ -572,10 +572,10 @@ def test_ocr_compute_preflight_worker_reports_typed_cpu_reason(
             request_id="ocr-compute-cpu-test",
             operation="preflight",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": None,
-                "contractSha256": "a" * 64,
+                "contractSetSha256": "a" * 64,
                 "options": {},
             },
         ),
@@ -592,7 +592,7 @@ def test_ocr_compute_preflight_parser_rejects_malformed_worker_result() -> None:
     with pytest.raises(WorkerResultError, match="OCR compute preflight"):
         parse_ocr_compute_preflight(
             {
-                "contractSha256": "a" * 64,
+                "contractSetSha256": "a" * 64,
                 "mode": "cpu-fallback",
                 "adapterClass": "unknown",
                 "userNoticeRequired": False,
@@ -607,10 +607,10 @@ def test_ocr_compute_preflight_rejects_a_catalog_worker_digest_mismatch() -> Non
                 request_id="ocr-compute-worker-identity-test",
                 operation="preflight",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": None,
-                    "contractSha256": "a" * 64,
+                    "contractSetSha256": "a" * 64,
                     "options": {},
                     "expectedWorkerSha256": "0" * 64,
                 },
@@ -626,10 +626,10 @@ def test_ocr_compute_preflight_rejects_retired_device_id_only_request() -> None:
                 request_id="ocr-retired-device-id-test",
                 operation="preflight",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": None,
-                    "contractSha256": "a" * 64,
+                    "contractSetSha256": "a" * 64,
                     "options": {"deviceId": 0},
                 },
             ),
@@ -665,7 +665,7 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
             inference_calls += 1
             raise RuntimeError("DML inference failed")
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", FailingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", FailingAdapter)
 
     with pytest.raises(RuntimeError, match="DML inference failed"):
         ocr_main.handle(
@@ -673,7 +673,7 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
                 request_id="ocr-evidence-order-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -724,13 +724,13 @@ def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
                 text="must not be projected",
                 model="test-model",
                 digest="sha256:" + "1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", UnprovenAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", UnprovenAdapter)
 
     with pytest.raises(ValueError, match="missing resolved provenance"):
         ocr_main.handle(
@@ -738,7 +738,7 @@ def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
                 request_id="ocr-unproven-result-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -801,13 +801,13 @@ def test_ocr_worker_cancellation_after_page_one_prevents_second_recognition(
                 text="first page",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", CancellingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", CancellingAdapter)
 
     with pytest.raises(InterruptedError):
         ocr_main.handle(
@@ -815,7 +815,7 @@ def test_ocr_worker_cancellation_after_page_one_prevents_second_recognition(
                 request_id="ocr-cancel-after-page-one-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -850,7 +850,7 @@ def test_ocr_worker_cancellation_after_page_one_prevents_second_recognition(
 def _engine_request_for_worker_adapter(
     manifest: tuple[OcrPageManifest, ...],
     cancellation: Event,
-    observe: Callable[[OcrPageManifest, object, OcrProvenanceV3], OcrPageInput],
+    observe: Callable[[OcrPageManifest, object, OcrProvenance], OcrPageInput],
 ) -> OcrEngineRequest:
     return OcrEngineRequest(
         manifest=manifest,
@@ -896,7 +896,7 @@ def test_worker_engine_checks_cancellation_before_advancing_the_image_iterator()
                 text="first",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
                 provenance=provenance,
@@ -907,7 +907,7 @@ def test_worker_engine_checks_cancellation_before_advancing_the_image_iterator()
     def observe(
         expected: OcrPageManifest,
         _result: object,
-        page_provenance: OcrProvenanceV3,
+        page_provenance: OcrProvenance,
     ) -> OcrPageInput:
         observed.append(expected.page)
         cancellation.set()
@@ -957,7 +957,7 @@ def test_worker_engine_rejects_cancellation_after_iterator_exhaustion_before_ter
                 text="final page",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
                 provenance=provenance,
@@ -966,7 +966,7 @@ def test_worker_engine_rejects_cancellation_after_iterator_exhaustion_before_ter
     def observe(
         expected: OcrPageManifest,
         _result: object,
-        page_provenance: OcrProvenanceV3,
+        page_provenance: OcrProvenance,
     ) -> OcrPageInput:
         return OcrPageInput(
             page=expected.page,
@@ -999,7 +999,7 @@ def test_worker_engine_rejects_cancellation_after_inference_before_observation()
                 text="final page",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
                 provenance=provenance,
@@ -1008,7 +1008,7 @@ def test_worker_engine_rejects_cancellation_after_inference_before_observation()
     def observe(
         expected: OcrPageManifest,
         _result: object,
-        page_provenance: OcrProvenanceV3,
+        page_provenance: OcrProvenance,
     ) -> OcrPageInput:
         observed.append(expected.page)
         return OcrPageInput(
@@ -1086,13 +1086,13 @@ def test_ocr_worker_provenance_change_emits_failed_page_without_success(
     source = tmp_path / "public-fixture.pdf"
     source.write_bytes(b"public test fixture")
     progress: list[dict[str, object]] = []
-    changed = OcrProvenanceV3(
+    changed = OcrProvenance(
         status="resolved",
-        engine="windowsml-ocr",
+        engine="text-recognition",
         model="different-model",
         model_digest="sha256:" + "2" * 64,
-        device="windowsml-dml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        device="directml",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -1112,13 +1112,13 @@ def test_ocr_worker_provenance_change_emits_failed_page_without_success(
                 text=f"page {self.calls}",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance() if self.calls == 1 else changed,
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", ChangingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", ChangingAdapter)
 
     with pytest.raises(ValueError, match="changing provenance"):
         ocr_main.handle(
@@ -1126,7 +1126,7 @@ def test_ocr_worker_provenance_change_emits_failed_page_without_success(
                 request_id="ocr-changing-provenance-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -1211,7 +1211,7 @@ def test_ocr_worker_round_trips_reading_plan_without_changing_region_contract(
                 text=plan.text,
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 regions=ordered_regions,
                 region_confidences=expected_scores,
                 raster_width=320,
@@ -1233,7 +1233,7 @@ def test_ocr_worker_round_trips_reading_plan_without_changing_region_contract(
                 profile["dictionary"]["sha256"] = artifact["sha256"]
         (model_path / "pipeline.json").write_bytes(canonical_json_bytes(profile))
         selection = OcrComputePlan(
-            contract_sha256="a" * 64,
+            contract_set_sha256="a" * 64,
             worker_sha256="b" * 64,
             capability_probe=_StaticProbe(OcrGpuCapabilitySnapshot()),
         ).select()
@@ -1253,19 +1253,19 @@ def test_ocr_worker_round_trips_reading_plan_without_changing_region_contract(
                     }
                 ]
 
-        def create_adapter(path: Path, **kwargs: Any) -> WindowsMLOcrAdapter:
-            return WindowsMLOcrAdapter(
+        def create_adapter(path: Path, **kwargs: Any) -> OnnxOcrAdapter:
+            return OnnxOcrAdapter(
                 path,
                 pipeline_factory=lambda **_kwargs: Pipeline(),
                 provider_resolver=lambda: ["CPUExecutionProvider"],
                 **kwargs,
             )
 
-        monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", create_adapter)
+        monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", create_adapter)
     else:
         # No-score pages are legal on the worker wire, while Paddle results
         # require scores; cover this mode at the observation boundary.
-        monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", PlannedAdapter)
+        monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", PlannedAdapter)
     # The scored case executes the real adapter, normalizer and planner with
     # synthetic predictor output, followed by the real worker serialization.
     emitted = ocr_main.handle(
@@ -1273,7 +1273,7 @@ def test_ocr_worker_round_trips_reading_plan_without_changing_region_contract(
             request_id="ocr-reading-plan-wire-test",
             operation="run",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
@@ -1367,7 +1367,7 @@ def test_ocr_worker_handle_output_round_trips_mixed_pages_and_progress_consisten
                     text="   ",
                     model="test-model",
                     digest="1" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                     raster_width=1,
                     raster_height=1,
                     provenance=_resolved_test_provenance(),
@@ -1378,7 +1378,7 @@ def test_ocr_worker_handle_output_round_trips_mixed_pages_and_progress_consisten
                 text=text,
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 regions=(
                     OcrRegion(
                         text=text,
@@ -1391,13 +1391,13 @@ def test_ocr_worker_handle_output_round_trips_mixed_pages_and_progress_consisten
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", MixedAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", MixedAdapter)
     result = ocr_main.handle(
         WorkerRequest(
             request_id="ocr-mixed-page-wire-test",
             operation="run",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
@@ -1461,20 +1461,20 @@ def test_ocr_worker_rejects_out_of_order_or_duplicate_page_stream(
                 text="page",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", StaticAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", StaticAdapter)
     with pytest.raises(ValueError):
         ocr_main.handle(
             WorkerRequest(
                 request_id="ocr-invalid-page-stream-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -1633,7 +1633,7 @@ def test_ocr_pdf_renders_one_page_at_a_time(
                 text="public fixture text",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
@@ -1641,14 +1641,14 @@ def test_ocr_pdf_renders_one_page_at_a_time(
             )
 
     monkeypatch.setattr(ocr_main, "_pdf_page_images", page_images)
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", TestAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", TestAdapter)
 
     result = ocr_main.handle(
         WorkerRequest(
             request_id="ocr-streaming-test",
             operation="run",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
@@ -1966,21 +1966,21 @@ def test_ocr_worker_passes_requested_page_scope_from_explicit_worker_options(
                 text="public fixture text",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", RecordingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", RecordingAdapter)
 
     result = ocr_main.handle(
         WorkerRequest(
             request_id="ocr-page-scope-test",
             operation="run",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
@@ -2032,21 +2032,21 @@ def test_ocr_worker_keeps_source_page_numbers_of_a_non_contiguous_selection(
                 text=f"text of {image.decode()}",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", PageTextAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", PageTextAdapter)
 
     result = ocr_main.handle(
         WorkerRequest(
             request_id="ocr-non-contiguous-selection-test",
             operation="run",
             payload={
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
@@ -2089,7 +2089,7 @@ def test_ocr_worker_rejects_a_manifest_that_is_not_ascending(
     model_path.mkdir()
     source = tmp_path / "source.pdf"
     source.write_bytes(b"public test fixture")
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", None)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", None)
     raster = {"width": 1, "height": 1, "scale": 1, "coordinateSystem": "pixel"}
 
     with pytest.raises(ValueError, match="OCR page manifest is not ordered"):
@@ -2098,7 +2098,7 @@ def test_ocr_worker_rejects_a_manifest_that_is_not_ascending(
                 request_id="ocr-unordered-manifest-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -2156,14 +2156,14 @@ def test_ocr_worker_records_requested_scope_before_selection_manifest_mismatch(
                 text="public fixture text",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", RecordingAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", RecordingAdapter)
 
     with pytest.raises(ValueError, match="OCR request page scope must exactly match"):
         ocr_main.handle(
@@ -2171,7 +2171,7 @@ def test_ocr_worker_records_requested_scope_before_selection_manifest_mismatch(
                 request_id="ocr-selection-manifest-mismatch-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -2227,7 +2227,7 @@ def test_ocr_worker_rejects_invalid_page_numbers_before_adapter_construction(
             nonlocal constructed
             constructed = True
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", UnexpectedAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", UnexpectedAdapter)
 
     with pytest.raises(ValueError, match="OCR PDF page selection is invalid"):
         ocr_main.handle(
@@ -2235,7 +2235,7 @@ def test_ocr_worker_rejects_invalid_page_numbers_before_adapter_construction(
                 request_id="ocr-invalid-page-scope-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -2290,14 +2290,14 @@ def test_ocr_run_reports_empty_output_stage(
                 text="   ",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", EmptyAdapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", EmptyAdapter)
 
     with pytest.raises(ValueError, match="non-empty segments"):
         ocr_main.handle(
@@ -2305,7 +2305,7 @@ def test_ocr_run_reports_empty_output_stage(
                 request_id="ocr-empty-output-test",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
@@ -2371,16 +2371,16 @@ def test_ocr_worker_passes_the_reader_unit_on_and_reports_when_it_is_missed(
                 text="public fixture text",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
                 provenance=_resolved_test_provenance(),
             )
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", Adapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", Adapter)
     payload: dict[str, object] = {
-        "requirementId": "windowsml-ocr",
+        "requirementId": "text-recognition",
         "artifactVersion": RUNTIME_VERSION,
         "modelPath": str(model_path),
         "sourcePath": str(source),
@@ -2406,7 +2406,8 @@ def test_ocr_worker_passes_the_reader_unit_on_and_reports_when_it_is_missed(
     )
 
     assert received == [reader_path if installed else None]
-    assert result.get("suggestedUnits") == (["vertical-japanese-reader"] if wanted else None)
+    expected = ["vertical-japanese-reader"] if wanted else None
+    assert result.get("suggestedRequirementIds") == expected
 
 
 def test_a_warm_ocr_worker_hands_each_runs_session_to_the_next(
@@ -2428,7 +2429,7 @@ def test_a_warm_ocr_worker_hands_each_runs_session_to_the_next(
                 text="public fixture text",
                 model="test-model",
                 digest="1" * 64,
-                device="windowsml-dml",
+                device="directml",
                 warning=None,
                 raster_width=1,
                 raster_height=1,
@@ -2439,10 +2440,10 @@ def test_a_warm_ocr_worker_hands_each_runs_session_to_the_next(
             sessions.append(object())
             return sessions[-1]
 
-    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", Adapter)
+    monkeypatch.setattr(ocr_main, "OnnxOcrAdapter", Adapter)
     monkeypatch.setattr(ocr_main, "_reusable_session", None)
     payload: dict[str, object] = {
-        "requirementId": "windowsml-ocr",
+        "requirementId": "text-recognition",
         "artifactVersion": RUNTIME_VERSION,
         "modelPath": str(model_path),
         "sourcePath": str(source),
@@ -2481,7 +2482,7 @@ def test_ocr_worker_rejects_an_invalid_reader_unit_path(tmp_path: Path, value: o
                 request_id="ocr-reader-unit-invalid",
                 operation="run",
                 payload={
-                    "requirementId": "windowsml-ocr",
+                    "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),

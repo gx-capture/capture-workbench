@@ -85,7 +85,7 @@ packages/capture-runtime/src/capture_runtime/
   platform/        config、clock、constants
   worker_kernel/   行程、協定、階段政策、暖 worker
   capture/         domain/  application/  infrastructure/  api/
-  ocr/             domain/（閱讀順序、區塊、運算計畫政策） application/  infrastructure/（WindowsML、DXGI、ONNX）
+  ocr/             domain/（閱讀順序、區塊、運算計畫政策） application/  infrastructure/（DirectML、DXGI、ONNX）
   speech/          domain/（分窗、迴圈停止） application/  infrastructure/（TEA-ASR、PyAV）
   diarization/
   structuring/

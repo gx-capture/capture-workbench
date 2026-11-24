@@ -205,6 +205,10 @@ def run_baseline(
     from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
         PaddleOcrExecutionEvidenceAdapter,
     )
+    from capture_runtime.ocr.infrastructure.ocr_onnx_adapter import (
+        OnnxOcrAdapter,
+        _default_paddle_pipeline,
+    )
     from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
         _paddle_payload,
         paddle_results_sequence,
@@ -212,10 +216,6 @@ def run_baseline(
     from capture_runtime.ocr.infrastructure.ocr_profile import (
         load_profile_spec,
         validate_model_artifacts,
-    )
-    from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import (
-        WindowsMLOcrAdapter,
-        _default_paddle_pipeline,
     )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -306,7 +306,7 @@ def run_baseline(
                     raw = [
                         _paddle_payload(result)
                         for result in paddle_results_sequence(
-                            WindowsMLOcrAdapter._predict(pipeline, image_bytes)
+                            OnnxOcrAdapter._predict(pipeline, image_bytes)
                         )
                     ]
                     observation = normalize_observation(

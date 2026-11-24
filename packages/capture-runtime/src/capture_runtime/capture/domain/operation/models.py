@@ -6,18 +6,18 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from capture_runtime.contracts import (
-    CaptureOperationV2,
+    CaptureEventType,
     CaptureSourceKind,
-    StreamingCaptureStatus,
-    StreamingEventType,
+    CaptureStatus,
     StructuringMode,
 )
+from capture_runtime.contracts import CaptureOperation as CaptureOperationContract
 
 TERMINAL_CAPTURE_STATUSES = frozenset(
     {
-        StreamingCaptureStatus.COMPLETED,
-        StreamingCaptureStatus.FAILED,
-        StreamingCaptureStatus.CANCELLED,
+        CaptureStatus.COMPLETED,
+        CaptureStatus.FAILED,
+        CaptureStatus.CANCELLED,
     }
 )
 
@@ -73,7 +73,7 @@ class CaptureOperation:
     capture_id: str
     ingestion_id: str
     kind: CaptureSourceKind
-    status: StreamingCaptureStatus = StreamingCaptureStatus.CREATED
+    status: CaptureStatus = CaptureStatus.WAITING_INPUT
     progress: float = 0.0
     partial_revision: int = 0
     last_event_sequence: int = 0
@@ -83,12 +83,12 @@ class CaptureOperation:
         return self.status in TERMINAL_CAPTURE_STATUSES
 
     def completed_event(self, completed_at: datetime) -> CaptureCompleted:
-        if self.status is not StreamingCaptureStatus.COMPLETED:
+        if self.status is not CaptureStatus.COMPLETED:
             raise CaptureTransitionError("capture has not completed")
         return CaptureCompleted(self.capture_id, completed_at)
 
     @classmethod
-    def from_contract(cls, operation: CaptureOperationV2) -> CaptureOperation:
+    def from_contract(cls, operation: CaptureOperationContract) -> CaptureOperation:
         return cls(
             capture_id=operation.capture_id,
             ingestion_id=operation.ingestion_id,
@@ -102,7 +102,7 @@ class CaptureOperation:
     def require_host_structuring(self, mode: StructuringMode) -> None:
         if (
             mode is not StructuringMode.HOST
-            or self.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            or self.status is not CaptureStatus.AWAITING_STRUCTURING
         ):
             raise CaptureTransitionError("capture is not awaiting host structuring")
 
@@ -110,56 +110,62 @@ class CaptureOperation:
         if mode is not StructuringMode.HOST:
             raise CaptureTransitionError("pull structuring requires host capture mode")
         if self.status not in {
-            StreamingCaptureStatus.AWAITING_STRUCTURING,
-            StreamingCaptureStatus.STRUCTURING,
+            CaptureStatus.AWAITING_STRUCTURING,
+            CaptureStatus.STRUCTURING,
         }:
             raise CaptureTransitionError("capture is not awaiting pull structuring")
 
     def begin_structuring(self) -> CaptureOperation:
-        if self.status is StreamingCaptureStatus.STRUCTURING:
+        if self.status is CaptureStatus.STRUCTURING:
             return self
-        if self.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
+        if self.status is not CaptureStatus.AWAITING_STRUCTURING:
             raise CaptureTransitionError("capture is not awaiting structuring")
-        return self.transition(StreamingCaptureStatus.STRUCTURING)
+        return self.transition(CaptureStatus.STRUCTURING)
 
-    def transition(self, status: StreamingCaptureStatus) -> CaptureOperation:
+    def release_structuring(self) -> CaptureOperation:
+        """Return to awaiting so a caller-driven structure attempt can be retried."""
+
+        if self.status is not CaptureStatus.STRUCTURING:
+            return self
+        return self.transition(CaptureStatus.AWAITING_STRUCTURING)
+
+    def transition(self, status: CaptureStatus) -> CaptureOperation:
         """Advance the existing lifecycle; a terminal state never changes."""
         if status is self.status:
             return self
         if self.is_terminal:
             raise CaptureTransitionError(f"cannot move capture from {self.status} to {status}")
         allowed = {
-            StreamingCaptureStatus.CREATED: {
-                StreamingCaptureStatus.WAITING_INPUT,
-                StreamingCaptureStatus.EXTRACTING,
+            CaptureStatus.WAITING_INPUT: {CaptureStatus.EXTRACTING},
+            CaptureStatus.EXTRACTING: {
+                CaptureStatus.AWAITING_STRUCTURING,
+                CaptureStatus.COMPLETED,
             },
-            StreamingCaptureStatus.WAITING_INPUT: {StreamingCaptureStatus.EXTRACTING},
-            StreamingCaptureStatus.EXTRACTING: {
-                StreamingCaptureStatus.AWAITING_STRUCTURING,
-                StreamingCaptureStatus.COMPLETED,
+            CaptureStatus.AWAITING_STRUCTURING: {
+                CaptureStatus.STRUCTURING,
+                CaptureStatus.COMPLETED,
             },
-            StreamingCaptureStatus.AWAITING_STRUCTURING: {
-                StreamingCaptureStatus.STRUCTURING,
-                StreamingCaptureStatus.COMPLETED,
+            CaptureStatus.STRUCTURING: {
+                CaptureStatus.AWAITING_STRUCTURING,
+                CaptureStatus.COMPLETED,
             },
-            StreamingCaptureStatus.STRUCTURING: {StreamingCaptureStatus.COMPLETED},
         }
         if status != self.status and status not in allowed.get(self.status, set()) | {
-            StreamingCaptureStatus.FAILED,
-            StreamingCaptureStatus.CANCELLED,
+            CaptureStatus.FAILED,
+            CaptureStatus.CANCELLED,
         }:
             raise CaptureTransitionError(f"cannot move capture from {self.status} to {status}")
         progress = {
-            StreamingCaptureStatus.EXTRACTING: 0.1,
-            StreamingCaptureStatus.AWAITING_STRUCTURING: 0.9,
-            StreamingCaptureStatus.STRUCTURING: 0.95,
-            StreamingCaptureStatus.COMPLETED: 1.0,
+            CaptureStatus.EXTRACTING: 0.1,
+            CaptureStatus.AWAITING_STRUCTURING: 0.9,
+            CaptureStatus.STRUCTURING: 0.95,
+            CaptureStatus.COMPLETED: 1.0,
         }.get(status, self.progress)
         return replace(self, status=status, progress=progress)
 
     def record_event(
         self,
-        event_type: StreamingEventType,
+        event_type: CaptureEventType,
         *,
         progress: float | None = None,
         partial_revision: int | None = None,
@@ -167,9 +173,9 @@ class CaptureOperation:
     ) -> CaptureOperation:
         """Fold an event once; only the transition itself may publish its terminal event."""
         terminal_event = {
-            StreamingCaptureStatus.COMPLETED: StreamingEventType.COMPLETED,
-            StreamingCaptureStatus.FAILED: StreamingEventType.FAILED,
-            StreamingCaptureStatus.CANCELLED: StreamingEventType.CANCELLED,
+            CaptureStatus.COMPLETED: CaptureEventType.COMPLETED,
+            CaptureStatus.FAILED: CaptureEventType.FAILED,
+            CaptureStatus.CANCELLED: CaptureEventType.CANCELLED,
         }.get(self.status)
         if self.is_terminal and not (terminal_transition and event_type == terminal_event):
             raise CaptureTransitionError("terminal capture no longer accepts events")

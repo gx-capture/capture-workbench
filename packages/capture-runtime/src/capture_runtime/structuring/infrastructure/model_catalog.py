@@ -23,14 +23,17 @@ PROFILE_SYSTEM_PROMPT = (
 )
 
 
+_LEGACY_PROFILE_PREFIX = "capture-workbench-"
+
+
 @dataclass(frozen=True, slots=True)
-class RuntimeModelOption:
+class StructuringModelOption:
     option_id: str
     display_name: str
     model_reference: str
     profile_id: str
     expected_digest: str | None = None
-    expected_bytes: int | None = None
+    download_bytes: int | None = None
 
     @property
     def profile_spec_bytes(self) -> bytes:
@@ -45,33 +48,37 @@ class RuntimeModelOption:
         return hashlib.sha256(self.profile_spec_bytes).hexdigest()
 
 
-MODEL_OPTIONS: tuple[RuntimeModelOption, ...] = (
-    RuntimeModelOption(
+MODEL_OPTIONS: tuple[StructuringModelOption, ...] = (
+    StructuringModelOption(
         option_id="qwen3.5-0.8b-v1",
         display_name="Qwen 3.5 0.8B",
         model_reference="qwen3.5:0.8b",
-        profile_id="capture-workbench-qwen3.5-0.8b-structure-v1",
+        profile_id="qwen3.5-0.8b-structure-v1",
     ),
-    RuntimeModelOption(
+    StructuringModelOption(
         option_id="qwen3.5-2b-v1",
         display_name="Qwen 3.5 2B",
         model_reference="qwen3.5:2b",
-        profile_id="capture-workbench-qwen3.5-2b-structure-v1",
+        profile_id="qwen3.5-2b-structure-v1",
     ),
-    RuntimeModelOption(
+    StructuringModelOption(
         option_id="qwen3.5-4b-v1",
         display_name="Qwen 3.5 4B",
         model_reference="qwen3.5:4b",
-        profile_id="capture-workbench-qwen3.5-4b-structure-v1",
+        profile_id="qwen3.5-4b-structure-v1",
     ),
 )
 
 
-def model_option(option_id: str) -> RuntimeModelOption:
+def model_option(option_id: str) -> StructuringModelOption:
     for option in MODEL_OPTIONS:
         if option.option_id == option_id:
             return option
     raise KeyError(option_id)
+
+
+def legacy_profile_id(option: StructuringModelOption) -> str:
+    return f"{_LEGACY_PROFILE_PREFIX}{option.profile_id}"
 
 
 def catalog_sha256() -> str:
@@ -81,8 +88,27 @@ def catalog_sha256() -> str:
             "displayName": option.display_name,
             "modelReference": option.model_reference,
             "expectedDigest": option.expected_digest,
-            "expectedBytes": option.expected_bytes,
+            "downloadBytes": option.download_bytes,
             "profileId": option.profile_id,
+            "profileSpecSha256": option.profile_spec_sha256,
+        }
+        for option in MODEL_OPTIONS
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def legacy_catalog_sha256() -> str:
+    payload = [
+        {
+            "optionId": option.option_id,
+            "displayName": option.display_name,
+            "modelReference": option.model_reference,
+            "expectedDigest": option.expected_digest,
+            "expectedBytes": option.download_bytes,
+            "profileId": legacy_profile_id(option),
             "profileSpecSha256": option.profile_spec_sha256,
         }
         for option in MODEL_OPTIONS
@@ -97,11 +123,17 @@ class ActiveModelSelectionStore:
     """Persist the verified active selection in runtime-owned app data."""
 
     def __init__(self, app_data_dir: Path) -> None:
-        self.path = app_data_dir / "requirements" / "capture-ollama-model.active.json"
+        self.path = app_data_dir / "requirements" / "structuring-model.active.json"
 
     def load(self) -> dict[str, Any] | None:
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            try:
+                source = self.path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                source = self.path.with_name("capture-ollama-model.active.json").read_text(
+                    encoding="utf-8"
+                )
+            payload = json.loads(source)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
         if not isinstance(payload, dict):
@@ -113,7 +145,13 @@ class ActiveModelSelectionStore:
             option = model_option(option_id)
         except KeyError:
             return None
-        if payload.get("catalogSha256") != catalog_sha256():
+        catalog_digest = payload.get("catalogSha256")
+        profile_id = payload.get("profileId")
+        matches_current = catalog_digest == catalog_sha256() and profile_id == option.profile_id
+        matches_legacy = catalog_digest == legacy_catalog_sha256() and (
+            profile_id == legacy_profile_id(option)
+        )
+        if not (matches_current or matches_legacy):
             return None
         if payload.get("modelReference") != option.model_reference:
             return None
@@ -127,15 +165,13 @@ class ActiveModelSelectionStore:
             or observed_bytes <= 0
         ):
             return None
-        if payload.get("profileId") != option.profile_id:
-            return None
         if payload.get("profileSpecSha256") != option.profile_spec_sha256:
             return None
         return payload
 
     def save(
         self,
-        option: RuntimeModelOption,
+        option: StructuringModelOption,
         *,
         observed_digest: str,
         observed_bytes: int,
@@ -162,8 +198,10 @@ __all__ = [
     "ActiveModelSelectionStore",
     "MODEL_OPTIONS",
     "PROFILE_SYSTEM_PROMPT",
-    "RuntimeModelOption",
+    "StructuringModelOption",
     "active_selection_path",
     "catalog_sha256",
+    "legacy_catalog_sha256",
+    "legacy_profile_id",
     "model_option",
 ]

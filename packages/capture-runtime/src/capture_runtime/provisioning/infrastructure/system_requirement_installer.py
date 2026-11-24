@@ -9,16 +9,17 @@ from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     MAX_RUNTIME_ARTIFACT_BYTES,
-    OLLAMA_MODEL_REQUIREMENT_ID,
-    OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
 )
+from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
-    RuntimeArtifactDescriptorV2,
+    RuntimeArtifactDescriptor,
+    RuntimeRequirement,
     RuntimeRequirementStatus,
-    RuntimeRequirementV2,
 )
 from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.provisioning.application.requirement_installer import (
@@ -38,7 +39,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 )
 
 
-def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDescriptorV2 | None:
+def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDescriptor | None:
     """Describe a worker in the public contract, which names one download of at most 512 MiB.
 
     A larger worker, such as the speech recognition worker published as parts, installs the
@@ -47,7 +48,7 @@ def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDes
     """
     if worker.url is None or worker.bytes > MAX_RUNTIME_ARTIFACT_BYTES:
         return None
-    return RuntimeArtifactDescriptorV2(
+    return RuntimeArtifactDescriptor(
         artifact_url=worker.url,
         artifact_file_name=worker.file_name,
         bytes=worker.bytes,
@@ -57,12 +58,21 @@ def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDes
 
 _ENGINE_UNIT_IDS = frozenset(
     {
-        WINDOWSML_REQUIREMENT_ID,
+        TEXT_RECOGNITION_REQUIREMENT_ID,
         SPEECH_RECOGNITION_REQUIREMENT_ID,
         DIARIZATION_REQUIREMENT_ID,
         VERTICAL_READER_REQUIREMENT_ID,
     }
 )
+
+
+def _validate_enabled_requirements(requirement_ids: Collection[str] | None) -> None:
+    if requirement_ids is not None and "windowsml-ocr" in requirement_ids:
+        raise ValueError("windowsml-ocr is retired; use text-recognition")
+    for requirement_id in requirement_ids or ():
+        replacement = RETIRED_STRUCTURING_REQUIREMENT_IDS.get(requirement_id)
+        if replacement is not None:
+            raise ValueError(f"{requirement_id} is retired; use {replacement}")
 
 
 class SystemRequirementInstaller:
@@ -76,6 +86,7 @@ class SystemRequirementInstaller:
         enabled_requirement_ids: Collection[str] | None = None,
         extraction_config: ExtractionRuntimeConfig | None = None,
     ) -> None:
+        _validate_enabled_requirements(enabled_requirement_ids)
         self._structuring = structuring
         self._engine_manager = engine_manager
         self._extraction_config = extraction_config
@@ -86,7 +97,8 @@ class SystemRequirementInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
+        _validate_enabled_requirements(enabled_requirement_ids)
         effective_requirement_ids = (
             self._enabled_requirement_ids
             if enabled_requirement_ids is None
@@ -98,26 +110,23 @@ class SystemRequirementInstaller:
         def is_enabled(requirement_id: str) -> bool:
             return effective_requirement_ids is None or requirement_id in effective_requirement_ids
 
-        requirements: list[RuntimeRequirementV2] = []
-        for requirement_id, kind, display_name, required_for, optional in (
-            (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"], False),
+        requirements: list[RuntimeRequirement] = []
+        for requirement_id, display_name, required_for, optional in (
+            (TEXT_RECOGNITION_REQUIREMENT_ID, "Text recognition", ["pdf", "image"], False),
             (
                 SPEECH_RECOGNITION_REQUIREMENT_ID,
-                "transcription",
                 "Speech recognition",
-                ["audio"],
+                ["recording"],
                 True,
             ),
             (
                 DIARIZATION_REQUIREMENT_ID,
-                "speaker-identification",
                 "Speaker identification",
-                ["audio"],
+                ["recording"],
                 True,
             ),
             (
                 VERTICAL_READER_REQUIREMENT_ID,
-                "vertical-reader",
                 "Vertical Japanese reader",
                 ["pdf", "image"],
                 True,
@@ -162,9 +171,9 @@ class SystemRequirementInstaller:
                 download_bytes = None
                 detail = "No downloadable model is published for this runtime release."
             requirements.append(
-                RuntimeRequirementV2(
+                RuntimeRequirement(
                     requirement_id=requirement_id,
-                    kind=kind,
+                    kind=requirement_id,
                     display_name=display_name,
                     status=status,
                     required_for=required_for,
@@ -186,7 +195,7 @@ class SystemRequirementInstaller:
         descriptor: EngineRequirementDescriptor,
     ) -> tuple[
         RuntimeRequirementStatus,
-        RuntimeArtifactDescriptorV2 | None,
+        RuntimeArtifactDescriptor | None,
         int | None,
         str | None,
     ]:
@@ -270,7 +279,7 @@ class SystemRequirementInstaller:
                 report_download=report_download,
             )
             return
-        if requirement_id in {OLLAMA_RUNTIME_REQUIREMENT_ID, OLLAMA_MODEL_REQUIREMENT_ID}:
+        if requirement_id in {STRUCTURING_RUNTIME_REQUIREMENT_ID, STRUCTURING_MODEL_REQUIREMENT_ID}:
             await self._structuring.install(
                 requirement_id,
                 cancel_event=cancel_event,

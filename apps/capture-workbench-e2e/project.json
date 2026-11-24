@@ -19,6 +19,12 @@
         "command": "corepack pnpm exec tsc -p apps/capture-workbench-e2e/tsconfig.json --noEmit"
       }
     },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --import ./tools/test-temp-root.ts --test apps/capture-workbench-e2e/src/real-engines-inputs.test.ts apps/capture-workbench-e2e/src/real-engines-checkpoint.test.ts apps/capture-workbench-e2e/src/real-engines-stage-limits.test.ts apps/capture-workbench-e2e/src/real-engines-lifecycle-observation.test.ts apps/capture-workbench-e2e/private-temp-run.test.ts"
+      }
+    },
     "e2e": {
       "executor": "nx:run-commands",
       "dependsOn": [{ "projects": ["capture-workbench"], "target": "build" }],
@@ -30,13 +36,13 @@
         "{workspaceRoot}/release/version.json"
       ],
       "options": {
-        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
+        "command": "node --import ./tools/test-temp-root.ts node_modules/@playwright/test/cli.js test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
     },
     "e2e-dev-host": {
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Runs the dev-host Playwright E2E journey (dev-host.spec.ts) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
+        "description": "Runs the dev-host Playwright E2E journeys (every file ending in dev-host.spec.ts: the proxy, launcher and OCR library journeys, and the capture lifecycle) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
       },
       "dependsOn": [
         { "projects": ["capture-workbench"], "target": "build" },
@@ -50,7 +56,7 @@
         "{workspaceRoot}/release/version.json"
       ],
       "options": {
-        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.dev-host.config.ts"
+        "command": "node --import ./tools/test-temp-root.ts node_modules/@playwright/test/cli.js test --config apps/capture-workbench-e2e/playwright.dev-host.config.ts"
       }
     },
     "preview": {
@@ -78,18 +84,32 @@
         "command": "node apps/capture-workbench-e2e/dev-host-preview-server.ts 4300"
       }
     },
-    "smoke-real-engines": {
+    "smoke-real-engines-installation": {
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Manual opt-in Layer 1 real-engine smoke on localhost (real-engines.spec.ts) driving the Workbench UI against capture-workbench-dev-host and the staged product runtime with real OCR, TEA-ASR 1.1 mini + diarization, and Ollama structuring; excluded from ordinary CI."
+        "description": "Manual Layer 1 localhost real-engine installation journey against the dev host and staged product runtime; requires empty app data; verifies downloads, cancel/retry/re-attachment, model installation and restart verification records. Required for delivery/catalog changes and before release; excluded from ordinary CI."
       },
       "dependsOn": [
         { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" },
         { "projects": ["capture-workbench-desktop"], "target": "stage-product-runtime" }
       ],
       "options": {
-        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.real-engines.config.ts"
+        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.real-engines.config.ts --project chromium-real-engines-installation"
+      }
+    },
+    "smoke-real-engines-execution": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Manual Layer 1 localhost real-engine execution journey against the dev host and staged product runtime; requires matching installed app data from the installation journey of this build; never installs. Verifies OCR, speech/speakers, structuring, devices, edits/exports, restart and deletion. Required for every runtime/UI fix and before release; excluded from ordinary CI."
+      },
+      "dependsOn": [
+        { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" },
+        { "projects": ["capture-workbench-desktop"], "target": "stage-product-runtime" }
+      ],
+      "options": {
+        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.real-engines.config.ts --project chromium-real-engines-execution"
       }
     },
     "runtime-web-component-e2e": {

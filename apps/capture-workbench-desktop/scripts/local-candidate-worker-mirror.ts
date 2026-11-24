@@ -25,7 +25,7 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 export interface StartLocalCandidateWorkerMirrorOptions {
   readonly candidateRoot: string;
   readonly candidateId: string;
-  readonly requirementId: 'windowsml-ocr';
+  readonly requirementId: 'text-recognition';
 }
 
 export interface LocalCandidateWorkerMirrorIdentity {
@@ -33,7 +33,7 @@ export interface LocalCandidateWorkerMirrorIdentity {
   readonly candidateKind: 'runtime';
   readonly candidateId: string;
   readonly runtimeVersion: string;
-  readonly requirementId: 'windowsml-ocr';
+  readonly requirementId: 'text-recognition';
   readonly archiveFileName: string;
   readonly archiveBytes: number;
   readonly archiveSha256: string;
@@ -299,8 +299,8 @@ interface VerifiedCandidateCatalog extends VerifiedLocalCandidateCatalog {
 async function verifyCandidateCatalog(
   options: StartLocalCandidateWorkerMirrorOptions,
 ): Promise<VerifiedCandidateCatalog> {
-  if (options.requirementId !== 'windowsml-ocr') {
-    throw new Error('Local candidate worker mirror only supports windowsml-ocr.');
+  if (options.requirementId !== 'text-recognition') {
+    throw new Error('Local candidate worker mirror only supports text-recognition.');
   }
   if (!DIGEST_PATTERN.test(options.candidateId)) {
     throw new Error('Local candidate worker mirror candidate ID is invalid.');
@@ -378,7 +378,7 @@ async function verifyCandidateCatalog(
     (requirement) => requirement.requirementId === options.requirementId,
   );
   if (matchingRequirements.length !== 1) {
-    throw new Error('Runtime candidate catalog must contain exactly one windowsml-ocr requirement.');
+    throw new Error('Runtime candidate catalog must contain exactly one text-recognition requirement.');
   }
   return {
     candidateRoot,

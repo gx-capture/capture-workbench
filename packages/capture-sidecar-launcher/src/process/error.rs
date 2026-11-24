@@ -2,7 +2,7 @@ use std::fmt;
 
 /// Why one owned-process cleanup could not be proven.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeCleanupErrorKind {
+pub enum SidecarCleanupErrorKind {
     /// The root process could not be killed from its launch handle.
     Termination,
     /// The root's exit could not be proven, or its liveness could not be read.
@@ -23,16 +23,16 @@ pub enum RuntimeCleanupErrorKind {
 /// The detail string describes the operating-system or ownership failure. It
 /// does not include the bearer token.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeCleanupError {
+pub struct SidecarCleanupError {
     root_pid: u32,
-    kind: RuntimeCleanupErrorKind,
+    kind: SidecarCleanupErrorKind,
     detail: String,
 }
 
-impl RuntimeCleanupError {
+impl SidecarCleanupError {
     pub(crate) fn new(
         root_pid: u32,
-        kind: RuntimeCleanupErrorKind,
+        kind: SidecarCleanupErrorKind,
         detail: impl Into<String>,
     ) -> Self {
         Self {
@@ -50,7 +50,7 @@ impl RuntimeCleanupError {
     }
 
     /// Returns the cleanup failure category.
-    pub fn kind(&self) -> RuntimeCleanupErrorKind {
+    pub fn kind(&self) -> SidecarCleanupErrorKind {
         self.kind
     }
 
@@ -63,14 +63,14 @@ impl RuntimeCleanupError {
     }
 }
 
-impl fmt::Display for RuntimeCleanupError {
+impl fmt::Display for SidecarCleanupError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "Owned runtime cleanup failed for root PID {} ({:?}): {}",
+            "Owned sidecar cleanup failed for root PID {} ({:?}): {}",
             self.root_pid, self.kind, self.detail
         )
     }
 }
 
-impl std::error::Error for RuntimeCleanupError {}
+impl std::error::Error for SidecarCleanupError {}

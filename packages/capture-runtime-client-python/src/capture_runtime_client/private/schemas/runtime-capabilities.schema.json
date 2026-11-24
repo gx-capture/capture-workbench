@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "recording"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
+    "StructuringMode": {
+      "enum": [
+        "runtime",
+        "host"
+      ],
+      "title": "StructuringMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What this runtime accepts: capture kinds, structuring modes and upload limits.",
+  "properties": {
+    "captureKinds": {
+      "items": {
+        "$ref": "#/$defs/CaptureSourceKind"
+      },
+      "minItems": 1,
+      "title": "Capturekinds",
+      "type": "array"
+    },
+    "structuringModes": {
+      "items": {
+        "$ref": "#/$defs/StructuringMode"
+      },
+      "minItems": 1,
+      "title": "Structuringmodes",
+      "type": "array"
+    },
+    "supportsCancellation": {
+      "title": "Supportscancellation",
+      "type": "boolean"
+    },
+    "supportsRawDiagnostics": {
+      "title": "Supportsrawdiagnostics",
+      "type": "boolean"
+    },
+    "maxUploadBytes": {
+      "exclusiveMinimum": 0,
+      "title": "Maxuploadbytes",
+      "type": "integer"
+    },
+    "maxChunkBytes": {
+      "exclusiveMinimum": 0,
+      "maximum": 4194304,
+      "title": "Maxchunkbytes",
+      "type": "integer"
+    },
+    "checkpointIntervalMs": {
+      "exclusiveMinimum": 0,
+      "title": "Checkpointintervalms",
+      "type": "integer"
+    },
+    "heartbeatIntervalMs": {
+      "exclusiveMinimum": 0,
+      "title": "Heartbeatintervalms",
+      "type": "integer"
+    },
+    "stallTimeoutMs": {
+      "exclusiveMinimum": 0,
+      "title": "Stalltimeoutms",
+      "type": "integer"
+    },
+    "supportsProgressiveRecording": {
+      "title": "Supportsprogressiverecording",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "captureKinds",
+    "structuringModes",
+    "supportsCancellation",
+    "supportsRawDiagnostics",
+    "maxUploadBytes",
+    "maxChunkBytes",
+    "checkpointIntervalMs",
+    "heartbeatIntervalMs",
+    "stallTimeoutMs",
+    "supportsProgressiveRecording"
+  ],
+  "title": "RuntimeCapabilities",
+  "type": "object"
+}

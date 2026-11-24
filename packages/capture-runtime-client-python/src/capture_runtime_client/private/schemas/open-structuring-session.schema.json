@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "CaptureEngine": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
+        },
+        "deviceName": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Devicename"
+        },
+        "elapsedMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsedms"
+        },
+        "stageMs": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "minLength": 1
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stagems"
+        }
+      },
+      "required": [
+        "engine",
+        "model",
+        "digest"
+      ],
+      "title": "CaptureEngine",
+      "type": "object"
+    },
+    "StructuringProviderCapability": {
+      "additionalProperties": false,
+      "description": "Provider identity and schema dialect negotiated for one session.",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        "schemaDialect": {
+          "minLength": 1,
+          "title": "Schemadialect",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "schemaDialect"
+      ],
+      "title": "StructuringProviderCapability",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Authenticated request to open or replay a pull structuring session.\n\nThe capture comes from the route and the idempotency key from the\nX-Idempotency-Key header; the body names neither.",
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "targetLanguage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Targetlanguage"
+    },
+    "profileId": {
+      "minLength": 1,
+      "title": "Profileid",
+      "type": "string"
+    },
+    "providerCapability": {
+      "$ref": "#/$defs/StructuringProviderCapability"
+    },
+    "schemaDialect": {
+      "minLength": 1,
+      "title": "Schemadialect",
+      "type": "string"
+    }
+  },
+  "required": [
+    "profileId",
+    "providerCapability",
+    "schemaDialect"
+  ],
+  "title": "OpenStructuringSession",
+  "type": "object"
+}

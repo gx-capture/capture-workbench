@@ -20,7 +20,7 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
 - It preserves `gpu-ocr-directml.md`: if `DmlExecutionProvider` is registered,
   the OCR worker creates one DML-first session and fails closed on
   initialization/inference failure. CPU-only OCR is allowed only when DML is
-  unavailable. Provenance remains `windowsml-dml` or `cpu`.
+  unavailable. Provenance remains `directml` or `cpu`.
 - It replaces the old meaning of an OCR `bundled` install strategy. The
   checksum-pinned descriptor remains runtime-owned, but code and model bytes
   are optional release artifacts and are not NSIS resources.
@@ -189,11 +189,11 @@ never follows an existing path.
 
 ## Engine Installation Flows
 
-`windowsml-ocr`:
+`text-recognition`:
 
 1. Download/verify/extract the OCR worker artifact.
 2. Probe worker code.
-3. Download/verify/extract the pinned WindowsML model artifact.
+3. Download/verify/extract the pinned OCR model artifact.
 4. Probe worker + model + providers.
 5. Atomically activate.
 

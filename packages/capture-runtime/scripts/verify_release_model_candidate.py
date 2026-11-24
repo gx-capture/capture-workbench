@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 from model_source_lock import (
-    PENDING_WHISPER_FREEZE_BLOCKER,
+    PENDING_SPEECH_FREEZE_BLOCKER,
     ModelSourceLockError,
     cpu_speech_model_delivery,
     load_source_lock,
@@ -25,6 +25,8 @@ from model_source_lock import (
 
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.contract_set import load_contract_set
+from capture_runtime.ocr.infrastructure.image_normalization import normalize_image_content
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline, image_page_manifest
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineCatalog,
@@ -41,8 +43,8 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 from capture_runtime.release import assert_release_speech_contents
 from capture_runtime.worker_client import InstalledEngine
 
-WHISPER_CANDIDATE_MAX_DURATION_MS = 60 * 60 * 1000
-WHISPER_CANDIDATE_TIMEOUT_SECONDS = 60 * 60
+SPEECH_CANDIDATE_MAX_DURATION_MS = 60 * 60 * 1000
+SPEECH_CANDIDATE_TIMEOUT_SECONDS = 60 * 60
 # The cpu pass transcribes the same private fixture with TEA-ASR-1.1-mini on
 # the CPU, which is several times slower than the CUDA pass.
 CPU_SPEECH_CANDIDATE_TIMEOUT_SECONDS = 3 * 60 * 60
@@ -119,7 +121,7 @@ def _work_directory(script: str, directory_prefix: str) -> Iterator[Path]:
 
 def _speech_run_options(fixture: dict[str, Any]) -> dict[str, object]:
     return {
-        "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "maxDurationMs": SPEECH_CANDIDATE_MAX_DURATION_MS,
         "preferGpu": fixture["preferGpu"],
         "allowCpuFallback": fixture["expectedDevice"] != "cuda",
     }
@@ -154,26 +156,46 @@ class LocalWorkerDownloader(ArtifactDownloader):
         cancel_event: asyncio.Event,
         progress,
     ) -> None:
-        source = self.engine_dir / descriptor.file_name
-        if not source.is_file() or source.is_symlink():
-            raise EngineInstallationError("candidate worker archive is missing or unsafe")
+        # An archive over 2 GB (the CUDA speech worker) is built only as its
+        # parts, <fileName>.001, .002, ...; join them in order, as the runtime's
+        # downloader does, and check each part as well as the whole archive.
+        pieces = [
+            (self.engine_dir / item.file_name, item.bytes, item.sha256)
+            for item in (descriptor.parts or (descriptor,))
+        ]
+        for source, _, _ in pieces:
+            if not source.is_file() or source.is_symlink():
+                raise EngineInstallationError("candidate worker archive is missing or unsafe")
         copied = 0
         digest = hashlib.sha256()
-        with source.open("rb") as reader, destination.open("xb") as writer:
-            while chunk := reader.read(DOWNLOAD_CHUNK_BYTES):
-                if cancel_event.is_set():
-                    raise asyncio.CancelledError
-                copied += len(chunk)
-                if copied > descriptor.bytes:
-                    raise EngineInstallationError("candidate worker exceeded catalog bytes")
-                writer.write(chunk)
-                digest.update(chunk)
-                progress(copied)
-            writer.flush()
-            os.fsync(writer.fileno())
-        if copied != descriptor.bytes or digest.hexdigest() != descriptor.sha256:
+        try:
+            with destination.open("xb") as writer:
+                for source, piece_bytes, piece_sha256 in pieces:
+                    piece_copied = 0
+                    piece_digest = hashlib.sha256()
+                    with source.open("rb") as reader:
+                        while chunk := reader.read(DOWNLOAD_CHUNK_BYTES):
+                            if cancel_event.is_set():
+                                raise asyncio.CancelledError
+                            piece_copied += len(chunk)
+                            copied += len(chunk)
+                            if piece_copied > piece_bytes or copied > descriptor.bytes:
+                                raise EngineInstallationError(
+                                    "candidate worker exceeded catalog bytes"
+                                )
+                            writer.write(chunk)
+                            digest.update(chunk)
+                            piece_digest.update(chunk)
+                            progress(copied)
+                    if piece_copied != piece_bytes or piece_digest.hexdigest() != piece_sha256:
+                        raise EngineInstallationError("candidate worker does not match catalog")
+                writer.flush()
+                os.fsync(writer.fileno())
+            if copied != descriptor.bytes or digest.hexdigest() != descriptor.sha256:
+                raise EngineInstallationError("candidate worker does not match catalog")
+        except EngineInstallationError:
             destination.unlink(missing_ok=True)
-            raise EngineInstallationError("candidate worker does not match catalog")
+            raise
 
 
 def _assert_pending_preflight_lock(lock: dict[str, Any]) -> None:
@@ -183,25 +205,25 @@ def _assert_pending_preflight_lock(lock: dict[str, Any]) -> None:
     if (
         not isinstance(approval, dict)
         or approval.get("status") != "blocked"
-        or approval.get("blockers") != [PENDING_WHISPER_FREEZE_BLOCKER]
+        or approval.get("blockers") != [PENDING_SPEECH_FREEZE_BLOCKER]
         or not isinstance(requirements, list)
         or [item.get("requirementId") for item in requirements][:2]
         != [
-            "windowsml-ocr",
+            "text-recognition",
             "speech-recognition",
         ]
         or not isinstance(fixtures, list)
-        or [item.get("kind") for item in fixtures] != ["ocr", "whisper"]
+        or [item.get("kind") for item in fixtures] != ["ocr", "speech-recognition"]
     ):
         raise EngineInstallationError(
-            "private Whisper preflight requires the exact blocked two-run freeze lock"
+            "private speech preflight requires the exact blocked two-run freeze lock"
         )
-    whisper_fixture = fixtures[1]
+    speech_fixture = fixtures[1]
     if any(
-        whisper_fixture.get(field) is not None
+        speech_fixture.get(field) is not None
         for field in ("expectedModel", "expectedDevice", "expectedNormalizedOutputSha256")
     ):
-        raise EngineInstallationError("private Whisper preflight requires an unfrozen fixture")
+        raise EngineInstallationError("private speech preflight requires an unfrozen fixture")
 
 
 async def _download_exact_url(
@@ -249,9 +271,9 @@ async def _copy_private_fixture(
     fixture: dict[str, Any],
 ) -> None:
     if not source.is_file() or source.is_symlink():
-        raise EngineInstallationError("private Whisper fixture is unavailable")
+        raise EngineInstallationError("private speech fixture is unavailable")
     if source.stat().st_size != fixture["bytes"]:
-        raise EngineInstallationError("private Whisper fixture byte count drifted")
+        raise EngineInstallationError("private speech fixture byte count drifted")
     digest = hashlib.sha256()
     try:
         with source.open("rb") as reader, destination.open("xb") as writer:
@@ -261,7 +283,7 @@ async def _copy_private_fixture(
             writer.flush()
             os.fsync(writer.fileno())
         if digest.hexdigest() != fixture["sha256"]:
-            raise EngineInstallationError("private Whisper fixture checksum drifted")
+            raise EngineInstallationError("private speech fixture checksum drifted")
     except BaseException:
         destination.unlink(missing_ok=True)
         raise
@@ -338,7 +360,7 @@ def _cpu_speech_run_options() -> dict[str, object]:
     """The runtime's defaults: the cpu content runs on the CPU even when a GPU is preferred."""
 
     return {
-        "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "maxDurationMs": SPEECH_CANDIDATE_MAX_DURATION_MS,
         "preferGpu": True,
         "allowCpuFallback": True,
         "content": "cpu",
@@ -448,16 +470,16 @@ async def _verify_speech_preflight(
     approved lock is frozen.
     """
 
-    whisper_fixture = next(
-        (item for item in lock["fixtures"] if item.get("kind") == "whisper"), None
+    speech_fixture = next(
+        (item for item in lock["fixtures"] if item.get("kind") == "speech-recognition"), None
     )
-    if whisper_fixture is None:
-        raise EngineInstallationError("private Whisper fixture is missing")
+    if speech_fixture is None:
+        raise EngineInstallationError("private speech fixture is missing")
     with _work_directory(
         "capture-runtime:verify-speech-recognition-preflight", "model-preflight"
     ) as root:
-        fixture_path = root / "whisper"
-        await _copy_private_fixture(private_fixture, fixture_path, whisper_fixture)
+        fixture_path = root / "speech-recognition"
+        await _copy_private_fixture(private_fixture, fixture_path, speech_fixture)
         worker_client = WorkerClient()
         manager = _candidate_installation_manager(
             root / "engines",
@@ -474,30 +496,30 @@ async def _verify_speech_preflight(
             )
             engine = manager.active_engine("speech-recognition")
             if engine is None:
-                raise EngineInstallationError("private Whisper preflight did not activate")
+                raise EngineInstallationError("private speech preflight did not activate")
             run = await worker_client.run(
                 engine,
                 source_path=fixture_path,
-                media_type=whisper_fixture["mediaType"],
+                media_type=speech_fixture["mediaType"],
                 options={
-                    "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
+                    "maxDurationMs": SPEECH_CANDIDATE_MAX_DURATION_MS,
                     "preferGpu": True,
                 },
                 cancel_event=asyncio.Event(),
-                timeout_seconds=WHISPER_CANDIDATE_TIMEOUT_SECONDS,
+                timeout_seconds=SPEECH_CANDIDATE_TIMEOUT_SECONDS,
             )
             normalized_digest = hashlib.sha256(
                 _normalized_text(run.segments).encode("utf-8")
             ).hexdigest()
             monotonic = _segments_monotonic(run.segments)
-            count = whisper_fixture["expectedSegmentCount"]
+            count = speech_fixture["expectedSegmentCount"]
             if (
-                run.engine != whisper_fixture["expectedEngine"]
+                run.engine != speech_fixture["expectedEngine"]
                 or not run.segments
                 or not count["minimum"] <= len(run.segments) <= count["maximum"]
                 or not monotonic
             ):
-                raise EngineInstallationError("private Whisper preflight output is invalid")
+                raise EngineInstallationError("private speech preflight output is invalid")
             evidence = {
                 "catalogSha256": hashlib.sha256(catalog_path.read_bytes()).hexdigest(),
                 "evidenceVersion": "1-preflight",
@@ -506,7 +528,7 @@ async def _verify_speech_preflight(
                         "device": run.device,
                         "digest": run.digest,
                         "engine": run.engine,
-                        "fixtureSha256": whisper_fixture["sha256"],
+                        "fixtureSha256": speech_fixture["sha256"],
                         "model": run.model,
                         "normalizedOutputSha256": normalized_digest,
                         "requirementId": "speech-recognition",
@@ -528,7 +550,7 @@ async def verify_candidate(
     engine_dir: Path,
     source_lock_path: Path,
     output: Path,
-    private_whisper_fixture: Path | None,
+    private_speech_fixture: Path | None,
     preflight: bool = False,
 ) -> None:
     lock = load_source_lock(source_lock_path, require_approved=not preflight)
@@ -542,15 +564,15 @@ async def verify_candidate(
         # for release; a release candidate must carry both speech packs.
         _assert_release_speech_contents(catalog)
     fixtures = {item["kind"]: item for item in lock["fixtures"]}
-    if set(fixtures) != {"ocr", "whisper"}:
-        raise EngineInstallationError("candidate requires exact real OCR and Whisper fixtures")
-    private_fixture = private_whisper_fixture or (
-        Path(os.environ["CAPTURE_PRIVATE_WHISPER_FIXTURE"])
-        if os.environ.get("CAPTURE_PRIVATE_WHISPER_FIXTURE")
+    if set(fixtures) != {"ocr", "speech-recognition"}:
+        raise EngineInstallationError("candidate requires exact real OCR and speech fixtures")
+    private_fixture = private_speech_fixture or (
+        Path(os.environ["CAPTURE_PRIVATE_SPEECH_FIXTURE"])
+        if os.environ.get("CAPTURE_PRIVATE_SPEECH_FIXTURE")
         else None
     )
     if private_fixture is None:
-        raise EngineInstallationError("private Whisper fixture is required on the trusted runner")
+        raise EngineInstallationError("private speech fixture is required on the trusted runner")
 
     if preflight:
         await _verify_speech_preflight(
@@ -569,7 +591,7 @@ async def verify_candidate(
     ) as root:
         fixture_root = root / "fixtures"
         fixture_root.mkdir()
-        contract_sha256 = load_contract_set().sha256
+        contract_set_sha256 = load_contract_set().sha256
         ocr_fixture = fixtures["ocr"]
         await _download_exact_url(
             url=ocr_fixture["licenseUrl"],
@@ -595,8 +617,10 @@ async def verify_candidate(
             expected_sha256=ocr_fixture["pdfSha256"],
             destination=fixture_root / "ocr.pdf",
         )
-        whisper_fixture = fixtures["whisper"]
-        await _copy_private_fixture(private_fixture, fixture_root / "whisper", whisper_fixture)
+        speech_fixture = fixtures["speech-recognition"]
+        await _copy_private_fixture(
+            private_fixture, fixture_root / "speech-recognition", speech_fixture
+        )
 
         worker_client = WorkerClient()
         manager = _candidate_installation_manager(
@@ -608,8 +632,8 @@ async def verify_candidate(
         results = []
         try:
             for requirement_id, fixture_kind in (
-                ("windowsml-ocr", "ocr"),
-                ("speech-recognition", "whisper"),
+                ("text-recognition", "ocr"),
+                ("speech-recognition", "speech-recognition"),
             ):
                 await manager.install(
                     requirement_id,
@@ -621,26 +645,36 @@ async def verify_candidate(
                 if engine is None:
                     raise EngineInstallationError("candidate requirement did not activate")
                 fixture = fixtures[fixture_kind]
+                source_path = (fixture_root / fixture_kind).resolve()
                 if fixture_kind == "ocr":
                     selection = await manager.ocr_compute_selection(
-                        contract_sha256=contract_sha256,
+                        contract_set_sha256=contract_set_sha256,
                     )
                     if selection is None:
                         raise EngineInstallationError("candidate OCR compute plan was unavailable")
+                    max_image_pixels = 100_000_000
+                    render_scale = 1.0
+                    content = source_path.read_bytes()
+                    raster = normalize_image_content(
+                        content, scale=render_scale, max_pixels=max_image_pixels
+                    )
+                    page = image_page_manifest(content, raster)
                     run_options: dict[str, object] = {
                         "computePlan": selection.execution_plan.to_dict(),
-                        "maxImagePixels": 100_000_000,
+                        "maxImagePixels": max_image_pixels,
+                        "renderScale": render_scale,
+                        "pageManifest": OcrPipeline().serialize_manifest((page,)),
                     }
                 else:
                     run_options = _speech_run_options(fixture)
                 run = await worker_client.run(
                     engine,
-                    source_path=(fixture_root / fixture_kind).resolve(),
+                    source_path=source_path,
                     media_type=fixture["mediaType"],
                     options=run_options,
                     cancel_event=asyncio.Event(),
                     timeout_seconds=(
-                        600 if fixture_kind == "ocr" else WHISPER_CANDIDATE_TIMEOUT_SECONDS
+                        600 if fixture_kind == "ocr" else SPEECH_CANDIDATE_TIMEOUT_SECONDS
                     ),
                 )
                 monotonic = _segments_monotonic(run.segments)
@@ -666,13 +700,13 @@ async def verify_candidate(
                     count = fixture["expectedSegmentCount"]
                     if not count["minimum"] <= len(run.segments) <= count["maximum"]:
                         raise EngineInstallationError(
-                            "candidate Whisper segment count exceeded lock"
+                            "candidate speech segment count exceeded lock"
                         )
                     normalized_digest = hashlib.sha256(
                         _normalized_text(run.segments).encode("utf-8")
                     ).hexdigest()
                     if normalized_digest != fixture["expectedNormalizedOutputSha256"]:
-                        raise EngineInstallationError("candidate Whisper output digest drifted")
+                        raise EngineInstallationError("candidate speech output digest drifted")
                     segment_count = len(run.segments)
                 results.append(
                     {
@@ -697,8 +731,8 @@ async def verify_candidate(
                 root=root / "engines-cpu",
                 catalog=catalog,
                 engine_dir=engine_dir,
-                source_path=(fixture_root / "whisper").resolve(),
-                fixture=whisper_fixture,
+                source_path=(fixture_root / "speech-recognition").resolve(),
+                fixture=speech_fixture,
             )
         )
     evidence = {
@@ -725,7 +759,7 @@ def main() -> None:
         type=Path,
         default=root / "model-sources" / "release-model-source-lock.json",
     )
-    parser.add_argument("--private-whisper-fixture", type=Path)
+    parser.add_argument("--private-speech-fixture", type=Path)
     parser.add_argument(
         "--preflight-speech-recognition",
         action="store_true",
@@ -743,7 +777,7 @@ def main() -> None:
             engine_dir=arguments.engine_dir,
             source_lock_path=arguments.source_lock,
             output=arguments.output,
-            private_whisper_fixture=arguments.private_whisper_fixture,
+            private_speech_fixture=arguments.private_speech_fixture,
             preflight=arguments.preflight_speech_recognition,
         )
     )

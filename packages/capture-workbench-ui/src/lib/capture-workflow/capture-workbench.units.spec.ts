@@ -16,7 +16,7 @@ import {
 
 const READER: RuntimeRequirement = {
   requirementId: 'vertical-japanese-reader',
-  kind: 'vertical-reader',
+  kind: 'vertical-japanese-reader',
   displayName: 'Vertical Japanese reader',
   status: 'installable',
   requiredFor: ['pdf', 'image'],
@@ -61,13 +61,13 @@ describe('CaptureWorkbenchComponent optional units', () => {
       fakeClient({
         getRequirements: vi.fn(() => of([READER])),
         startInstallation,
-        getStreamingResult: vi.fn(() =>
+        getResult: vi.fn(() =>
           of({
             operation: streamingOperation('completed'),
             raw: RAW,
             result: {
               ...DOCUMENT,
-              suggestedUnits: ['vertical-japanese-reader' as const],
+              suggestedRequirementIds: ['vertical-japanese-reader' as const],
             },
           }),
         ),
@@ -102,9 +102,9 @@ describe('CaptureWorkbenchComponent optional units', () => {
           of([
             { ...READER, optional: false, downloadBytes: 120_000_000 },
             {
-              requirementId: 'windowsml-ocr',
-              kind: 'ocr',
-              displayName: 'WindowsML OCR',
+              requirementId: 'text-recognition',
+              kind: 'text-recognition',
+              displayName: 'Text recognition',
               status: 'installable',
               requiredFor: ['pdf', 'image'],
               installStrategy: 'runtime-catalog',
@@ -125,7 +125,7 @@ describe('CaptureWorkbenchComponent optional units', () => {
     ).toBe('約 120 MB');
     expect(
       root.querySelector(
-        '[data-requirement-id="windowsml-ocr"] [data-testid="capture-download-size"]',
+        '[data-requirement-id="text-recognition"] [data-testid="capture-download-size"]',
       ),
     ).toBeNull();
   });

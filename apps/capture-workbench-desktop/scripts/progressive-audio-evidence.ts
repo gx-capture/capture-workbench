@@ -2,11 +2,31 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export const PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS = 5 * 60_000;
-// Both the oracle and progressive audio checks use the same exact 310-second
-// sample. This guarantees that the five-minute checkpoint is exercised before
-// terminal completion assertions.
-export const REAL_MODEL_AUDIO_SAMPLE_SECONDS = 5 * 60 + 10;
-export const PROGRESSIVE_AUDIO_CHECKPOINT_MS = 5 * 60_000;
+// Admit the five-minute boundary and up to 40 seconds of coverage drift
+// for a nearby checkpoint. The window excludes the next five-minute sample.
+export const FIRST_CHECKPOINT_MAX_COVERAGE_MS = PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS + 40_000;
+const PROGRESSIVE_STARTUP_BUDGET_MS = 2 * 60_000;
+// Measured with tea-asr-1.1 on CUDA (RTX 4060 laptop GPU): the five-minute
+// checkpoint after about 35 s, a 7.5-minute recording in 75 s and a 40-minute
+// one in 295 s (about 8x real time). Half the recording's duration leaves
+// about 4x headroom.
+const CUDA_REALTIME_MULTIPLIER = 0.5;
+// Not yet measured on the cpu pack (tea-asr-1.1 mini on the CPU).
+const CPU_REALTIME_MULTIPLIER = 6;
+
+export type SpeechPack = 'cuda' | 'cpu';
+
+// Allow a cold worker start plus the decoding time for the recording's length.
+// Whole milliseconds: the budget feeds AbortSignal.timeout.
+export function progressiveAudioBudgetMs(durationMs: number, device: SpeechPack): number {
+  return PROGRESSIVE_STARTUP_BUDGET_MS
+    + Math.ceil(durationMs * (device === 'cuda' ? CUDA_REALTIME_MULTIPLIER : CPU_REALTIME_MULTIPLIER));
+}
+
+export function isCheckpointCoverage(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    && value >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS && value <= FIRST_CHECKPOINT_MAX_COVERAGE_MS;
+}
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ENGINE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
@@ -32,59 +52,42 @@ export interface ProgressiveAudioSampleInput {
   };
 }
 
-export interface ProgressiveAudioSampleEvidence {
-  readonly evidenceKind: 'progressive-audio-sample-v1';
-  readonly sampleIntervalMs: typeof PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS;
-  readonly input: {
-    readonly sha256: string;
-    readonly bytes: number;
-  };
-  readonly firstCheckpoint: {
-    readonly coveredUntilMs: number;
-    readonly partialRevision: number;
-    readonly segmentCount: number;
-  };
-  readonly expectedOutput: {
-    readonly normalizedSha256: string;
-    readonly segmentCount: number;
-  };
-  readonly extraction: ProgressiveAudioSampleInput['extraction'];
+interface TranscriptSummary {
+  readonly normalizedSha256: string;
+  readonly segmentCount: number;
 }
 
 export interface ProgressiveAudioOracleEvidence {
   readonly evidenceKind: 'progressive-audio-oracle-v1';
   readonly oracle: 'non-tauri-production-worker';
+  readonly speechPack: SpeechPack;
+  readonly durationMs: number;
   readonly sampleIntervalMs: typeof PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS;
-  readonly input: {
-    readonly sha256: string;
-    readonly bytes: number;
-  };
+  readonly input: { readonly sha256: string; readonly bytes: number };
   readonly firstCheckpoint: {
     readonly coveredUntilMs: number;
     readonly partialRevision: number;
     readonly segmentCount: number;
   };
-  readonly expectedOutput: {
-    readonly normalizedSha256: string;
-    readonly segmentCount: number;
-  };
+  readonly expectedOutput: TranscriptSummary;
+  readonly finalOutput: TranscriptSummary;
+  readonly afterCheckpoint: TranscriptSummary;
   readonly extraction: ProgressiveAudioSampleInput['extraction'];
 }
 
-export function deriveProgressiveAudioSampleEvidence(
-  input: ProgressiveAudioSampleInput,
-): ProgressiveAudioSampleEvidence {
-  assert.match(input.sourceSha256, SHA256);
-  assert.ok(Number.isSafeInteger(input.sourceBytes) && input.sourceBytes > 0);
-  assert.ok(
-    Number.isSafeInteger(input.coveredUntilMs)
-      && input.coveredUntilMs >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
-  );
-  assert.ok(Number.isSafeInteger(input.partialRevision) && input.partialRevision > 0);
-  assert.ok(input.segments.length > 0);
-  assert.match(input.extraction.engine, /^[a-z][a-z0-9-]{1,63}$/u);
-  assert.match(input.extraction.model, /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u);
-  assert.match(input.extraction.digest, ENGINE_DIGEST);
+export function summarizeTranscript(text: readonly string[]): TranscriptSummary {
+  const normalized = text.map((value) => value.replace(/\s+/gu, ' ').trim()).join(' ');
+  assert.ok(normalized.trim().length > 0, 'Transcript summary requires text.');
+  return {
+    normalizedSha256: createHash('sha256').update(normalized, 'utf8').digest('hex'),
+    segmentCount: text.length,
+  };
+}
+
+export function summarizeCheckpoint(input: ProgressiveAudioSampleInput): TranscriptSummary {
+  assert.ok(isCheckpointCoverage(input.coveredUntilMs), 'Partial coverage is outside the checkpoint window.');
+  assert.ok(positiveInteger(input.partialRevision), 'Partial revision must be positive.');
+  assert.ok(isSpeechProvenance(input.extraction), 'Partial requires speech recognition provenance.');
 
   let previousStartMs = 0;
   const transcript: string[] = [];
@@ -98,52 +101,194 @@ export function deriveProgressiveAudioSampleEvidence(
     previousStartMs = segment.startMs;
   });
 
-  const normalized = transcript
-    .map((value) => value.replace(/\s+/gu, ' ').trim())
-    .filter(Boolean)
-    .join(' ');
-  assert.ok(normalized.length > 0);
+  return summarizeTranscript(transcript);
+}
 
-  return {
-    evidenceKind: 'progressive-audio-sample-v1',
+export function deriveProgressiveAudioOracleEvidence(
+  input: ProgressiveAudioSampleInput,
+  speechPack: SpeechPack,
+  durationMs: number,
+  finalSegments: readonly ProgressiveAudioSampleSegment[],
+): ProgressiveAudioOracleEvidence {
+  assert.match(input.sourceSha256, SHA256);
+  assert.ok(positiveInteger(input.sourceBytes));
+  const expectedOutput = summarizeCheckpoint(input);
+  return parseProgressiveAudioOracle({
+    evidenceKind: 'progressive-audio-oracle-v1',
+    oracle: 'non-tauri-production-worker',
+    speechPack,
+    durationMs,
     sampleIntervalMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
-    input: {
-      sha256: input.sourceSha256,
-      bytes: input.sourceBytes,
-    },
+    input: { sha256: input.sourceSha256, bytes: input.sourceBytes },
     firstCheckpoint: {
       coveredUntilMs: input.coveredUntilMs,
       partialRevision: input.partialRevision,
       segmentCount: input.segments.length,
     },
-    expectedOutput: {
-      normalizedSha256: sha256Utf8(normalized),
-      segmentCount: input.segments.length,
-    },
+    expectedOutput,
+    finalOutput: summarizeTranscript(finalSegments.map((segment) => segment.text)),
+    afterCheckpoint: summarizeTranscript(finalSegments
+      .filter((segment) => segment.startMs >= input.coveredUntilMs)
+      .map((segment) => segment.text)),
     extraction: input.extraction,
-  };
+  });
 }
 
-/**
- * Create the digest-only oracle from a separately executed non-Tauri worker.
- * The caller must provide segments from that independent process; the
- * localhost real-engine smoke compares its own result against this digest.
- */
-export function deriveProgressiveAudioOracleEvidence(
-  input: ProgressiveAudioSampleInput,
-): ProgressiveAudioOracleEvidence {
-  const evidence = deriveProgressiveAudioSampleEvidence(input);
+function positiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function matches(value: unknown, pattern: RegExp): value is string {
+  return typeof value === 'string' && pattern.test(value);
+}
+
+function isSpeechProvenance(value: unknown): value is ProgressiveAudioSampleInput['extraction'] {
+  const source = record(value);
+  return source?.['engine'] === 'speech-recognition'
+    && matches(source['model'], /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u)
+    && (source['device'] === 'cpu' || source['device'] === 'cuda')
+    && matches(source['digest'], ENGINE_DIGEST);
+}
+
+function isTranscriptSummary(value: unknown): value is TranscriptSummary {
+  const summary = record(value);
+  return positiveInteger(summary?.['segmentCount']) && matches(summary?.['normalizedSha256'], SHA256);
+}
+
+export function parseProgressiveAudioOracle(value: unknown): ProgressiveAudioOracleEvidence {
+  const oracle = record(value);
+  const input = record(oracle?.['input']);
+  const checkpoint = record(oracle?.['firstCheckpoint']);
+  const pack = oracle?.['speechPack'];
+  const duration = oracle?.['durationMs'];
+  const partial = oracle?.['expectedOutput'];
+  const final = oracle?.['finalOutput'];
+  const tail = oracle?.['afterCheckpoint'];
+  const extraction = oracle?.['extraction'];
+  if (oracle?.['evidenceKind'] !== 'progressive-audio-oracle-v1'
+    || oracle['oracle'] !== 'non-tauri-production-worker'
+    || oracle['sampleIntervalMs'] !== PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS
+    || (pack !== 'cuda' && pack !== 'cpu')
+    || !positiveInteger(duration)
+    || !matches(input?.['sha256'], SHA256) || !positiveInteger(input?.['bytes'])
+    || !isCheckpointCoverage(checkpoint?.['coveredUntilMs'])
+    || checkpoint['coveredUntilMs'] >= duration
+    || !positiveInteger(checkpoint['partialRevision'])
+    || !isTranscriptSummary(partial) || checkpoint['segmentCount'] !== partial.segmentCount
+    || !isTranscriptSummary(final) || !isTranscriptSummary(tail)
+    || final.segmentCount < partial.segmentCount || tail.segmentCount > final.segmentCount
+    || !isSpeechProvenance(extraction) || (pack === 'cpu' && extraction.device !== 'cpu')) {
+    throw new Error('Invalid progressive audio oracle structure. Regenerate it with the current oracle generator.');
+  }
   return {
     evidenceKind: 'progressive-audio-oracle-v1',
     oracle: 'non-tauri-production-worker',
-    sampleIntervalMs: evidence.sampleIntervalMs,
-    input: evidence.input,
-    firstCheckpoint: evidence.firstCheckpoint,
-    expectedOutput: evidence.expectedOutput,
-    extraction: evidence.extraction,
+    sampleIntervalMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    speechPack: pack,
+    durationMs: duration,
+    input: { sha256: input['sha256'], bytes: input['bytes'] },
+    firstCheckpoint: {
+      coveredUntilMs: checkpoint['coveredUntilMs'],
+      partialRevision: checkpoint['partialRevision'],
+      segmentCount: partial.segmentCount,
+    },
+    expectedOutput: { normalizedSha256: partial.normalizedSha256, segmentCount: partial.segmentCount },
+    finalOutput: { normalizedSha256: final.normalizedSha256, segmentCount: final.segmentCount },
+    afterCheckpoint: { normalizedSha256: tail.normalizedSha256, segmentCount: tail.segmentCount },
+    extraction: {
+      engine: extraction.engine, model: extraction.model, device: extraction.device, digest: extraction.digest,
+    },
   };
 }
 
-function sha256Utf8(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
+export function readProgressiveAudioSegments(value: unknown): readonly (
+  ProgressiveAudioSampleSegment & { readonly segmentId: string }
+)[] {
+  if (!Array.isArray(value)) throw new Error('Expected progressive transcript segments.');
+  return value.map((item: unknown, index) => {
+    const segment = record(item);
+    const locator = record(segment?.['locator']);
+    const startMs = locator?.['startMs'];
+    const endMs = locator?.['endMs'];
+    const text = segment?.['text'];
+    const segmentId = segment?.['segmentId'];
+    assert.ok(locator?.['kind'] === 'time' && typeof startMs === 'number'
+      && Number.isSafeInteger(startMs) && startMs >= 0 && positiveInteger(endMs) && endMs > startMs
+      && segment?.['order'] === index && typeof text === 'string' && text.trim()
+      && typeof segmentId === 'string' && segmentId, 'Invalid progressive transcript segment.');
+    return { order: index, startMs, endMs, text, segmentId };
+  });
+}
+
+export function readProgressiveAudioPartial(
+  value: unknown,
+  expectedSource: ProgressiveAudioOracleEvidence['input'],
+): ProgressiveAudioSampleInput {
+  const partial = record(value);
+  const source = record(partial?.['source']);
+  const coveredUntilMs = partial?.['coveredUntilMs'];
+  const partialRevision = partial?.['revision'];
+  const extraction = partial?.['extractionEngine'];
+  assert.ok(source?.['sha256'] === expectedSource.sha256 && source['bytes'] === expectedSource.bytes,
+    'Progressive partial source binding did not match.');
+  assert.ok(isCheckpointCoverage(coveredUntilMs), 'Partial coverage is outside the checkpoint window.');
+  assert.ok(positiveInteger(partialRevision), 'Partial revision must be positive.');
+  assert.ok(isSpeechProvenance(extraction), 'Partial requires speech recognition provenance.');
+  return {
+    sourceSha256: expectedSource.sha256,
+    sourceBytes: expectedSource.bytes,
+    coveredUntilMs,
+    partialRevision,
+    segments: readProgressiveAudioSegments(partial?.['segments']),
+    extraction,
+  };
+}
+
+export function verifyProgressivePartial(
+  oracle: ProgressiveAudioOracleEvidence,
+  snapshot: unknown,
+  displayed: readonly string[],
+): void {
+  const partial = readProgressiveAudioPartial(snapshot, oracle.input);
+  assert.equal(partial.partialRevision, oracle.firstCheckpoint.partialRevision, 'Host partial revision differs from the oracle.');
+  assert.equal(partial.coveredUntilMs, oracle.firstCheckpoint.coveredUntilMs, 'Host partial coverage differs from the oracle.');
+  assert.deepEqual(summarizeCheckpoint(partial), oracle.expectedOutput, 'Host partial differs from the oracle.');
+  assert.deepEqual(summarizeTranscript(displayed), oracle.expectedOutput, 'Displayed partial differs from the oracle.');
+  assertProgressiveRecognitionEngine(partial.extraction, oracle.extraction);
+}
+
+function assertProgressiveRecognitionEngine(value: unknown, expected: ProgressiveAudioOracleEvidence['extraction']): void {
+  assert.ok(isSpeechProvenance(value), 'Progressive transcript requires recognition provenance.');
+  for (const key of ['engine', 'model', 'device', 'digest'] as const) {
+    assert.equal(value[key], expected[key], 'Progressive transcript recognition provenance differs from the oracle.');
+  }
+}
+
+export function verifyProgressiveFinal(
+  oracle: ProgressiveAudioOracleEvidence,
+  raw: unknown,
+  rendered: readonly { readonly segmentId: string | null; readonly text: string }[],
+): void {
+  const stored = record(raw);
+  assertProgressiveRecognitionEngine(stored?.['extractionEngine'], oracle.extraction);
+  const segments = readProgressiveAudioSegments(stored?.['segments']);
+  const tail = segments.filter((segment) => segment.startMs >= oracle.firstCheckpoint.coveredUntilMs);
+  const tailIds = new Set(tail.map((segment) => segment.segmentId));
+  assert.deepEqual(summarizeTranscript(segments.map((segment) => segment.text)), oracle.finalOutput,
+    'Stored final transcript differs from the oracle.');
+  assert.ok(tail.length > 0, 'Stored speech after the checkpoint differs from the oracle.');
+  assert.deepEqual(summarizeTranscript(tail.map((segment) => segment.text)), oracle.afterCheckpoint,
+    'Stored speech after the checkpoint differs from the oracle.');
+  assert.ok(rendered.length === segments.length && rendered.every((line, index) => line.segmentId === segments[index]?.segmentId),
+    'Displayed final transcript rows must correspond to the stored segments.');
+  assert.deepEqual(summarizeTranscript(rendered.map((line) => line.text)), oracle.finalOutput,
+    'Displayed final transcript differs from the oracle.');
+  assert.deepEqual(summarizeTranscript(rendered.filter((line) => line.segmentId && tailIds.has(line.segmentId))
+    .map((line) => line.text)), oracle.afterCheckpoint, 'Displayed speech after the checkpoint differs from the oracle.');
 }

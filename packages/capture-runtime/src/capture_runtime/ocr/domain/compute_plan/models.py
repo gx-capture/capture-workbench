@@ -17,7 +17,7 @@ class ComputePlanSelection:
     notices: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.compute_mode not in ("gpu-dml", "cpu-fallback"):
+        if self.compute_mode not in ("gpu", "cpu-fallback"):
             raise ValueError(f"invalid compute mode: {self.compute_mode}")
         if self.adapter_class not in ("dedicated", "integrated", "unknown"):
             raise ValueError(f"invalid adapter class: {self.adapter_class}")
@@ -55,14 +55,14 @@ class ComputePlanPolicy:
                 if require_identity and not candidate.has_identity:
                     return None
                 return ComputePlanSelection(
-                    compute_mode="gpu-dml",
+                    compute_mode="gpu",
                     adapter_class=candidate.adapter_class,
                     device_id=candidate.device_id,
                 )
         return ComputePlanSelection(
             compute_mode="cpu-fallback",
             adapter_class=candidates[0].adapter_class if len(candidates) == 1 else "unknown",
-            reason="dml_provider_unavailable"
+            reason="gpu_provider_unavailable"
             if candidates and not dml_available
             else "no_compatible_gpu",
             notices=("ocr_cpu_fallback",),

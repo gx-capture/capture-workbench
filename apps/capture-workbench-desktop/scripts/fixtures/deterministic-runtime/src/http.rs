@@ -24,6 +24,8 @@ pub struct Response {
     pub(crate) body: Option<Value>,
     event_stream: Option<String>,
     headers: Vec<(String, String)>,
+    // The capture a capture route resolved, for the request log only; never sent.
+    capture_id: Option<String>,
 }
 
 impl Response {
@@ -38,6 +40,7 @@ impl Response {
             body: Some(body),
             event_stream: None,
             headers: Vec::new(),
+            capture_id: None,
         }
     }
 
@@ -47,6 +50,7 @@ impl Response {
             body: None,
             event_stream: None,
             headers: Vec::new(),
+            capture_id: None,
         }
     }
 
@@ -59,6 +63,17 @@ impl Response {
         let mut response = Self::empty(200);
         response.event_stream = Some(body);
         response
+    }
+
+    /// Names the capture this answer is about: one the fixture issued, reached
+    /// by an authorized request. Only the request log reads it.
+    pub fn for_capture(mut self, capture_id: &str) -> Self {
+        self.capture_id = Some(capture_id.into());
+        self
+    }
+
+    pub fn capture_id(&self) -> Option<&str> {
+        self.capture_id.as_deref()
     }
 
     pub fn with_cors(mut self, origin: Option<&str>) -> Self {
@@ -97,6 +112,15 @@ pub struct LocalRequestPolicy {
 }
 
 impl LocalRequestPolicy {
+    #[cfg(test)]
+    pub fn new(token: &str, allowed_host: &str) -> Self {
+        Self {
+            token: token.into(),
+            allowed_hosts: HashSet::from([allowed_host.to_owned()]),
+            allowed_origins: HashSet::new(),
+        }
+    }
+
     pub fn from_env(token: &str) -> Result<Self, String> {
         let allowed_hosts = csv_env("CAPTURE_ALLOWED_HOSTS")
             .into_iter()

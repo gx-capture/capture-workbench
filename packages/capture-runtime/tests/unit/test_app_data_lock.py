@@ -212,6 +212,8 @@ def test_main_holds_lock_across_sweep_and_server_run_and_releases_on_exit(
     def fake_uvicorn_run(*_args: object, **_kwargs: object) -> None:
         with pytest.raises(AppDataInUseError):
             AppDataDirectoryLock.acquire(app_data_dir)
+        log = app_data_dir / "logs" / "runtime-diagnostics.log"
+        assert " runtime-start version=" in log.read_text(encoding="utf-8")
         events.append("run")
 
     monkeypatch.setattr(runtime_main, "start_stale_extraction_sweep", fake_sweep)
@@ -223,3 +225,109 @@ def test_main_holds_lock_across_sweep_and_server_run_and_releases_on_exit(
     assert events == ["sweep", "create_app", "run"]
     with AppDataDirectoryLock.acquire(app_data_dir):
         pass
+
+
+def test_main_retries_retired_ocr_cleanup_and_preserves_other_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("CAPTURE_APP_DATA_DIR", str(tmp_path))
+    cache = tmp_path / "engine-cache"
+    monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", str(cache))
+    retired = [tmp_path / name / "windowsml-ocr" for name in ("engines", "runtime-assets")]
+    for root in retired:
+        root.mkdir(parents=True)
+        (root / "pipeline.json").write_bytes(b"old")
+    protected = [
+        tmp_path / "engines" / "text-recognition" / "active.json",
+        tmp_path / "engines" / "speech-recognition" / "active.json",
+        cache / "aa" / ("a" * 64),
+    ]
+    for file in protected:
+        file.parent.mkdir(parents=True)
+        file.write_bytes(b"keep")
+
+    def check_lock(_settings: object) -> object:
+        with pytest.raises(AppDataInUseError):
+            AppDataDirectoryLock.acquire(tmp_path)
+        return object()
+
+    original_rmdir = Path.rmdir
+
+    def busy(path: Path) -> None:
+        if path == retired[0]:
+            raise PermissionError("in use")
+        original_rmdir(path)
+
+    monkeypatch.setattr(runtime_main, "start_stale_extraction_sweep", lambda: None)
+    monkeypatch.setattr(runtime_main, "create_app", check_lock)
+    monkeypatch.setattr(runtime_main.uvicorn, "run", lambda *_args, **_kwargs: None)
+    with monkeypatch.context() as busy_cleanup:
+        busy_cleanup.setattr(Path, "rmdir", busy)
+        runtime_main.main(["serve"])
+    assert retired[0].is_dir()
+    assert not retired[1].exists()
+    assert "will retry at startup" in caplog.text
+    runtime_main.main(["serve"])
+    runtime_main.main(["serve"])
+    assert all(not root.exists() for root in retired)
+    assert all(file.read_bytes() == b"keep" for file in protected)
+
+
+@pytest.mark.parametrize("linked_parent", [True, False])
+def test_retired_ocr_cleanup_does_not_follow_links(tmp_path: Path, linked_parent: bool) -> None:
+    app_data = tmp_path / "app-data"
+    outside = tmp_path / "outside"
+    target = outside / "windowsml-ocr" if linked_parent else outside
+    target.mkdir(parents=True)
+    sentinel = target / "keep"
+    sentinel.write_bytes(b"outside")
+    parent = app_data / "engines"
+    link = parent if linked_parent else parent / "windowsml-ocr"
+    link.parent.mkdir(parents=True)
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Creating directory symlinks is unavailable: {error}")
+    with AppDataDirectoryLock.acquire(app_data):
+        runtime_main.remove_retired_ocr_installation(app_data)
+    assert sentinel.read_bytes() == b"outside"
+    assert link.is_symlink() == linked_parent
+
+
+@pytest.mark.parametrize("state_kind", ["valid", "missing", "invalid", "unsafe-version"])
+def test_main_cleans_only_inactive_installed_model_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state_kind: str
+) -> None:
+    import json
+
+    monkeypatch.setenv("CAPTURE_APP_DATA_DIR", str(tmp_path))
+    root = tmp_path / "engines" / "reader"
+    active = root / "versions" / "active"
+    old = root / "versions" / "old"
+    temporary = root / "versions" / ".pending"
+    for directory in (active, old, temporary):
+        directory.mkdir(parents=True)
+        (directory / "verified-files.json").write_bytes(b"keep")
+    if state_kind != "missing":
+        state = {
+            "stateVersion": "1",
+            "requirementId": "reader",
+            "artifactVersion": "../unsafe" if state_kind == "unsafe-version" else "active",
+            "manifestSha256": "a" * 64,
+        }
+        (root / "active-model.json").write_text(
+            "[]" if state_kind == "invalid" else json.dumps(state), encoding="utf-8"
+        )
+
+    def create_app(_settings: object) -> object:
+        with pytest.raises(AppDataInUseError):
+            AppDataDirectoryLock.acquire(tmp_path)
+        assert old.exists() == (state_kind != "valid")
+        assert (active / "verified-files.json").read_bytes() == b"keep"
+        assert (temporary / "verified-files.json").read_bytes() == b"keep"
+        return object()
+
+    monkeypatch.setattr(runtime_main, "start_stale_extraction_sweep", lambda: None)
+    monkeypatch.setattr(runtime_main, "create_app", create_app)
+    monkeypatch.setattr(runtime_main.uvicorn, "run", lambda *_args, **_kwargs: None)
+    runtime_main.main(["serve"])

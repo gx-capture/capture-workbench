@@ -13,17 +13,24 @@ from capture_runtime.clock import Clock
 from capture_runtime.contract_set import canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureDocument,
-    CaptureOperationV2,
-    OpenStructuringSessionV2,
+    CaptureOperation,
     RawCapture,
-    StructuringBatchV2,
+    StructuringBatch,
+)
+from capture_runtime.contracts import (
+    OpenStructuringSession as OpenStructuringSessionRequest,
 )
 from capture_runtime.structuring.application.use_cases import (
     GetStructuringSession,
     OpenStructuringSession,
     SubmitStructuringBatch,
 )
+from capture_runtime.structuring.domain.session.models import RetiredStructuringProfileError
 from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    MODEL_OPTIONS,
+    legacy_profile_id,
+)
 from capture_runtime.structuring.infrastructure.structuring import (
     assemble_structuring_document,
     validate_structuring_batch,
@@ -33,7 +40,7 @@ from capture_runtime.structuring.infrastructure.structuring_session_repository i
 )
 
 
-def _batch_digest(batch: StructuringBatchV2) -> str:
+def _batch_digest(batch: StructuringBatch) -> str:
     payload = batch.model_dump(
         mode="json",
         by_alias=True,
@@ -53,7 +60,7 @@ class StructuringSessionService:
         coordinator: StructuringCoordinator,
         clock: Clock,
         contract_set_sha256: str,
-        host_result_committer: Callable[..., CaptureOperationV2] | None = None,
+        host_result_committer: Callable[..., CaptureOperation] | None = None,
     ) -> None:
         self.repository = repository
         self.streaming_repository = streaming_repository
@@ -83,7 +90,7 @@ class StructuringSessionService:
         self.repository.initialize()
         self._recover_completed_sessions()
 
-    def batch(self, session_id: str, batch_index: int) -> StructuringBatchV2:
+    def batch(self, session_id: str, batch_index: int) -> StructuringBatch:
         return self.repository.batch(session_id, batch_index)
 
     def _commit_completed_capture(
@@ -106,19 +113,26 @@ class StructuringSessionService:
     def _planned_batches(
         self,
         raw: RawCapture,
-        request: OpenStructuringSessionV2,
-    ) -> list[StructuringBatchV2]:
+        request: OpenStructuringSessionRequest,
+        capture_id: str,
+    ) -> list[StructuringBatch]:
+        # Only fresh sessions are planned: a stored session that named the old
+        # profile id replays from its record and never reaches this point.
+        if request.profile_id in {legacy_profile_id(option) for option in MODEL_OPTIONS}:
+            raise RetiredStructuringProfileError(
+                "profileId names a retired structuring profile id; use the current profile id"
+            )
         plans = self._coordinator.plan_requests(
             raw,
             target_language=request.target_language,
-            profile_id=request.provider_capability.provider.model,
+            profile_id=request.profile_id,
         )
-        batches: list[StructuringBatchV2] = []
+        batches: list[StructuringBatch] = []
         batch_count = len(plans)
         for index, planned in enumerate(plans):
-            batch = StructuringBatchV2(
+            batch = StructuringBatch(
                 session_id="pending",
-                capture_id=request.capture_id,
+                capture_id=capture_id,
                 batch_index=index,
                 batch_count=batch_count,
                 source_segment_ids=[

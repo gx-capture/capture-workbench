@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from capture_runtime.contracts import (
@@ -92,7 +95,7 @@ def test_structuring_session_invariants() -> None:
     session = StructuringSession(
         session_id="sess-1",
         capture_id="cap-1",
-        raw_source_sha256="raw_sha",
+        source_sha256="raw_sha",
         contract_set_sha256="contract_sha",
         schema_dialect="v2",
         batch_count=2,
@@ -108,7 +111,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="sess-1",
             capture_id="cap-1",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=0,
@@ -119,7 +122,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="sess-1",
             capture_id="cap-1",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=2,
@@ -131,7 +134,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="",
             capture_id="cap-1",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=1,
@@ -142,7 +145,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="sess-1",
             capture_id="",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=1,
@@ -217,7 +220,7 @@ def test_session_aggregate_accepts_batches_only_in_order_and_stops_at_completion
     session = StructuringSession(
         session_id="s",
         capture_id="c",
-        raw_source_sha256="a" * 64,
+        source_sha256="a" * 64,
         contract_set_sha256="b" * 64,
         schema_dialect="v2",
         batch_count=2,
@@ -242,32 +245,30 @@ def test_open_structuring_session_rejection_policies() -> None:
     from capture_runtime.contract_set import SCHEMA_DIALECT
     from capture_runtime.contracts import (
         CaptureEngine,
-        CaptureOperationV2,
+        CaptureOperation,
         CaptureSourceKind,
-        OpenStructuringSessionV2,
-        StartCaptureV2,
-        StreamingCaptureStatus,
+        CaptureStatus,
+        StartCapture,
         StructuringMode,
-        StructuringProviderCapabilityV2,
+        StructuringProviderCapability,
     )
+    from capture_runtime.contracts import OpenStructuringSession as OpenStructuringSessionRequest
     from capture_runtime.structuring.application.use_cases import OpenStructuringSession
     from capture_runtime.structuring.domain.session.models import SessionTransitionError
 
-    capability = StructuringProviderCapabilityV2(
+    capability = StructuringProviderCapability(
         provider=CaptureEngine(
             engine="ollama",
             model="test-model",
             digest=f"sha256:{'a' * 64}",
         ),
-        capability="capture-structuring",
         schema_dialect=SCHEMA_DIALECT,
     )
-    request = OpenStructuringSessionV2(
-        capture_id="cap-1",
+    request = OpenStructuringSessionRequest(
         target_language="en",
+        profile_id="qwen3.5-0.8b-structure-v1",
         provider_capability=capability,
         schema_dialect=SCHEMA_DIALECT,
-        client_request_id="req-1",
     )
 
     mock_repo = MagicMock()
@@ -283,39 +284,113 @@ def test_open_structuring_session_rejection_policies() -> None:
 
     now = datetime.now(UTC)
     # Test rejection when structuring_mode is not HOST
-    mock_captures.get_capture.return_value = CaptureOperationV2(
+    mock_captures.get_capture.return_value = CaptureOperation(
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.AWAITING_STRUCTURING,
+        status=CaptureStatus.AWAITING_STRUCTURING,
         partial_revision=0,
         last_event_sequence=0,
         created_at=now,
         updated_at=now,
     )
-    mock_captures.capture_request.return_value = StartCaptureV2(
+    mock_captures.capture_request.return_value = StartCapture(
         client_request_id="start-1",
         ingestion_id="ing-1",
         structuring_mode=StructuringMode.RUNTIME,
     )
     with pytest.raises(SessionTransitionError, match="pull structuring requires host capture mode"):
-        use_case.execute(request)
+        use_case.execute("cap-1", request, client_request_id="req-1")
 
     # Test rejection when operation status is not awaiting/active structuring
-    mock_captures.get_capture.return_value = CaptureOperationV2(
+    mock_captures.get_capture.return_value = CaptureOperation(
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.EXTRACTING,
+        status=CaptureStatus.EXTRACTING,
         partial_revision=0,
         last_event_sequence=0,
         created_at=now,
         updated_at=now,
     )
-    mock_captures.capture_request.return_value = StartCaptureV2(
+    mock_captures.capture_request.return_value = StartCapture(
         client_request_id="start-1",
         ingestion_id="ing-1",
         structuring_mode=StructuringMode.HOST,
     )
     with pytest.raises(SessionTransitionError, match="capture is not awaiting pull structuring"):
-        use_case.execute(request)
+        use_case.execute("cap-1", request, client_request_id="req-1")
+
+
+@pytest.mark.parametrize("status", ["completed", "running"])
+def test_historical_model_installation_retains_stored_requirement_id(
+    tmp_path: Path, status: str
+) -> None:
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.contracts import RuntimeInstallationStatus
+    from capture_runtime.structuring.infrastructure.model_installation_repository import (
+        ModelInstallationRepository,
+    )
+
+    repository = ModelInstallationRepository(tmp_path, clock=SystemClock(), retention_hours=4)
+    repository.initialize()
+    record, _ = repository.create_or_get(
+        idempotency_key="historical-model",
+        request_fingerprint="a" * 64,
+        option_id="qwen3.5-4b-v1",
+    )
+    installation_id = record.job.installation_id
+    path = tmp_path / installation_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    historical["job"].update(requirementId="capture-ollama-model", status=status)
+    path.write_text(json.dumps(historical), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    job = repository.get(installation_id).job
+    assert repository.list() == [job]
+    assert job.option_id == "qwen3.5-4b-v1"
+    assert "requirementId" not in job.model_dump(by_alias=True)
+    replay, created = repository.create_or_get(
+        idempotency_key="historical-model",
+        request_fingerprint="a" * 64,
+        option_id=job.option_id,
+    )
+    assert not created and replay.job == job
+    if status == "completed":
+        assert job.status is RuntimeInstallationStatus.COMPLETED
+        assert path.read_bytes() == before
+    else:
+        assert job.status is RuntimeInstallationStatus.FAILED
+        assert job.error is not None and job.error.code == "runtime_restarted"
+        after = json.loads(path.read_bytes())
+        assert after["job"]["requirementId"] == historical["job"]["requirementId"]
+        assert after["requestFingerprint"] == historical["requestFingerprint"]
+
+
+def test_model_installation_with_current_requirement_id_field_is_not_loaded(
+    tmp_path: Path,
+) -> None:
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.storage.common import RecordNotFoundError
+    from capture_runtime.structuring.infrastructure.model_installation_repository import (
+        ModelInstallationRepository,
+    )
+
+    repository = ModelInstallationRepository(tmp_path, clock=SystemClock(), retention_hours=4)
+    repository.initialize()
+    record, _ = repository.create_or_get(
+        idempotency_key="current-model",
+        request_fingerprint="a" * 64,
+        option_id="qwen3.5-4b-v1",
+    )
+    installation_id = record.job.installation_id
+    path = tmp_path / installation_id / "metadata.json"
+    stored = json.loads(path.read_bytes())
+    stored["job"]["requirementId"] = "structuring-model"
+    path.write_text(json.dumps(stored), encoding="utf-8")
+
+    repository.initialize()
+    assert repository.list() == []
+    with pytest.raises(RecordNotFoundError):
+        repository.get(installation_id)

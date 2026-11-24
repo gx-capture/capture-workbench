@@ -27,7 +27,7 @@ const evidencePath = join(outputDirectory, 'real-media-smoke.json');
 const maxInstallationWaitMs = 90 * 60_000;
 const maxCaptureWaitMs = 20 * 60_000;
 export const ownedRuntimeObserverTimeoutMs = 45_000;
-export const dependencyOrder = ['windowsml-ocr', 'speech-recognition'] as const;
+export const dependencyOrder = ['text-recognition', 'speech-recognition'] as const;
 
 const canonicalSourceLockPath = join(
   workspaceRoot,
@@ -130,7 +130,7 @@ interface MediaEvidence {
   readonly evidenceKind: 'real-core-first-media-diagnostic';
   readonly releaseGateSatisfied: false;
   readonly consumerE2e: false;
-  readonly dependencyOrder: readonly ['windowsml-ocr', 'speech-recognition'];
+  readonly dependencyOrder: readonly ['text-recognition', 'speech-recognition'];
   readonly pdf: {
     readonly extractionEngine: string;
     readonly model: string;
@@ -159,9 +159,9 @@ interface MediaEvidence {
 
 export interface ExpectedProvenance {
   readonly ocrModel: string;
-  readonly whisperModel: string;
-  readonly whisperDevice: string;
-  readonly whisperPreferGpu: boolean;
+  readonly speechModel: string;
+  readonly speechDevice: string;
+  readonly speechPreferGpu: boolean;
 }
 
 export interface OwnedRuntimeEvidence {
@@ -354,34 +354,34 @@ export function expectedProvenanceFromSourceLock(
   const ocr = asObject(
     fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'ocr'),
   );
-  const whisper = asObject(
-    fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'whisper'),
+  const speech = asObject(
+    fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'speech-recognition'),
   );
   if (
-    ocr?.['expectedEngine'] !== 'windowsml-ocr' ||
-    ocr['expectedDevice'] !== 'windowsml-dml' ||
-    typeof ocr['expectedModel'] !== 'string'
+    ocr?.['expectedEngine'] !== 'text-recognition' ||
+    ocr['expectedDevice'] !== 'directml' ||
+    ocr['expectedModel'] !== 'pp-ocrv6-medium'
   ) {
     throw new Error('Canonical OCR fixture does not pin DirectML provenance.');
   }
-  const whisperRole = whisper?.['expectedModel'];
-  const whisperDevice = whisper?.['expectedDevice'];
-  const whisperPreferGpu = whisper?.['preferGpu'];
+  const speechModel = speech?.['expectedModel'];
+  const speechDevice = speech?.['expectedDevice'];
+  const speechPreferGpu = speech?.['preferGpu'];
   if (
-    whisper?.['expectedEngine'] !== 'speech-recognition' ||
-    !['tea-asr-1.1', 'tea-asr-1.1-mini'].includes(String(whisperRole)) ||
-    !['cuda', 'cpu'].includes(String(whisperDevice)) ||
-    typeof whisperPreferGpu !== 'boolean'
+    speech?.['expectedEngine'] !== 'speech-recognition' ||
+    !['tea-asr-1.1', 'tea-asr-1.1-mini'].includes(String(speechModel)) ||
+    !['cuda', 'cpu'].includes(String(speechDevice)) ||
+    typeof speechPreferGpu !== 'boolean'
   ) {
     throw new Error(
-      'Canonical Whisper fixture does not pin execution provenance.',
+      'Canonical speech recognition fixture does not pin execution provenance.',
     );
   }
   return {
     ocrModel: ocr['expectedModel'],
-    whisperModel: String(whisperRole),
-    whisperDevice: String(whisperDevice),
-    whisperPreferGpu,
+    speechModel: String(speechModel),
+    speechDevice: String(speechDevice),
+    speechPreferGpu,
   };
 }
 
@@ -396,12 +396,12 @@ export function assertRealMediaEvidence(
   assert.equal(report?.hostStructuring, true);
   assert.equal(report?.capturesDeletedAfterVerification, true);
   assert.equal(report?.ownedProcessCleanupVerified, true);
-  assert.equal(report?.pdf?.extractionEngine, 'windowsml-ocr');
-  assert.equal(report?.pdf?.device, 'windowsml-dml');
+  assert.equal(report?.pdf?.extractionEngine, 'text-recognition');
+  assert.equal(report?.pdf?.device, 'directml');
   assert.ok((report?.pdf?.segmentCount ?? 0) > 0);
   assert.ok((report?.pdf?.pageLocators ?? 0) > 0);
-  assert.equal(report?.image?.extractionEngine, 'windowsml-ocr');
-  assert.equal(report?.image?.device, 'windowsml-dml');
+  assert.equal(report?.image?.extractionEngine, 'text-recognition');
+  assert.equal(report?.image?.device, 'directml');
   assert.ok((report?.image?.segmentCount ?? 0) > 0);
   assert.ok((report?.image?.pageLocators ?? 0) > 0);
   assert.equal(report?.audio?.extractionEngine, 'speech-recognition');
@@ -487,7 +487,7 @@ async function main(): Promise<void> {
       runtimePort,
       token,
       audioBytes,
-      'audio',
+      'recording',
       basename(audioPath),
       captureIds,
       expectedProvenance,
@@ -556,7 +556,7 @@ async function captureAndVerify(
   port: number,
   token: string,
   bytes: Uint8Array,
-  sourceKind: 'pdf' | 'image' | 'audio',
+  sourceKind: 'pdf' | 'image' | 'recording',
   fileName: string,
   captureIds: string[],
   expectedProvenance: ExpectedProvenance,
@@ -590,17 +590,17 @@ async function captureAndVerify(
     throw new Error(`Real ${sourceKind} extraction returned no text.`);
   }
   if (sourceKind === 'pdf' || sourceKind === 'image') {
-    assert.equal(raw.extractionEngine.engine, 'windowsml-ocr');
+    assert.equal(raw.extractionEngine.engine, 'text-recognition');
     assert.equal(raw.extractionEngine.model, expectedProvenance.ocrModel);
-    assert.equal(raw.extractionEngine.device, 'windowsml-dml');
+    assert.equal(raw.extractionEngine.device, 'directml');
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'page'));
   } else {
     assert.equal(raw.extractionEngine.engine, 'speech-recognition');
-    assert.equal(raw.extractionEngine.model, expectedProvenance.whisperModel);
-    if (expectedProvenance.whisperPreferGpu) {
+    assert.equal(raw.extractionEngine.model, expectedProvenance.speechModel);
+    if (expectedProvenance.speechPreferGpu) {
       assert.ok(['cuda', 'cpu'].includes(raw.extractionEngine.device));
     } else {
-      assert.equal(raw.extractionEngine.device, expectedProvenance.whisperDevice);
+      assert.equal(raw.extractionEngine.device, expectedProvenance.speechDevice);
     }
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'time'));
   }
@@ -638,7 +638,7 @@ async function captureAndVerify(
 }
 
 function fixtureMediaType(
-  sourceKind: 'pdf' | 'image' | 'audio',
+  sourceKind: 'pdf' | 'image' | 'recording',
   fileName: string,
 ): string {
   const normalized = fileName.toLowerCase();
@@ -707,7 +707,6 @@ function hostCandidate(raw: RawCapture): Record<string, unknown> {
       engine: 'host',
       model: 'real-media-smoke-identity-host-v1',
       digest: `sha256:${'1'.repeat(64)}`,
-      device: 'local',
     },
     warnings: [],
     createdAt: raw.createdAt,
@@ -757,7 +756,7 @@ export function runtimeEnvironment(
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
     CAPTURE_RETENTION_HOURS: '24',
     CAPTURE_MAX_UPLOAD_BYTES: String(2 * 1024 * 1024 * 1024),
-    CAPTURE_WHISPER_PREFER_GPU: String(expectedProvenance.whisperPreferGpu),
+    CAPTURE_SPEECH_PREFER_GPU: String(expectedProvenance.speechPreferGpu),
     // The lock's speech fixture is TEA-ASR 1.1, which only the cuda content
     // carries. Without this a machine with no NVIDIA driver installs cpu.
     CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',

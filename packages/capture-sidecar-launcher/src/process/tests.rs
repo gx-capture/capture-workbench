@@ -9,7 +9,7 @@ use windows_sys::Win32::{Foundation::*, System::Threading::*};
 use super::error::*;
 use super::native::*;
 use super::sidecar_process::*;
-use crate::OwnedRuntimeSession;
+use crate::OwnedSidecarSession;
 
 #[test]
 fn cleanup_targets_only_the_recorded_pid_tree() {
@@ -24,7 +24,7 @@ fn cleanup_targets_only_the_recorded_pid_tree() {
 
 #[cfg(windows)]
 #[test]
-fn runtime_process_is_assigned_to_an_owned_job() {
+fn sidecar_process_is_assigned_to_an_owned_job() {
     let mut command = Command::new("cmd.exe");
     command
         .args([
@@ -66,7 +66,7 @@ fn a_child_attempting_breakaway_is_rejected_by_the_owned_job() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let process = OwnedRuntimeSession::spawn(&mut command).expect("owned probe");
+    let process = OwnedSidecarSession::spawn(&mut command).expect("owned probe");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while process.try_wait().expect("probe status").is_none()
         && std::time::Instant::now() < deadline
@@ -133,14 +133,14 @@ fn attempt_breakaway_child() -> Result<(), u32> {
 
 #[cfg(windows)]
 #[test]
-fn runtime_session_termination_is_idempotent_and_proven() {
+fn sidecar_session_termination_is_idempotent_and_proven() {
     let mut command = Command::new("cmd.exe");
     command
         .args(["/D", "/S", "/C", "ping.exe -n 30 127.0.0.1 >nul"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     let first = session
         .terminate_and_prove()
         .expect("first termination proof");
@@ -162,7 +162,7 @@ fn host_ownership_clone_survives_launcher_scope_until_cleanup_proof() {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let host_owned = {
-        let launcher_owned = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+        let launcher_owned = OwnedSidecarSession::spawn(&mut command).expect("owned session");
         let host_owned = launcher_owned.clone();
         drop(launcher_owned);
         host_owned
@@ -184,7 +184,7 @@ fn launcher_scope_drop_does_not_fake_cleanup_proof_for_host_owner() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let launcher_owned = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let launcher_owned = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     let host_owned = launcher_owned.clone();
     host_owned.inject_cleanup_failure_for_test();
     drop(launcher_owned);
@@ -192,7 +192,7 @@ fn launcher_scope_drop_does_not_fake_cleanup_proof_for_host_owner() {
     let failure = host_owned
         .terminate_and_prove()
         .expect_err("host must not observe a fabricated Drop proof");
-    assert_eq!(failure.kind(), RuntimeCleanupErrorKind::Injected);
+    assert_eq!(failure.kind(), SidecarCleanupErrorKind::Injected);
 
     let proof = host_owned
         .terminate_and_prove()
@@ -210,14 +210,14 @@ fn cleanup_proof_failure_retains_the_ownership_handle_for_retry() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     let root_pid = session.id();
     session.inject_cleanup_failure_for_test();
 
     let failure = session
         .terminate_and_prove()
         .expect_err("injected proof failure");
-    assert_eq!(failure.kind(), RuntimeCleanupErrorKind::Injected);
+    assert_eq!(failure.kind(), SidecarCleanupErrorKind::Injected);
     assert_eq!(session.id(), root_pid);
 
     let proof = session.terminate_and_prove().expect("retry cleanup proof");
@@ -235,7 +235,7 @@ fn monitor_root_exit_retries_cleanup_after_a_proof_race() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     let root_pid = session.id();
     while session.try_wait().expect("root status").is_none() {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -245,7 +245,7 @@ fn monitor_root_exit_retries_cleanup_after_a_proof_race() {
     let failure = session
         .monitor_root_exit()
         .expect_err("injected monitor proof failure");
-    assert_eq!(failure.kind(), RuntimeCleanupErrorKind::Injected);
+    assert_eq!(failure.kind(), SidecarCleanupErrorKind::Injected);
     assert_eq!(session.id(), root_pid);
 
     let observed = session
@@ -266,7 +266,7 @@ fn root_exit_with_job_termination_failure_reaps_job_owned_descendant() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     wait_for_root_exit(&session);
     session.inject_job_termination_failure_for_test();
 
@@ -289,7 +289,7 @@ fn root_still_alive_with_job_termination_failure_reaps_root_and_descendant() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     wait_for_active_processes(&session, 2);
     session.inject_job_termination_failure_for_test();
 
@@ -312,7 +312,7 @@ fn job_query_failure_retains_session_for_retry_after_root_exit() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     let root_pid = session.id();
     wait_for_root_exit(&session);
     session.inject_job_termination_failure_for_test();
@@ -321,7 +321,7 @@ fn job_query_failure_retains_session_for_retry_after_root_exit() {
     let failure = session
         .monitor_root_exit()
         .expect_err("query failure must not claim cleanup");
-    assert_eq!(failure.kind(), RuntimeCleanupErrorKind::Descendants);
+    assert_eq!(failure.kind(), SidecarCleanupErrorKind::Descendants);
     assert_eq!(session.id(), root_pid);
     assert!(session
         .active_processes_for_test()
@@ -346,7 +346,7 @@ fn partial_descendant_termination_retains_session_and_retry_proves_cleanup() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     wait_for_root_exit(&session);
     wait_for_active_processes(&session, 2);
     session.inject_job_termination_failure_for_test();
@@ -355,7 +355,7 @@ fn partial_descendant_termination_retains_session_and_retry_proves_cleanup() {
     let failure = session
         .monitor_root_exit()
         .expect_err("partial kill must not claim cleanup");
-    assert_eq!(failure.kind(), RuntimeCleanupErrorKind::Descendants);
+    assert_eq!(failure.kind(), SidecarCleanupErrorKind::Descendants);
     assert!(session.active_processes_for_test().expect("job query") >= 1);
 
     let observed = session
@@ -459,7 +459,7 @@ fn short_lived_root_exit_cleanup_stress_is_sequential() {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+        let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
         wait_for_root_exit(&session);
         session.inject_job_termination_failure_for_test();
 
@@ -482,7 +482,7 @@ fn missing_descendant_snapshot_requires_terminal_proof() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let session = OwnedRuntimeSession::spawn(&mut command).expect("owned session");
+    let session = OwnedSidecarSession::spawn(&mut command).expect("owned session");
     wait_for_active_processes(&session, 2);
     session.inject_stale_descendant_snapshot_for_test();
     wait_for_root_exit(&session);
@@ -497,7 +497,7 @@ fn missing_descendant_snapshot_requires_terminal_proof() {
 }
 
 #[cfg(windows)]
-fn wait_for_root_exit(session: &OwnedRuntimeSession) {
+fn wait_for_root_exit(session: &OwnedSidecarSession) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while session.try_wait().expect("root status").is_none() && std::time::Instant::now() < deadline
     {
@@ -521,7 +521,7 @@ fn powershell_command(script: &str) -> Command {
 }
 
 #[cfg(windows)]
-fn wait_for_active_processes(session: &OwnedRuntimeSession, minimum: u32) {
+fn wait_for_active_processes(session: &OwnedSidecarSession, minimum: u32) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while session
         .active_processes_for_test()

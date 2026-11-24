@@ -32,8 +32,8 @@ runtime rejects it at startup. OCR never routes through Whisper's CUDA device.
 ## User-visible provenance
 
 `CaptureDocument.extractionEngine.device` remains the existing field and reports
-`windowsml-dml` or `cpu`. The desktop review surface displays this value beside the OCR engine
-and model. `windowsml-dml` means the OCR session was configured DML-first; it does not claim that
+`directml` or `cpu`. The desktop review surface displays this value beside the OCR engine
+and model. `directml` means the OCR session was configured DML-first; it does not claim that
 every operator ran on the GPU because the same session retains the CPU execution provider.
 
 ## Production environment gate
@@ -49,4 +49,4 @@ prepare/verify dependency and also uses `--no-sync`, so it cannot race an ordina
 sync against production packaging.
 
 The local smoke `capture-workbench-desktop:smoke-real-desktop-ocr-directml` requires
-`windowsml-dml` provenance; CPU provenance fails it.
+`directml` provenance; CPU provenance fails it.

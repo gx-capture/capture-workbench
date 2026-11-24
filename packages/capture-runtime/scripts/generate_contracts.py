@@ -15,7 +15,7 @@ import json
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pydantic
 import pydantic_core
@@ -37,7 +37,13 @@ from capture_runtime.release import (
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_ASSET_DIR = ROOT / "packages" / "capture-runtime" / "src" / "capture_runtime" / "assets"
 OCR_PROFILE_SOURCE = (
-    ROOT / "packages" / "capture-runtime" / "model-sources" / "commit-a" / "model" / "pipeline.json"
+    ROOT
+    / "packages"
+    / "capture-runtime"
+    / "model-sources"
+    / "text-recognition"
+    / "model"
+    / "pipeline.json"
 )
 OCR_PROFILE_ASSET_NAME = "ocr-profile.json"
 CONSUMER_ROOT = ROOT
@@ -445,7 +451,7 @@ def _invariants() -> list[dict[str, str]]:
         },
         {
             "id": "terminal-jobs-have-completion-time",
-            "models": "CaptureOperationV2",
+            "models": "CaptureOperation",
             "description": "terminal capture operations must carry completedAt.",
         },
         {
@@ -455,15 +461,15 @@ def _invariants() -> list[dict[str, str]]:
         },
         {
             "id": "ocr-compute-preflight-mode",
-            "models": "OcrComputePreflightV2",
+            "models": "OcrComputePreflight",
             "description": (
-                "gpu-dml carries no fallback reason or notice; cpu-fallback carries "
+                "gpu carries no fallback reason or notice; cpu-fallback carries "
                 "a stable reason and user notice."
             ),
         },
         {
             "id": "ocr-compute-preflight-identity",
-            "models": "OcrComputePreflightV2",
+            "models": "OcrComputePreflight",
             "description": (
                 "pre-OCR compute decisions carry API, schema, runtime, contract-set, "
                 "and exact contract digest identity."
@@ -471,7 +477,7 @@ def _invariants() -> list[dict[str, str]]:
         },
         {
             "id": "pdf-page-selection-ascending",
-            "models": "StartCaptureV2, OcrPageScopeV2",
+            "models": "StartCapture, OcrPageScope",
             "description": (
                 "pdfPageNumbers and requestedPageNumbers list one-based source pages "
                 "in ascending order without duplicates; processedPageNumbers equals "
@@ -480,7 +486,7 @@ def _invariants() -> list[dict[str, str]]:
         },
         {
             "id": "ocr-pages-keep-source-page-numbers",
-            "models": "CaptureOcrProjectionV3, RawCapture",
+            "models": "CaptureOcrProjection, RawCapture",
             "description": (
                 "OCR pages and page locators carry source page numbers in ascending "
                 "order: every page of the source, or exactly the selected pdfPageNumbers."
@@ -488,12 +494,12 @@ def _invariants() -> list[dict[str, str]]:
         },
         {
             "id": "timestamps-timezone-aware",
-            "models": "RawCapture, CaptureDocument, CaptureOperationV2, RuntimeInstallationV2",
+            "models": "RawCapture, CaptureDocument, CaptureOperation, RuntimeInstallation",
             "description": "timestamp fields must include a timezone.",
         },
         {
             "id": "installation-download-bytes-paired",
-            "models": "RuntimeInstallationV2",
+            "models": "RuntimeInstallation",
             "description": (
                 "downloadBytes and downloadedBytes are both present or both absent, "
                 "and downloadedBytes never exceeds downloadBytes."
@@ -501,18 +507,17 @@ def _invariants() -> list[dict[str, str]]:
         },
         {
             "id": "capture-pages-paired-for-documents",
-            "models": "CaptureOperationV2, CaptureEventV2",
+            "models": "CaptureOperation, CaptureEvent",
             "description": (
                 "pagesDone and pagesTotal are both present or both absent, only for pdf "
                 "and image captures, and pagesDone never exceeds pagesTotal."
             ),
         },
         {
-            "id": "capture-media-time-for-audio",
-            "models": "CaptureOperationV2, CaptureEventV2",
+            "id": "capture-media-time-for-recording",
+            "models": "CaptureOperation, CaptureEvent",
             "description": (
-                "durationMs, and coveredUntilMs on a capture operation, are only for "
-                "audio captures."
+                "durationMs, and coveredUntilMs on a capture operation, are only for recordings."
             ),
         },
     ]
@@ -554,9 +559,8 @@ def _manifest(models: dict[str, dict[str, Any]]) -> dict[str, Any]:
             {"name": "CaptureLocator", "type": "PageLocator | TimeLocator"},
             {
                 "name": "CaptureRequirementId",
-                "type": (
-                    "'windowsml-ocr' | 'speech-recognition' | 'ollama-runtime' "
-                    "| 'capture-ollama-model'"
+                "type": " | ".join(
+                    repr(value) for value in get_args(contracts.CaptureRequirementId)
                 ),
             },
         ],
@@ -634,6 +638,31 @@ def _expected_files(
     return files
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _managed_schema_dirs(output: Path | None, consumer_root: Path | None) -> tuple[Path, ...]:
+    directories: list[Path] = []
+    if consumer_root is not None:
+        directories.append(
+            consumer_root
+            / "packages"
+            / "capture-runtime-client-python"
+            / "src"
+            / "capture_runtime_client"
+            / "private"
+            / "schemas"
+        )
+    if output is not None:
+        directories.append(output / "src" / "generated" / "schemas")
+        directories.append(output / "python" / "src" / "capture_runtime_private" / "schemas")
+    return tuple(directories)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -683,10 +712,20 @@ def main() -> None:
     for path, content in expected.items():
         if arguments.check:
             if not path.is_file() or path.read_bytes() != content:
-                mismatches.append(str(path.relative_to(ROOT)))
+                mismatches.append(_display_path(path))
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
+    for schema_dir in _managed_schema_dirs(output, consumer_root):
+        if not schema_dir.is_dir():
+            continue
+        for existing in sorted(schema_dir.glob("*.schema.json")):
+            if existing in expected:
+                continue
+            if arguments.check:
+                mismatches.append(f"{_display_path(existing)} (stale)")
+            else:
+                existing.unlink()
     if mismatches:
         raise SystemExit("Generated contract artifacts are stale:\n- " + "\n- ".join(mismatches))
     print(

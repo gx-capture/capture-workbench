@@ -19,7 +19,7 @@ from capture_runtime.contracts import (
     CaptureEngine,
     CaptureSource,
     CaptureSourceKind,
-    OcrPageScopeV2,
+    OcrPageScope,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
@@ -72,8 +72,8 @@ class DeterministicCaptureExtractor:
             raise asyncio.CancelledError
 
         text = self._fixture_text(content, sniffed.kind, source.sha256)
-        scope: OcrPageScopeV2 | None = None
-        if sniffed.kind is CaptureSourceKind.AUDIO:
+        scope: OcrPageScope | None = None
+        if sniffed.kind is CaptureSourceKind.RECORDING:
             parts = [part.strip() for part in text.split("|") if part.strip()]
             segments = [
                 RawCaptureSegment(
@@ -89,8 +89,8 @@ class DeterministicCaptureExtractor:
             ]
             engine = CaptureEngine(
                 engine="speech-recognition",
-                model="deterministic-whisper-v1",
-                digest=_engine_digest("speech-recognition", "deterministic-whisper-v1"),
+                model="deterministic-speech-v1",
+                digest=_engine_digest("speech-recognition", "deterministic-speech-v1"),
                 device="fake",
             )
         else:
@@ -124,13 +124,13 @@ class DeterministicCaptureExtractor:
                 for index, (page_number, part) in enumerate(page_texts)
             ]
             engine = CaptureEngine(
-                engine="windowsml-ocr",
-                model="deterministic-windowsml-v1",
-                digest=_engine_digest("windowsml-ocr", "deterministic-windowsml-v1"),
+                engine="text-recognition",
+                model="deterministic-ocr-v1",
+                digest=_engine_digest("text-recognition", "deterministic-ocr-v1"),
                 device="fake",
             )
             scope = (
-                OcrPageScopeV2(
+                OcrPageScope(
                     source_page_count=len(text.split("\f")),
                     requested_page_numbers=list(pdf_page_numbers),
                     processed_page_numbers=list(pdf_page_numbers),

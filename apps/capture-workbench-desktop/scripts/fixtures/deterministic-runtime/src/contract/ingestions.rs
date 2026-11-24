@@ -1,6 +1,7 @@
 use super::*;
 
-const MAX_CHUNK_BYTES: usize = 1024 * 1024;
+/// The runtime's chunk limit. Readiness advertises it and uploads enforce it.
+pub(super) const MAX_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(super) struct IngestionRecord {
@@ -35,17 +36,22 @@ impl FixtureState {
             Ok(payload) => payload,
             Err(response) => return response,
         };
-        let key = match matching_request_key(request, &payload, payload["kind"] == "audio") {
+        let kind = match payload.get("kind").and_then(Value::as_str) {
+            Some(kind @ ("pdf" | "image" | "recording")) => kind,
+            None if payload.get("kind").is_none() => {
+                return validation_error("Capture kind is required.")
+            }
+            _ => return validation_error("Capture kind must be pdf, image, or recording."),
+        };
+        let key = match matching_request_key(request, &payload, kind == "recording") {
             Ok(key) => key,
             Err(response) => return response,
         };
-        let kind = payload["kind"].as_str().unwrap_or("audio");
         let file_name = payload["fileName"].as_str().unwrap_or_default();
         let media_type = payload["mediaType"].as_str().unwrap_or_default();
         let total_bytes = payload["totalBytes"].as_u64().unwrap_or(0);
         let source_sha256 = payload.get("sourceSha256").filter(|value| !value.is_null());
-        if !matches!(kind, "pdf" | "image" | "audio")
-            || payload.get("mode").is_some_and(|value| value != "file")
+        if payload.get("mode").is_some_and(|value| value != "file")
             || file_name.trim().is_empty()
             || file_name.chars().count() > 255
             || media_type.trim().is_empty()
@@ -176,6 +182,15 @@ fn append_chunk(record: &mut IngestionRecord, request: &Request, index: usize) -
             "Content-Range and Digest headers are invalid.",
         );
     };
+    // As in the runtime, a range that ends at or past its total is malformed,
+    // before any size or ingestion-state check.
+    if total == 0 || end >= total {
+        return api_error(
+            422,
+            "invalid_chunk_headers",
+            "Content-Range end must be less than its total.",
+        );
+    }
     let length = end
         .checked_sub(start)
         .and_then(|value| value.checked_add(1));
@@ -226,13 +241,6 @@ fn append_chunk(record: &mut IngestionRecord, request: &Request, index: usize) -
             409,
             "chunk_out_of_order",
             "Chunks must be contiguous and ordered.",
-        );
-    }
-    if end >= record.total_bytes {
-        return api_error(
-            409,
-            "chunk_too_large",
-            "Chunks exceed declared source size.",
         );
     }
     record.chunks.push((start, request.body.len()));

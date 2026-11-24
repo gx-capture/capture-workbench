@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, CAPTURE_OLLAMA_PROFILE_ID
+from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, DEFAULT_OLLAMA_PROFILE_ID
 
 _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
@@ -100,7 +100,7 @@ class OllamaRuntimeConfig:
     pid_file: Path
     models_dir: Path
     base_model: str = CAPTURE_OLLAMA_BASE_MODEL
-    profile_id: str = CAPTURE_OLLAMA_PROFILE_ID
+    profile_id: str = DEFAULT_OLLAMA_PROFILE_ID
 
     def process_environment(
         self, host_address: str, base: Mapping[str, str] | None = None
@@ -121,7 +121,6 @@ class ExternalOllamaConfig:
 
 @dataclass(frozen=True, slots=True)
 class ExtractionRuntimeConfig:
-    windowsml_model_dir: Path
     temp_dir: Path
     max_pdf_pages: int
     max_image_pixels: int
@@ -244,9 +243,8 @@ class RuntimeSettings:
         extraction_provider = env.get("CAPTURE_EXTRACTION_PROVIDER", "runtime").strip().lower()
         if extraction_provider not in {"runtime", "fake"}:
             raise ValueError("CAPTURE_EXTRACTION_PROVIDER must be runtime or fake")
-        profile_id = env.get("CAPTURE_OLLAMA_PROFILE_ID", CAPTURE_OLLAMA_PROFILE_ID)
-        if profile_id != CAPTURE_OLLAMA_PROFILE_ID:
-            raise ValueError(f"CAPTURE_OLLAMA_PROFILE_ID must be {CAPTURE_OLLAMA_PROFILE_ID}")
+        if "CAPTURE_OLLAMA_PROFILE_ID" in env:
+            raise ValueError("CAPTURE_OLLAMA_PROFILE_ID is no longer supported; remove it")
         retention_hours = int(env.get("CAPTURE_RETENTION_HOURS", "24"))
         if retention_hours <= 0:
             raise ValueError("CAPTURE_RETENTION_HOURS must be positive")
@@ -256,10 +254,21 @@ class RuntimeSettings:
         max_candidate_bytes = int(env.get("CAPTURE_MAX_CANDIDATE_BYTES", str(8 * 1024 * 1024)))
         if max_candidate_bytes <= 0:
             raise ValueError("CAPTURE_MAX_CANDIDATE_BYTES must be positive")
+        for retired, replacement in (
+            ("CAPTURE_WHISPER_PREFER_GPU", "CAPTURE_SPEECH_PREFER_GPU"),
+            (
+                "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
+                "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK",
+            ),
+        ):
+            if retired in env:
+                raise ValueError(f"{retired} is retired; use {replacement}")
         if "CAPTURE_WINDOWSML_DEVICE_ID" in env:
             raise ValueError(
                 "CAPTURE_WINDOWSML_DEVICE_ID is retired; use worker-owned OCR selection"
             )
+        if "CAPTURE_WINDOWSML_MODEL_DIR" in env:
+            raise ValueError("CAPTURE_WINDOWSML_MODEL_DIR is no longer supported; remove it")
         max_pdf_pages = int(env.get("CAPTURE_MAX_PDF_PAGES", "200"))
         max_image_pixels = int(env.get("CAPTURE_MAX_IMAGE_PIXELS", "50000000"))
         ocr_render_scale = float(env.get("CAPTURE_OCR_RENDER_SCALE", "2"))
@@ -281,10 +290,6 @@ class RuntimeSettings:
             raise ValueError("CAPTURE_OCR_RENDER_SCALE must be between 1 and 4")
 
         extraction = ExtractionRuntimeConfig(
-            windowsml_model_dir=Path(
-                env.get("CAPTURE_WINDOWSML_MODEL_DIR")
-                or app_data_dir / "runtime-assets" / "windowsml-ocr" / "models"
-            ),
             temp_dir=Path(env.get("CAPTURE_EXTRACTION_TEMP_DIR") or app_data_dir / "temp"),
             max_pdf_pages=max_pdf_pages,
             max_image_pixels=max_image_pixels,
@@ -293,12 +298,10 @@ class RuntimeSettings:
             # Prefer Nvidia CUDA when the bundled PyTorch runtime can
             # initialize it. Diagnostics retain the bounded CPU fallback;
             # source-lock production verification can explicitly fail closed.
-            # These environment variables keep their old names until the hosts
-            # change with them; they control speech recognition and (for
-            # CAPTURE_WHISPER_PREFER_GPU) speaker diarization.
-            speech_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
+            # GPU preference also applies to speaker diarization.
+            speech_prefer_gpu=_bool(env.get("CAPTURE_SPEECH_PREFER_GPU"), True),
             speech_recognition_allow_cpu_fallback=_bool(
-                env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True
+                env.get("CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK"), True
             ),
             speech_recognition_model=env.get("CAPTURE_SPEECH_RECOGNITION_MODEL", "auto"),
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
@@ -333,7 +336,7 @@ class RuntimeSettings:
             ),
             models_dir=Path(env.get("CAPTURE_OLLAMA_MODELS_DIR") or ollama_app_data / "models"),
             base_model=env.get("CAPTURE_OLLAMA_MODEL", CAPTURE_OLLAMA_BASE_MODEL),
-            profile_id=profile_id,
+            profile_id=DEFAULT_OLLAMA_PROFILE_ID,
         )
         return cls(
             host=host,

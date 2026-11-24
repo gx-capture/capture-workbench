@@ -18,11 +18,11 @@ from capture_runtime.clock import Clock, SystemClock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
-    OLLAMA_MODEL_REQUIREMENT_ID,
-    OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
@@ -118,6 +118,7 @@ def build_runtime_dependencies(
 
     runtime_clock = clock or SystemClock()
     runtime_contract_set = contract_set or load_contract_set()
+    # The owned structurer and model installer share this lifecycle's exclusive lease.
     lifecycle = IsolatedOllamaLifecycle(
         settings.ollama,
         process_controller=process_controller,
@@ -138,16 +139,16 @@ def build_runtime_dependencies(
         speech_variant=settings.extraction.speech_recognition_variant,
     )
     active_ocr_preflight = ocr_preflight or OcrComputePreflight(
-        contract_sha256=runtime_contract_set.sha256,
+        contract_set_sha256=runtime_contract_set.sha256,
         worker_probe=lambda: engine_manager.ocr_compute_preflight(
-            contract_sha256=runtime_contract_set.sha256,
+            contract_set_sha256=runtime_contract_set.sha256,
         ),
     )
     standalone_extractor = StandaloneRuntimeCaptureExtractor(
         runtime_clock,
         settings.extraction,
         engine_manager=engine_manager,
-        contract_sha256=runtime_contract_set.sha256,
+        contract_set_sha256=runtime_contract_set.sha256,
     )
     active_extractor = extractor
     if active_extractor is None:
@@ -179,13 +180,13 @@ def build_runtime_dependencies(
         else [StructuringMode.RUNTIME, StructuringMode.HOST]
     )
     disabled_requirement_ids = (
-        {OLLAMA_RUNTIME_REQUIREMENT_ID, OLLAMA_MODEL_REQUIREMENT_ID}
+        {STRUCTURING_RUNTIME_REQUIREMENT_ID, STRUCTURING_MODEL_REQUIREMENT_ID}
         if settings.structuring_provider in {"host", "external-ollama"}
         else set()
     )
     enabled_requirement_ids = (
         {
-            WINDOWSML_REQUIREMENT_ID,
+            TEXT_RECOGNITION_REQUIREMENT_ID,
             SPEECH_RECOGNITION_REQUIREMENT_ID,
             DIARIZATION_REQUIREMENT_ID,
             VERTICAL_READER_REQUIREMENT_ID,

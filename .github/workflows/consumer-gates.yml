@@ -50,7 +50,7 @@ jobs:
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Dispatch, track, and verify consumer gates
+      - name: Verify candidate evidence, dispatch, and track consumer gates
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.CAPTURE_CONSUMER_GATE_TOKEN }}

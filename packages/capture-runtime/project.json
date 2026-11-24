@@ -340,7 +340,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv sync --python 3.13 --extra windowsml --reinstall-package onnxruntime-directml"
+        "command": "uv sync --python 3.13 --extra ocr --reinstall-package onnxruntime-directml"
       }
     },
     "verify-onnxruntime-directml": {
@@ -364,7 +364,11 @@
         "generate-release-engine-catalog"
       ],
       "inputs": [
-        "production"
+        "production",
+        {
+          "dependentTasksOutputFiles": "**/*capture-engine-catalog.json",
+          "transitive": true
+        }
       ],
       "outputs": [
         "{projectRoot}/dist/executable"
@@ -372,6 +376,9 @@
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --no-sync --python 3.13 python scripts/build_executable.py --layout onefile --catalog dist/catalog/capture-engine-catalog.json"
+      },
+      "metadata": {
+        "description": "Embeds the release catalog, including exact worker archive hashes."
       }
     },
     "build-ocr-worker": {
@@ -381,25 +388,30 @@
         "verify-onnxruntime-directml"
       ],
       "inputs": [
-        "production"
+        "ocrWorkerInputs"
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-ocr-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-ocr-*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-ocr-*-files.json"
       ],
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --no-sync --python 3.13 python scripts/build_ocr_worker.py"
+      },
+      "metadata": {
+        "description": "Packages the Windows x64 OCR worker with PyInstaller in the core DirectML environment. Cached on ocrWorkerInputs."
       }
     },
     "build-speech-recognition-worker": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
-        "production"
+        "speechRecognitionWorkerInputs"
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*-files.json"
       ],
       "options": {
@@ -410,21 +422,22 @@
         }
       },
       "metadata": {
-        "description": "Packages TEA-ASR and its Qwen aligner in a separate speech recognition worker environment."
+        "description": "Packages the Windows x64 CUDA speech recognition worker with PyInstaller in the dedicated .venv-speech-recognition environment. Cached on speechRecognitionWorkerInputs."
       }
     },
     "build-diarization-worker": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
-        "production"
+        "diarizationWorkerInputs"
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-diarization-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-diarization-*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-diarization-*-files.json"
       ],
       "metadata": {
-        "description": "Packages the speaker diarization worker in its own environment (.venv-diarization), keeping its dependencies separate from OCR and core builds."
+        "description": "Packages the Windows x64 speaker diarization worker with PyInstaller in the dedicated .venv-diarization environment. Cached on diarizationWorkerInputs."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -441,28 +454,30 @@
         "build-diarization-worker"
       ],
       "inputs": [
-        "production"
+        "diarizationWorkerInputs",
+        "{projectRoot}/scripts/probe_packaged_worker.py"
       ],
       "metadata": {
         "description": "Starts the packaged speaker diarization worker and checks that it answers the installer's code probe."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-diarization/capture-engine-diarization.exe speaker-diarization"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-diarization/capture-engine-diarization.exe speaker-diarization dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "build-speech-recognition-cpu-worker": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
-        "production"
+        "speechRecognitionCpuWorkerInputs"
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*-files.json"
       ],
       "metadata": {
-        "description": "Packages the speech recognition worker on CPU PyTorch in its own environment (.venv-speech-recognition-cpu). The release catalog offers it as the cpu content of speech-recognition."
+        "description": "Packages the Windows x64 CPU speech recognition worker with PyInstaller in the dedicated .venv-speech-recognition-cpu environment. Cached on speechRecognitionCpuWorkerInputs."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -479,14 +494,15 @@
         "build-speech-recognition-cpu-worker"
       ],
       "inputs": [
-        "production"
+        "speechRecognitionCpuWorkerInputs",
+        "{projectRoot}/scripts/probe_packaged_worker.py"
       ],
       "metadata": {
         "description": "Starts the packaged CPU speech recognition worker and checks that it answers the installer's code probe."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition-cpu/capture-engine-speech-recognition-cpu.exe speech-recognition"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition-cpu/capture-engine-speech-recognition-cpu.exe speech-recognition dist/engines/capture-engine-speech-recognition-cpu-{releaseVersion}-windows-x64.zip dist/engines/capture-engine-speech-recognition-cpu-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-speech-recognition-cpu-boundary": {
@@ -520,18 +536,19 @@
         "command": "uv run --python 3.13 python scripts/model_source_lock.py validate"
       }
     },
-    "validate-commit-a-fixtures": {
+    "validate-text-recognition-sources": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
-        "production"
+        "production",
+        "{workspaceRoot}/release/version.json"
       ],
       "metadata": {
-        "description": "Verifies reproducible project-owned Commit A OCR fixtures and provenance."
+        "description": "Verifies reproducible first-party text recognition sources and provenance."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.13 python scripts/generate_commit_a_fixtures.py --check"
+        "command": "uv run --python 3.13 python scripts/generate_text_recognition_sources.py --check"
       }
     },
     "classify-release-model-mode": {
@@ -552,11 +569,12 @@
       }
     },
     "generate-engine-catalog": {
-      "cache": true,
+      "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": [
         "build-ocr-worker",
-        "build-speech-recognition-worker"
+        "build-speech-recognition-worker",
+        "build-diarization-worker"
       ],
       "inputs": [
         "production"
@@ -606,7 +624,7 @@
         "{projectRoot}/dist/candidate/model-probe-evidence.json"
       ],
       "metadata": {
-        "description": "Opt-in local release gate that performs checksum-pinned direct model downloads and real OCR/speech recognition worker runs."
+        "description": "Required local check when the model source lock, an engine worker, or a model delivery differs from the last published release. Otherwise an optional diagnostic. Verifies checksum-pinned model downloads and runs real OCR and speech recognition workers."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -618,7 +636,8 @@
       "executor": "nx:run-commands",
       "dependsOn": [
         "build-ocr-worker",
-        "build-speech-recognition-worker"
+        "build-speech-recognition-worker",
+        "build-diarization-worker"
       ],
       "inputs": [
         "production"
@@ -797,15 +816,119 @@
         "build-speech-recognition-worker"
       ],
       "inputs": [
-        "production"
+        "speechRecognitionWorkerInputs",
+        "{projectRoot}/scripts/probe_packaged_worker.py"
       ],
       "metadata": {
         "description": "Manual: probes the locally built CUDA speech worker. No workflow runs it; CI probes the diarization and CPU speech workers. See the release runbook, Manual runtime targets."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition/capture-engine-speech-recognition.exe speech-recognition"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition/capture-engine-speech-recognition.exe speech-recognition dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64-files.json"
       }
     }
+  },
+  "namedInputs": {
+    "workerArchiveInputs": [
+      "{projectRoot}/src/capture_runtime/__init__.py",
+      "{projectRoot}/src/capture_runtime/_generated_worker_stage_policy.py",
+      "{projectRoot}/src/capture_runtime/_windows_job.py",
+      "{projectRoot}/src/capture_runtime/_worker_payloads.py",
+      "{projectRoot}/src/capture_runtime/artifact_parts.py",
+      "{projectRoot}/src/capture_runtime/config.py",
+      "{projectRoot}/src/capture_runtime/constants/__init__.py",
+      "{projectRoot}/src/capture_runtime/constants/requirements.py",
+      "{projectRoot}/src/capture_runtime/constants/versions.py",
+      "{projectRoot}/src/capture_runtime/contracts/__init__.py",
+      "{projectRoot}/src/capture_runtime/file_lock.py",
+      "{projectRoot}/src/capture_runtime/gpu_inventory.py",
+      "{projectRoot}/src/capture_runtime/install_progress.py",
+      "{projectRoot}/src/capture_runtime/ocr/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/application/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/application/use_cases.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/compute_plan/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/compute_plan/models.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/evidence/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/evidence/models.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/page/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/page/models.py",
+      "{projectRoot}/src/capture_runtime/ocr/domain/page/reading_order.py",
+      "{projectRoot}/src/capture_runtime/ocr/infrastructure/__init__.py",
+      "{projectRoot}/src/capture_runtime/ocr/infrastructure/ocr_preflight.py",
+      "{projectRoot}/src/capture_runtime/provisioning/__init__.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/__init__.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_activation.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_errors.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_limits.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_lock.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_installation_residue.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_model_units.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_engine_uninstall.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/_install_stop.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/engine_catalog.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/engine_content_selection.py",
+      "{projectRoot}/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+      "{projectRoot}/src/capture_runtime/worker_client.py",
+      "{projectRoot}/src/capture_runtime/worker_contracts.py",
+      "{projectRoot}/src/capture_runtime/worker_process.py",
+      "{projectRoot}/src/capture_runtime/worker_stage_policy.py",
+      "{projectRoot}/pyproject.toml",
+      "{projectRoot}/uv.lock",
+      "{projectRoot}/.python-version",
+      "{projectRoot}/pyinstaller/hooks/**/*",
+      "{projectRoot}/scripts/worker_archive.py",
+      "{projectRoot}/scripts/generate_worker_stage_policy.py",
+      "{projectRoot}/src/capture_runtime/assets/worker-stage-policy.json",
+      "{workspaceRoot}/release/version.json"
+    ],
+    "ocrWorkerInputs": [
+      "workerArchiveInputs",
+      "{projectRoot}/src/capture_runtime/ocr/**/*",
+      "{projectRoot}/src/capture_runtime/pdf_page_selection.py",
+      "{projectRoot}/src/capture_runtime/worker_probe.py",
+      "{projectRoot}/src/capture_runtime/workers/__init__.py",
+      "{projectRoot}/src/capture_runtime/workers/ocr_main.py",
+      "{projectRoot}/src/capture_runtime/workers/server.py",
+      "{projectRoot}/scripts/build_ocr_worker.py",
+      "{projectRoot}/pyinstaller/capture-engine-ocr.spec",
+      "{projectRoot}/src/capture_runtime/assets/ocr-profile.json",
+      "{projectRoot}/scripts/verify_production_environment.py"
+    ],
+    "speechRecognitionWorkerInputs": [
+      "workerArchiveInputs",
+      "{projectRoot}/src/capture_runtime/speech/**/*",
+      "{projectRoot}/src/capture_runtime/worker_probe.py",
+      "{projectRoot}/src/capture_runtime/workers/__init__.py",
+      "{projectRoot}/src/capture_runtime/workers/server.py",
+      "{projectRoot}/src/capture_runtime/workers/speech_recognition_main.py",
+      "{projectRoot}/src/capture_runtime/workers/speech_session_server.py",
+      "{projectRoot}/scripts/build_speech_recognition_worker.py",
+      "{projectRoot}/pyinstaller/capture-engine-speech-recognition.spec"
+    ],
+    "speechRecognitionCpuWorkerInputs": [
+      "workerArchiveInputs",
+      "{projectRoot}/src/capture_runtime/speech/**/*",
+      "{projectRoot}/src/capture_runtime/worker_probe.py",
+      "{projectRoot}/src/capture_runtime/workers/__init__.py",
+      "{projectRoot}/src/capture_runtime/workers/server.py",
+      "{projectRoot}/src/capture_runtime/workers/speech_recognition_main.py",
+      "{projectRoot}/src/capture_runtime/workers/speech_session_server.py",
+      "{projectRoot}/scripts/build_speech_recognition_cpu_worker.py",
+      "{projectRoot}/pyinstaller/capture-engine-speech-recognition-cpu.spec"
+    ],
+    "diarizationWorkerInputs": [
+      "workerArchiveInputs",
+      "{projectRoot}/src/capture_runtime/diarization/**/*",
+      "{projectRoot}/src/capture_runtime/worker_probe.py",
+      "{projectRoot}/src/capture_runtime/workers/__init__.py",
+      "{projectRoot}/src/capture_runtime/workers/diarization_main.py",
+      "{projectRoot}/src/capture_runtime/workers/server.py",
+      "{projectRoot}/scripts/build_diarization_worker.py",
+      "{projectRoot}/pyinstaller/capture-engine-diarization.spec"
+    ]
   }
 }

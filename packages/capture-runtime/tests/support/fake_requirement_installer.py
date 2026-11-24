@@ -6,12 +6,12 @@ import asyncio
 from collections.abc import Callable, Collection
 
 from capture_runtime.constants import (
-    OLLAMA_MODEL_REQUIREMENT_ID,
-    OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
 )
-from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
+from capture_runtime.contracts import RuntimeRequirement, RuntimeRequirementStatus
 from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 
@@ -31,21 +31,18 @@ class FakeRequirementInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         descriptions = {
-            WINDOWSML_REQUIREMENT_ID: ("OCR", "WindowsML OCR", ["pdf", "image"]),
+            TEXT_RECOGNITION_REQUIREMENT_ID: ("Text recognition", ["pdf", "image"]),
             SPEECH_RECOGNITION_REQUIREMENT_ID: (
-                "transcription",
                 "Speech recognition",
-                ["audio"],
+                ["recording"],
             ),
-            OLLAMA_RUNTIME_REQUIREMENT_ID: (
-                "runtime",
+            STRUCTURING_RUNTIME_REQUIREMENT_ID: (
                 "Ollama application",
                 ["runtime-structuring"],
             ),
-            OLLAMA_MODEL_REQUIREMENT_ID: (
-                "model",
+            STRUCTURING_MODEL_REQUIREMENT_ID: (
                 "Capture structuring model",
                 ["runtime-structuring"],
             ),
@@ -54,9 +51,9 @@ class FakeRequirementInstaller:
             set(descriptions) if enabled_requirement_ids is None else set(enabled_requirement_ids)
         )
         return [
-            RuntimeRequirementV2(
+            RuntimeRequirement(
                 requirement_id=requirement_id,
-                kind=kind,
+                kind=requirement_id,
                 display_name=name,
                 status=(
                     RuntimeRequirementStatus.READY
@@ -68,7 +65,7 @@ class FakeRequirementInstaller:
                 required_for=required_for,
                 install_strategy="fake",
             )
-            for requirement_id, (kind, name, required_for) in descriptions.items()
+            for requirement_id, (name, required_for) in descriptions.items()
             if requirement_id in enabled
         ]
 
@@ -94,7 +91,10 @@ class FakeRequirementInstaller:
         report_progress(1)
 
     def is_uninstallable(self, requirement_id: str) -> bool:
-        return requirement_id in {WINDOWSML_REQUIREMENT_ID, SPEECH_RECOGNITION_REQUIREMENT_ID}
+        return requirement_id in {
+            TEXT_RECOGNITION_REQUIREMENT_ID,
+            SPEECH_RECOGNITION_REQUIREMENT_ID,
+        }
 
     async def uninstall(self, requirement_id: str) -> None:
         self.ready.discard(requirement_id)

@@ -30,12 +30,12 @@ import {
   type DesktopSourceSelectionBatch,
 } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
 import { errorMessage } from './desktop-errors';
 import { formatApproximateBytes } from './desktop-formatting.service';
-import { isActiveStreaming } from './capture-operation-status';
 import { isRecordingMediaType } from './capture-media-types';
+import { committedTerminalStatus } from './capture-operation-status';
 import { isFeatureReady } from './recognition-requirements';
 import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
@@ -43,7 +43,11 @@ import { installationProgress, installationPercent } from './installation-progre
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { selectionRejectionMessages } from './source-selection-messages';
 
-/** Owns the recording queue, options, live partial transcript, and capture orchestration for `/asr`. */
+/**
+ * Owns the recording queue's presentation, options, live partial transcript
+ * and the user's actions for `/asr`. The capture service's admission starts
+ * waiting recordings.
+ */
 @Injectable({ providedIn: 'root' })
 export class AsrQueueStore {
   private readonly runtimeStatus = inject(RuntimeStatusStore);
@@ -54,6 +58,8 @@ export class AsrQueueStore {
   private readonly features = inject(RecognitionFeaturesStore);
   private readonly exports = inject(LibraryExportService);
   readonly exportBusyIds = this.exports.busyIds;
+  /** Recordings whose running capture is being cancelled: their Cancel waits for the end. */
+  readonly cancellingIds = this.capture.cancellingIds;
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
   private readonly router = inject(Router, { optional: true });
@@ -67,9 +73,6 @@ export class AsrQueueStore {
   private readonly details = signal<ReadonlyMap<string, DesktopLibraryDetail>>(new Map());
   private readonly loadedUpdatedAt = new Map<string, number>();
   private readonly loadingDetails = new Set<string>();
-  private readonly startingIds = new Set<string>();
-  private readonly pendingCancellationIds = new Set<string>();
-  private readonly attemptedReattachments = new Set<string>();
   private attached = false;
 
   readonly speechReady = computed(() =>
@@ -128,6 +131,8 @@ export class AsrQueueStore {
   readonly rows = computed<readonly AsrQueueView[]>(() => {
     const ops = this.capture.recordingOperations();
     const busyIds = this.capture.busyIds();
+    const cancellingIds = this.capture.cancellingIds();
+    const unstored = this.capture.unstoredOutcomes();
     const details = this.details();
     const speechReady = this.speechReady();
     const installPercent = this.speechInstallPercent();
@@ -136,57 +141,38 @@ export class AsrQueueStore {
         document,
         detail: details.get(document.documentId),
         operation: ops.get(document.documentId),
-        busy: busyIds.has(document.documentId),
+        owned: busyIds.has(document.documentId),
+        cancelling: cancellingIds.has(document.documentId),
+        unstored: unstored.has(document.documentId),
+        failureReason: unstored.get(document.documentId) ?? null,
         speechReady,
         installPercent,
       }),
     );
   });
 
+  /** The recording this run is capturing; its live lines end with the attempt. */
   readonly liveCapture = computed<AsrLiveCaptureView | null>(() => {
-    const ops = this.capture.recordingOperations();
-    const partials = this.capture.streamingPartials();
     const busyIds = this.capture.busyIds();
-    const running = this.documents().find((document) => {
-      if (document.status !== 'processing' && document.status !== 'persisting') {
-        return false;
-      }
-      const op = ops.get(document.documentId);
-      return (
-        busyIds.has(document.documentId)
-        || this.capture.hasActiveCapture(document.documentId)
-        || (op !== undefined && isActiveStreaming(op))
-        || (document.captureId !== undefined
-          && partials.get(document.documentId)?.captureId === document.captureId)
-      );
-    });
+    const running = this.documents().find((document) => busyIds.has(document.documentId));
     if (!running) return null;
-    const partial = partials.get(running.documentId);
     return describeAsrLiveCapture({
       document: running,
-      operation: ops.get(running.documentId),
-      partial: running.captureId && partial?.captureId === running.captureId
-        ? partial
-        : null,
+      operation: this.capture.recordingOperations().get(running.documentId),
+      partial: this.capture.streamingPartials().get(running.documentId) ?? null,
     });
   });
 
-  private readonly host = {
+  private readonly host: DesktopCaptureHost = {
     selectedId: this.libraryStore.selectedId,
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),
-    documents: () => this.libraryStore.allDocuments(),
-    selected: () => this.libraryStore.selected(),
     refreshDocuments: () => this.libraryStore.refreshDocuments(),
-    reloadDocumentState: (documentId: string) => {
-      this.loadedUpdatedAt.delete(documentId);
-      this.libraryStore.reloadDocumentState(documentId);
-    },
-    setMessage: (text: string) => this.runtimeStatus.message.set(text),
-    identifySpeakers: () => this.identifySpeakers(),
+    applyDocumentState: (summary) => this.libraryStore.applyDocumentState(summary),
+    setMessage: (text) => this.runtimeStatus.message.set(text),
   };
 
-  /** Connects queue coordination to runtime readiness and document updates. Called by the ASR page. */
+  /** Loads the list and the speaker counts of completed recordings. Called by the ASR page. */
   attach(): void {
     if (this.attached) return;
     this.attached = true;
@@ -201,14 +187,7 @@ export class AsrQueueStore {
     effect(
       () => {
         if (!this.runtime.ready()) return;
-        const recordings = this.documents();
-        const busyIds = this.capture.busyIds();
-        const speechReady = this.speechReady();
-        this.loadCompletedDetails(recordings);
-        this.reattachRunning(recordings);
-        if (speechReady) {
-          this.startWaiting(recordings, busyIds);
-        }
+        this.loadCompletedDetails(this.documents());
       },
       { injector: this.injector },
     );
@@ -292,53 +271,26 @@ export class AsrQueueStore {
     this.features.installRequirement('speaker-diarization');
   }
 
+  /**
+   * A failed Cancel or Start again is shown on this page's error line, where
+   * the user gave it; the next action clears it.
+   */
   cancel(documentId: string): void {
-    if (this.pendingCancellationIds.has(documentId)) return;
-    const target = this.documents().find((item) => item.documentId === documentId);
-    if (target?.status === 'queued' && !this.capture.hasActiveCapture(documentId)) {
-      this.pendingCancellationIds.add(documentId);
-      this.library
-        .updateCapture({
-          documentId,
-          status: 'canceled',
-          stage: 'cancelled',
-          clearCaptureId: true,
-        })
-        .pipe(
-          finalize(() => this.pendingCancellationIds.delete(documentId)),
-          takeUntilDestroyed(this.destroyRef),
-        )
-        .subscribe({
-          next: () => this.libraryStore.refreshDocuments(),
-          error: (error: unknown) =>
-            this.runtimeStatus.message.set(errorMessage(error)),
-        });
-      return;
-    }
-    this.capture.cancel(documentId);
-  }
-
-  retry(documentId: string): void {
-    if (!this.runtime.ready() || !this.speechReady()) return;
-    this.clearPartial(documentId);
-    this.capture
-      .retry$(documentId, this.host)
+    this.importError.set('');
+    this.capture.cancel$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        error: (error: unknown) =>
-          this.runtimeStatus.message.set(errorMessage(error)),
+        error: (error: unknown) => this.importError.set(errorMessage(error)),
       });
   }
 
-  restart(documentId: string): void {
-    if (!this.runtime.ready() || !this.speechReady()) return;
-    this.clearPartial(documentId);
+  startAgain(documentId: string): void {
+    this.importError.set('');
     this.capture
-      .restartLost$(documentId, this.host)
+      .startAgain$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        error: (error: unknown) =>
-          this.runtimeStatus.message.set(errorMessage(error)),
+        error: (error: unknown) => this.importError.set(errorMessage(error)),
       });
   }
 
@@ -365,80 +317,14 @@ export class AsrQueueStore {
     };
   }
 
-  private reattachRunning(recordings: readonly DesktopLibrarySummary[]): void {
-    for (const document of recordings) {
-      if (
-        (document.status === 'processing'
-          || document.status === 'persisting'
-          || document.status === 'recovery_required')
-        && document.captureId
-        && !this.capture.hasActiveCapture(document.documentId)
-        && !this.capture.busyIds().has(document.documentId)
-        && !this.attemptedReattachments.has(document.captureId)
-      ) {
-        // Mark before subscribing: recovery can synchronously refresh the library.
-        // A failed capture requires an explicit retry/restart, even after busy clears.
-        this.attemptedReattachments.add(document.captureId);
-        this.capture
-          .reattach$(document, this.host)
-          .pipe(takeUntilDestroyed(this.destroyRef))
-          .subscribe({
-            error: (error: unknown) =>
-              this.runtimeStatus.message.set(errorMessage(error)),
-          });
-      }
-    }
-  }
-
-  private startWaiting(
-    recordings: readonly DesktopLibrarySummary[],
-    busyIds: ReadonlySet<string>,
-  ): void {
-    const running = recordings.some(
-      (document) =>
-        busyIds.has(document.documentId)
-        || this.capture.hasActiveCapture(document.documentId)
-        || this.startingIds.has(document.documentId)
-        || ((document.status === 'processing' || document.status === 'persisting')
-          && Boolean(document.captureId)),
-    );
-    if (running) return;
-    const next = recordings.find(
-      (document) =>
-        document.status === 'queued'
-        && !this.pendingCancellationIds.has(document.documentId)
-        && !this.startingIds.has(document.documentId),
-    );
-    if (!next) return;
-    this.startingIds.add(next.documentId);
-    this.clearPartial(next.documentId);
-    this.capture
-      .startDocument$(next.documentId, this.host)
-      .pipe(
-        finalize(() => this.startingIds.delete(next.documentId)),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe({
-        error: (error: unknown) =>
-          this.runtimeStatus.message.set(errorMessage(error)),
-      });
-  }
-
-  private clearPartial(documentId: string): void {
-    this.capture.streamingPartials.update((current) => {
-      if (!current.has(documentId)) return current;
-      const next = new Map(current);
-      next.delete(documentId);
-      return next;
-    });
-  }
-
   private loadCompletedDetails(
     recordings: readonly DesktopLibrarySummary[],
   ): void {
     for (const document of recordings) {
       // Details are needed only for the speaker-count badge, never for duration.
-      if (document.status !== 'completed' || document.captureOptions?.identifySpeakers === false) continue;
+      // A row of an earlier version shown done is read too.
+      const completed = (committedTerminalStatus(document) ?? document.status) === 'completed';
+      if (!completed || document.captureOptions?.identifySpeakers === false) continue;
       if (this.loadingDetails.has(document.documentId)) continue;
       if (this.loadedUpdatedAt.get(document.documentId) === document.updatedAtMs) {
         continue;

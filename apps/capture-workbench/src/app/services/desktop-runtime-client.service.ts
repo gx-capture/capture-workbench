@@ -5,18 +5,18 @@ import {
   type CaptureOcrProjection,
 } from '@gx-capture/capture-runtime-client';
 import {
-  type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
+  type CaptureResult,
   type PartialCapture,
   type CaptureRequirementId,
   type OcrComputePreflight,
   type RawCapture,
   type RuntimeInstallation,
-  type RuntimeModelInstallation,
-  type RuntimeModelOption,
   type RuntimeRequirement,
   type RuntimeReady,
+  type StructuringModelInstallation,
+  type StructuringModelOption,
 } from '@gx-capture/capture-workbench-ui';
 import {
   EMPTY,
@@ -40,11 +40,6 @@ const startingStatus = (): DesktopRuntimeStatus => ({
   status: 'starting',
   detail: desktopMessages().starting,
 });
-export interface StreamingTerminalResultV2 {
-  readonly operation: CaptureOperation;
-  readonly raw: RawCapture;
-  readonly result: CaptureDocument;
-}
 
 /** v2 operation envelope returned by the desktop one-shot bridge. */
 export type DesktopCaptureOperation = CaptureOperation;
@@ -123,9 +118,9 @@ export class DesktopRuntimeClientService {
     );
   }
 
-  getModelOptions(signal?: AbortSignal): Observable<readonly RuntimeModelOption[]> {
+  getModelOptions(signal?: AbortSignal): Observable<readonly StructuringModelOption[]> {
     return this.commands
-      .invoke<{ readonly items: readonly RuntimeModelOption[] }>('runtime_model_options', {}, signal)
+      .invoke<{ readonly items: readonly StructuringModelOption[] }>('runtime_structuring_model_options', {}, signal)
       .pipe(map((response) => response.items));
   }
 
@@ -133,8 +128,8 @@ export class DesktopRuntimeClientService {
     readonly clientRequestId: string;
     readonly optionId: string;
     readonly consent: true;
-  }, signal?: AbortSignal): Observable<RuntimeModelInstallation> {
-    return this.commands.invoke('runtime_start_model_installation', {
+  }, signal?: AbortSignal): Observable<StructuringModelInstallation> {
+    return this.commands.invoke('runtime_start_structuring_model_installation', {
       input: { clientRequestId: input.clientRequestId, optionId: input.optionId },
     }, signal);
   }
@@ -142,8 +137,8 @@ export class DesktopRuntimeClientService {
   getModelInstallation(
     installationId: string,
     signal?: AbortSignal,
-  ): Observable<RuntimeModelInstallation> {
-    return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
+  ): Observable<StructuringModelInstallation> {
+    return this.commands.invoke('runtime_get_structuring_model_installation', { input: { id: installationId } }, signal);
   }
 
   cancelUpload(clientRequestId: string): Observable<void> {
@@ -167,64 +162,37 @@ export class DesktopRuntimeClientService {
     }, signal);
   }
 
-  startStreamingCapture(input: {
+  startRecordingCapture(input: {
     readonly documentId: string;
     readonly clientRequestId: string;
     readonly structuringMode: 'runtime' | 'host';
     readonly identifySpeakers?: boolean;
     readonly spokenLanguage?: string;
   }, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_start_streaming_capture', { input }, signal);
+    return this.commands.invoke('runtime_start_recording_capture', { input }, signal);
   }
 
-  getStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_get_streaming_capture', { input: { id: captureId } }, signal);
+  getCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
+    return this.commands.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
   }
 
-  getStreamingEvents(
+  getCaptureEvents(
     captureId: string,
     lastEventId?: number,
     signal?: AbortSignal,
   ): Observable<readonly CaptureEvent[]> {
-    return this.commands.invoke('runtime_get_streaming_events', {
+    return this.commands.invoke('runtime_get_capture_events', {
       input: { id: captureId, lastEventId: lastEventId ?? null },
     }, signal);
   }
 
-  getStreamingPartial(captureId: string, signal?: AbortSignal): Observable<PartialCapture | null> {
-    return this.commands.invoke('runtime_get_streaming_partial', { input: { id: captureId } }, signal);
+  getPartial(captureId: string, signal?: AbortSignal): Observable<PartialCapture | null> {
+    return this.commands.invoke('runtime_get_partial', { input: { id: captureId } }, signal);
   }
 
-  getStreamingResult(
-    captureId: string,
-    signal?: AbortSignal,
-  ): Observable<StreamingTerminalResultV2> {
-    return this.commands.invoke('runtime_get_streaming_result', { input: { id: captureId } }, signal);
-  }
-
-  structureStreamingCapture(
-    captureId: string,
-    signal?: AbortSignal,
-  ): Observable<CaptureDocument> {
-    return this.commands.invoke('runtime_structure_streaming_capture', { input: { id: captureId } }, signal);
-  }
-
-  cancelStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_cancel_streaming_capture', { input: { id: captureId } }, signal);
-  }
-
-  deleteStreamingCapture(captureId: string, signal?: AbortSignal): Observable<void> {
-    return this.commands
-      .invoke<null>('runtime_delete_streaming_capture', { input: { id: captureId } }, signal)
-      .pipe(map(() => undefined));
-  }
-
-  getCapture(captureId: string, signal?: AbortSignal): Observable<DesktopCaptureOperation> {
-    return this.commands.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
-  }
-
-  cancelCapture(captureId: string, signal?: AbortSignal): Observable<DesktopCaptureOperation> {
-    return this.commands.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
+  /** The terminal capture state with its raw extraction and structured document. */
+  getResult(captureId: string, signal?: AbortSignal): Observable<CaptureResult> {
+    return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
   }
 
   getRaw(captureId: string, signal?: AbortSignal): Observable<RawCapture | null> {
@@ -237,12 +205,7 @@ export class DesktopRuntimeClientService {
       .pipe(map(parseCaptureOcrProjection));
   }
 
-  getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocument> {
-    return this.commands
-      .invoke<StreamingTerminalResultV2>('runtime_get_result', { input: { id: captureId } }, signal)
-      .pipe(map(({ result }) => result));
-  }
-
+  /** Deletes the runtime capture; one the runtime no longer knows counts as deleted. */
   deleteCapture(captureId: string, signal?: AbortSignal): Observable<void> {
     return this.commands
       .invoke<null>('runtime_delete_capture', { input: { id: captureId } }, signal)
@@ -320,7 +283,7 @@ function isOcrComputePreflight(
     return false;
   }
   const mode = (value as { mode?: unknown }).mode;
-  return mode === 'gpu-dml' || mode === 'cpu-fallback';
+  return mode === 'gpu' || mode === 'cpu-fallback';
 }
 
 const MAX_PDF_PAGE_SELECTION = 500;

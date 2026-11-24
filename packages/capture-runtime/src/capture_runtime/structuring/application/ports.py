@@ -4,10 +4,10 @@ from typing import Protocol
 
 from capture_runtime.contracts import (
     CaptureDocument,
-    OpenStructuringSessionV2,
-    RuntimeModelInstallationV2,
-    StructuringBatchV2,
-    StructuringSessionV2,
+    OpenStructuringSession,
+    StructuringBatch,
+    StructuringModelInstallation,
+    StructuringSession,
 )
 from capture_runtime.structuring.domain.session import StructuringSemanticBlock
 
@@ -15,18 +15,24 @@ from capture_runtime.structuring.domain.session import StructuringSemanticBlock
 class SessionRepository(Protocol):
     def create_or_get(
         self,
-        request: OpenStructuringSessionV2,
+        request: OpenStructuringSession,
         *,
-        raw_source_sha256: str,
+        capture_id: str,
+        client_request_id: str,
+        source_sha256: str,
         contract_set_sha256: str,
-        batches: list[StructuringBatchV2],
-    ) -> tuple[StructuringSessionV2, bool]: ...
-    def get(self, session_id: str) -> StructuringSessionV2: ...
+        batches: list[StructuringBatch],
+    ) -> tuple[StructuringSession, bool]: ...
+    def get(self, session_id: str) -> StructuringSession: ...
     def get_by_client_request(
-        self, request: OpenStructuringSessionV2
-    ) -> StructuringSessionV2 | None: ...
-    def for_capture(self, capture_id: str) -> StructuringSessionV2: ...
-    def batch(self, session_id: str, batch_index: int) -> StructuringBatchV2: ...
+        self,
+        request: OpenStructuringSession,
+        *,
+        capture_id: str,
+        client_request_id: str,
+    ) -> StructuringSession | None: ...
+    def for_capture(self, capture_id: str) -> StructuringSession: ...
+    def batch(self, session_id: str, batch_index: int) -> StructuringBatch: ...
     def accepted_blocks(self, session_id: str) -> list[StructuringSemanticBlock]: ...
     def replay_submission(
         self,
@@ -35,7 +41,7 @@ class SessionRepository(Protocol):
         batch_index: int,
         idempotency_key: str,
         submission_fingerprint: str,
-    ) -> StructuringSessionV2 | None: ...
+    ) -> StructuringSession | None: ...
     def submit(
         self,
         session_id: str,
@@ -46,12 +52,12 @@ class SessionRepository(Protocol):
         submission_fingerprint: str,
         blocks: list[StructuringSemanticBlock],
         completed_document: CaptureDocument | None = None,
-    ) -> tuple[StructuringSessionV2, bool]: ...
+    ) -> tuple[StructuringSession, bool]: ...
 
 
 class ModelInstallationRecordView(Protocol):
     @property
-    def job(self) -> RuntimeModelInstallationV2: ...
+    def job(self) -> StructuringModelInstallation: ...
 
 
 class ModelInstallationJobs(Protocol):
@@ -60,5 +66,5 @@ class ModelInstallationJobs(Protocol):
     ) -> tuple[ModelInstallationRecordView, bool]: ...
     def get(self, installation_id: str) -> ModelInstallationRecordView: ...
     def update_job(
-        self, installation_id: str, job: RuntimeModelInstallationV2
+        self, installation_id: str, job: StructuringModelInstallation
     ) -> ModelInstallationRecordView: ...

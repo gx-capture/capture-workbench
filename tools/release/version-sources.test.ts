@@ -42,7 +42,7 @@ const INVENTORY_FILES = [
   'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
   'packages/capture-runtime/src/capture_runtime/constants/versions.py',
   'packages/capture-runtime/scripts/model_source_lock.py',
-  'packages/capture-runtime/scripts/generate_commit_a_fixtures.py',
+  'packages/capture-runtime/scripts/generate_text_recognition_sources.py',
   'packages/capture-runtime/project.json',
   'packages/capture-runtime/model-sources/release-model-source-lock.json',
   'packages/capture-runtime/src/capture_runtime/assets/engine-catalog.json',
@@ -64,7 +64,7 @@ const INVENTORY_FILES = [
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py',
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-document.schema.json',
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/raw-capture.schema.json',
-  'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-ocr-projection-v3.schema.json',
+  'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-ocr-projection.schema.json',
   'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
   'packages/capture-runtime-client/src/private/assets/contract-set.sha256',
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/assets/contract-set.sha256',
@@ -265,8 +265,8 @@ test('inventory rejects mixed projection identity and duplicate generated source
     );
     const before = await readFile(path, 'utf8');
     const duplicate = before.replace(
-      'export interface CaptureOcrProjectionV3 {',
-      'export interface CaptureOcrProjectionV3 {\nexport interface CaptureOcrProjectionV3 {',
+      'export interface CaptureOcrProjection {',
+      'export interface CaptureOcrProjection {\nexport interface CaptureOcrProjection {',
     );
     assert.notEqual(duplicate, before);
     await writeFile(path, duplicate, 'utf8');
@@ -596,8 +596,8 @@ test('inventory rejects generated projection structural identity drift before mu
     );
     const before = await readFile(path, 'utf8');
     const drifted = before.replace(
-      'export interface CaptureOcrProjectionV3 {',
-      'export interface CaptureOcrProjectionV4 {',
+      'export interface CaptureOcrProjection {',
+      'export interface CaptureOcrProjectionDrifted {',
     );
     assert.notEqual(drifted, before);
     await writeFile(path, drifted, 'utf8');

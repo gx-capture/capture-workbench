@@ -226,7 +226,7 @@ test('Nx separates root verification build from release and deterministic NSIS l
   );
   assert.match(
     directmlSmoke.options.commands.at(-1),
-    /--expected-ocr-device windowsml-dml$/u,
+    /--expected-ocr-device directml$/u,
   );
 });
 
@@ -699,7 +699,7 @@ test('promotion is candidate-only and creates the tag after registry verificatio
   assert.match(cratesWorkflow, /publish-crate-candidate\.ts/u);
   assert.match(releaseWorkflow, /create-github-release\.ts/u);
   assert.match(releaseWorkflow, /create-release-manifest\.ts/u);
-  assert.match(releaseWorkflow, /capture-release-manifest-v1\.json/u);
+  assert.match(releaseWorkflow, /capture-release-manifest-v2\.json/u);
   assert.match(releaseWorkflow, /capture-contract-snapshot\.json/u);
   assert.match(releaseWorkflow, /actions\/attest@[0-9a-f]{40}/u);
   assert.match(releaseWorkflow, /gh attestation verify/u);
@@ -730,7 +730,8 @@ test('stable discovery points only to the immutable release manifest on the prot
     readFile(join(workspaceRoot, 'release-index', 'releases.json'), 'utf8'),
   ]);
   assert.match(workflow, /release-index:[\s\S]*update-release-index\.ts/u);
-  assert.match(workflow, /capture-release-manifest-v1\.json/u);
+  // The pointer accepts exactly one full release manifest, v1 or v2.
+  assert.match(workflow, /capture-release-manifest-v\[12\]/u);
   assert.match(workflow, /refs\/heads\/release-index/u);
   assert.match(workflow, /manifestSha256|MANIFEST_SHA256/u);
   assert.match(workflow, /gh attestation verify/u);

@@ -21,7 +21,7 @@ from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 CANONICAL_PROFILE_PATH = Path(__file__).resolve().parents[2] / "assets" / "ocr-profile.json"
 PROFILE_ALGORITHM = "capture-workbench-ocr-profile-v3"
-PROFILE_ID_PREFIX = "capture-workbench-ocr"
+PROFILE_ID_PREFIX = "ocr"
 MODEL_ARTIFACT_PATHS = (
     "det/inference.onnx",
     "det/inference.yml",
@@ -29,8 +29,8 @@ MODEL_ARTIFACT_PATHS = (
     "rec/inference.yml",
     "rec/ppocrv6_dict.txt",
 )
-# Every file of an installed WindowsML OCR model directory: the artifacts and the profile.
-WINDOWSML_REQUIRED_MODEL_FILES = (*MODEL_ARTIFACT_PATHS, "pipeline.json")
+# Every file of an installed Text recognition model directory: the artifacts and the profile.
+TEXT_RECOGNITION_REQUIRED_MODEL_FILES = (*MODEL_ARTIFACT_PATHS, "pipeline.json")
 EXPECTED_DET_REVISION = "61323801669c338b7891481ec7bac61ce31b576a"
 EXPECTED_REC_REVISION = "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
 EXPECTED_DICTIONARY_REVISION = "b03f46425e8ff4442b268ce449e3eef758146cd4"
@@ -220,9 +220,9 @@ def _validate_document(document: object) -> dict[str, Any]:
         raise EngineRuntimeUnavailableError("OCR profile schema version is unsupported.")
     if profile["releaseVersion"] != RUNTIME_VERSION:
         raise EngineRuntimeUnavailableError("OCR profile release version is unsynchronized.")
-    if profile["model"] != "pp-ocrv6-medium-windowsml":
+    if profile["model"] != "pp-ocrv6-medium":
         raise EngineRuntimeUnavailableError("OCR profile model is not PP-OCRv6.")
-    if profile["device"] != "windowsml-dml":
+    if profile["device"] != "directml":
         raise EngineRuntimeUnavailableError("OCR profile device policy is invalid.")
     if profile["cpuFallback"] != "provider-missing-only":
         raise EngineRuntimeUnavailableError("OCR profile CPU fallback policy is invalid.")
@@ -391,7 +391,7 @@ __all__ = [
     "MODEL_ARTIFACT_PATHS",
     "OcrModelArtifact",
     "OcrProfileSpec",
-    "WINDOWSML_REQUIRED_MODEL_FILES",
+    "TEXT_RECOGNITION_REQUIRED_MODEL_FILES",
     "canonical_json_bytes",
     "canonical_profile_bytes",
     "derive_profile_id",

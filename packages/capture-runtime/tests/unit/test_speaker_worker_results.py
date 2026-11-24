@@ -328,10 +328,10 @@ def _ocr_payload(**extra: Any) -> dict[str, Any]:
 
 
 def test_worker_result_may_name_an_optional_unit_that_was_missed() -> None:
-    assert parse_run_result(_ocr_payload()).suggested_units == ()
+    assert parse_run_result(_ocr_payload()).suggested_requirement_ids == ()
     assert parse_run_result(
-        _ocr_payload(suggestedUnits=["vertical-japanese-reader"])
-    ).suggested_units == ("vertical-japanese-reader",)
+        _ocr_payload(suggestedRequirementIds=["vertical-japanese-reader"])
+    ).suggested_requirement_ids == ("vertical-japanese-reader",)
 
 
 @pytest.mark.parametrize(
@@ -340,4 +340,4 @@ def test_worker_result_may_name_an_optional_unit_that_was_missed() -> None:
 )
 def test_worker_result_rejects_malformed_or_unknown_unit_suggestions(value: Any) -> None:
     with pytest.raises(WorkerResultError):
-        parse_run_result(_ocr_payload(suggestedUnits=value))
+        parse_run_result(_ocr_payload(suggestedRequirementIds=value))

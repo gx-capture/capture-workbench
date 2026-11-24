@@ -11,7 +11,7 @@ use std::{
 };
 
 use contract::{FixtureSettings, FixtureState};
-use http::{read_request, write_response, AuthorizationDecision, LocalRequestPolicy};
+use http::{read_request, write_response, AuthorizationDecision, LocalRequestPolicy, Request};
 use request_log::RequestLog;
 
 fn main() {
@@ -68,10 +68,7 @@ fn handle_connection(
     let origin = request.headers.get("origin").cloned();
     let method = request.method.clone();
     let path = request.path.clone();
-    let response = match policy.authorize(&request) {
-        AuthorizationDecision::Authorized => state.route(request),
-        AuthorizationDecision::Respond(response) => response,
-    };
+    let response = answer(policy, state, request);
     if request_log
         .record_measured(
             &method,
@@ -88,6 +85,15 @@ fn handle_connection(
         &mut stream,
         response.with_cors(policy.permitted_origin(origin.as_deref())),
     );
+}
+
+/// The fixture answers an authorized request; the policy answers any other,
+/// so a denied request never names a capture for the request log.
+fn answer(policy: &LocalRequestPolicy, state: &FixtureState, request: Request) -> http::Response {
+    match policy.authorize(&request) {
+        AuthorizationDecision::Authorized => state.route(request),
+        AuthorizationDecision::Respond(response) => response,
+    }
 }
 
 fn record_request(log: &RequestLog, method: &str, path: &str, response: &http::Response) {

@@ -25,7 +25,7 @@ const ready = {
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   capabilities: {
-    captureKinds: ['audio', 'image', 'pdf'],
+    captureKinds: ['recording', 'image', 'pdf'],
     structuringModes: ['host', 'runtime'],
   },
 };
@@ -33,7 +33,7 @@ const ready = {
 const requirements = {
   items: [
     {
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
       status: 'ready',
       detail: 'must not be retained',
     },

@@ -18,16 +18,16 @@ import {
   type CaptureEvent,
   type CaptureEventStreamOptions,
   type CaptureOperation,
-  type CaptureStreamingResult,
-  type CommitStreamingStructuredResultRequest,
+  type CaptureResult,
+  type CommitStructuredResultRequest,
   type PartialCapture,
   type RawCapture,
-  type ReportStreamingStructuringFailureRequest,
+  type ReportStructuringFailureRequest,
   type RuntimeInstallation,
   type RuntimeReady,
   type RuntimeRequirement,
   type StartRuntimeInstallationRequest,
-  type StartStreamingCaptureRequest,
+  type StartCaptureRequest,
 } from './contracts';
 
 export { CaptureHttpError } from './capture-http-error';
@@ -141,11 +141,11 @@ export class HttpCaptureClient implements CaptureClient {
     });
   }
 
-  startStreamingCapture(
-    request: StartStreamingCaptureRequest,
+  startCapture(
+    request: StartCaptureRequest,
   ): Observable<CaptureOperation> {
     return this.fromRuntime(() =>
-      this.runtime.startStreamingCapture({
+      this.runtime.startCapture({
         clientRequestId: request.clientRequestId,
         fileName: request.file.name,
         body: request.file,
@@ -153,6 +153,10 @@ export class HttpCaptureClient implements CaptureClient {
         sourceKind: request.sourceKind,
         structuringMode: request.structuringMode,
         targetLanguage: request.targetLanguage,
+        // Page selection applies to a PDF only; the runtime rejects it for
+        // any other kind, after the upload.
+        pdfPageNumbers:
+          request.sourceKind === 'pdf' ? request.pdfPageNumbers : undefined,
         identifySpeakers: request.identifySpeakers,
         spokenLanguage: request.spokenLanguage,
         signal: request.signal,
@@ -160,47 +164,47 @@ export class HttpCaptureClient implements CaptureClient {
     );
   }
 
-  getStreamingCapture(
+  getCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperation> {
-    return this.fromRuntime(() => this.runtime.getStreamingCapture(id, signal));
+    return this.fromRuntime(() => this.runtime.getCapture(id, signal));
   }
 
-  cancelStreamingCapture(
+  cancelCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperation> {
     return this.fromRuntime(() =>
-      this.runtime.cancelStreamingCapture(id, signal),
+      this.runtime.cancelCapture(id, signal),
     );
   }
 
-  getStreamingPartial(
+  getPartial(
     id: string,
     signal?: AbortSignal,
   ): Observable<PartialCapture> {
-    return this.fromRuntime(() => this.runtime.getStreamingPartial(id, signal));
+    return this.fromRuntime(() => this.runtime.getPartial(id, signal));
   }
 
-  getStreamingRaw(id: string, signal?: AbortSignal): Observable<RawCapture> {
+  getRaw(id: string, signal?: AbortSignal): Observable<RawCapture> {
     return this.fromRuntime(() => this.runtime.getRaw(id, signal));
   }
 
-  getStreamingResult(
+  getResult(
     id: string,
     signal?: AbortSignal,
-  ): Observable<CaptureStreamingResult> {
-    return this.fromRuntime(() => this.runtime.getStreamingResult(id, signal));
+  ): Observable<CaptureResult> {
+    return this.fromRuntime(() => this.runtime.getResult(id, signal));
   }
 
-  commitStreamingStructuredResult(
+  commitStructure(
     id: string,
-    request: CommitStreamingStructuredResultRequest,
+    request: CommitStructuredResultRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperation> {
     return this.fromRuntime(() =>
-      this.runtime.commitStreamingStructuredResult(
+      this.runtime.commitStructure(
         id,
         request.candidate,
         request.clientRequestId,
@@ -209,13 +213,13 @@ export class HttpCaptureClient implements CaptureClient {
     );
   }
 
-  reportStreamingStructuringFailure(
+  reportStructuringFailure(
     id: string,
-    request: ReportStreamingStructuringFailureRequest,
+    request: ReportStructuringFailureRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperation> {
     return this.fromRuntime(() =>
-      this.runtime.reportStreamingStructuringFailure(
+      this.runtime.reportStructuringFailure(
         id,
         request.code,
         request.message,
@@ -225,7 +229,7 @@ export class HttpCaptureClient implements CaptureClient {
     );
   }
 
-  deleteStreamingCapture(id: string, signal?: AbortSignal): Observable<void> {
+  deleteCapture(id: string, signal?: AbortSignal): Observable<void> {
     return this.fromRuntime(() => this.runtime.deleteCapture(id, signal));
   }
 
@@ -268,7 +272,7 @@ function toCaptureHttpError(error: unknown): unknown {
 }
 
 function mediaTypeFor(
-  kind: StartStreamingCaptureRequest['sourceKind'],
+  kind: StartCaptureRequest['sourceKind'],
 ): string {
   return kind === 'pdf'
     ? 'application/pdf'

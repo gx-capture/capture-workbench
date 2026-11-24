@@ -62,7 +62,7 @@ def test_recordings_ffmpeg_writes_are_sniffed_as_audio(
 
     sniffed = sniff_source(content[:SNIFF_BYTES])
 
-    assert sniffed.kind is CaptureSourceKind.AUDIO
+    assert sniffed.kind is CaptureSourceKind.RECORDING
     assert sniffed.media_type == media_type
 
 

@@ -890,8 +890,6 @@ mod tests {
             result: Some(serde_json::json!({ "targetText": marker })),
             error_code: None,
             error_message: None,
-            recovery_code: None,
-            recovery_message: None,
             ocr_evidence: None,
             capture_options: None,
         }
@@ -946,10 +944,10 @@ mod tests {
                 "status": "resolved",
                 "runtimeVersion": env!("CARGO_PKG_VERSION"),
                 "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-                "engine": "windowsml-ocr",
-                "model": "pp-ocrv6-medium-windowsml",
+                "engine": "text-recognition",
+                "model": "pp-ocrv6-medium",
                 "modelDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-                "device": "GPU",
+                "device": "directml",
                 "profileId": "profile-1",
                 "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -957,7 +955,7 @@ mod tests {
         }))
     }
 
-    fn failed_zero_page_evidence() -> OcrEvidenceV1 {
+    pub(super) fn failed_zero_page_evidence() -> OcrEvidenceV1 {
         sealed_evidence(serde_json::json!({
             "schemaVersion": 1,
             "captureId": "capture-failed",
@@ -988,7 +986,7 @@ mod tests {
         }))
     }
 
-    fn evidence_update(
+    pub(super) fn evidence_update(
         document_id: &str,
         status: &str,
         evidence: Option<OcrEvidenceV1>,
@@ -1003,8 +1001,6 @@ mod tests {
             result: None,
             error_code: None,
             error_message: None,
-            recovery_code: None,
-            recovery_message: None,
             ocr_evidence: evidence,
             capture_options: None,
         }
@@ -1021,8 +1017,6 @@ mod tests {
             "result": null,
             "errorCode": null,
             "errorMessage": null,
-            "recoveryCode": null,
-            "recoveryMessage": null,
             "ocrEvidence": evidence
         })
     }
@@ -1124,8 +1118,6 @@ mod tests {
                 result: Some(serde_json::json!({ "targetText": "Structured" })),
                 error_code: None,
                 error_message: None,
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -1329,6 +1321,160 @@ mod tests {
                 .expect("evidence")
                 .capture_id,
             "capture-1"
+        );
+    }
+
+    #[test]
+    fn linked_document_with_capture_id_can_be_deleted() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = recovery_source(&library);
+        let linked = library
+            .update_capture(LibraryCaptureUpdate {
+                capture_id: Some("capture-1".into()),
+                ..evidence_update(&created.document_id, "processing", None)
+            })
+            .expect("link capture");
+        assert_eq!(linked.capture_id.as_deref(), Some("capture-1"));
+        let item_dir = library.document_directory(&created.document_id).unwrap();
+        assert!(item_dir.is_dir());
+
+        library
+            .delete(LibraryDocumentRequest {
+                document_id: created.document_id,
+            })
+            .expect("linked document should delete");
+        assert!(library
+            .list(LibraryListRequest::default())
+            .expect("list")
+            .is_empty());
+        assert!(!item_dir.exists());
+    }
+
+    #[test]
+    fn awaiting_confirmation_stores_raw_and_completed_evidence_in_one_write() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = recovery_source(&library);
+        library
+            .update_capture(LibraryCaptureUpdate {
+                capture_id: Some("capture-1".into()),
+                ..evidence_update(&created.document_id, "processing", None)
+            })
+            .expect("link capture");
+
+        let evidence = completed_evidence();
+        let raw = serde_json::json!({ "sourceText": "recognized" });
+        let updated = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: created.document_id.clone(),
+                capture_id: None,
+                clear_capture_id: true,
+                status: "awaiting_confirmation".into(),
+                stage: Some("completed".into()),
+                raw: Some(raw.clone()),
+                result: None,
+                error_code: None,
+                error_message: None,
+                ocr_evidence: Some(evidence.clone()),
+                capture_options: None,
+            })
+            .expect("one-write awaiting_confirmation update");
+        assert_eq!(updated.status, "awaiting_confirmation");
+        assert_eq!(updated.capture_id, None);
+        assert!(updated.has_raw);
+
+        let detail = library
+            .get(LibraryDocumentRequest {
+                document_id: created.document_id,
+            })
+            .expect("detail");
+        assert_eq!(detail.summary.status, "awaiting_confirmation");
+        assert_eq!(detail.summary.capture_id, None);
+        assert_eq!(detail.raw, Some(raw));
+        assert_eq!(detail.ocr_evidence, Some(evidence));
+
+        let other = recovery_source(&library);
+        for (status, mismatched) in [
+            ("awaiting_confirmation", failed_zero_page_evidence()),
+            ("failed", completed_evidence()),
+        ] {
+            let error = library
+                .update_capture(evidence_update(
+                    &other.document_id,
+                    status,
+                    Some(mismatched),
+                ))
+                .expect_err("mismatched status rejected");
+            assert_eq!(
+                error,
+                "OCR evidence status must match the terminal library update."
+            );
+        }
+    }
+
+    #[test]
+    fn failed_ocr_evidence_allows_replay_and_replacement_with_current_provenance() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = recovery_source(&library);
+        let first_failed = failed_zero_page_evidence();
+        library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "failed",
+                Some(first_failed.clone()),
+            ))
+            .expect("store first failed evidence");
+
+        // Equal replay is accepted.
+        library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "failed",
+                Some(first_failed),
+            ))
+            .expect("equal replay of failed evidence");
+
+        // Different failed evidence replaces stored failed evidence.
+        let mut second_failed =
+            serde_json::to_value(failed_zero_page_evidence()).expect("evidence json");
+        second_failed["captureId"] = serde_json::json!("capture-failed-2");
+        let second_failed = sealed_evidence(second_failed);
+        library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "failed",
+                Some(second_failed.clone()),
+            ))
+            .expect("replace failed evidence with new failed evidence");
+        assert_eq!(
+            library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id.clone(),
+                })
+                .expect("detail")
+                .ocr_evidence,
+            Some(second_failed)
+        );
+
+        // Completed evidence with current provenance replaces stored failed evidence.
+        let completed = completed_evidence();
+        library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "completed",
+                Some(completed.clone()),
+            ))
+            .expect("replace failed evidence with completed evidence");
+        assert_eq!(
+            library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .expect("detail")
+                .ocr_evidence,
+            Some(completed)
         );
     }
 
@@ -1728,7 +1874,7 @@ mod tests {
         files
     }
 
-    fn recovery_source(library: &LibraryStore) -> DesktopLibrarySummary {
+    pub(super) fn recovery_source(library: &LibraryStore) -> DesktopLibrarySummary {
         library
             .create_source(LibrarySourceInput {
                 file_name: "recovery.pdf".into(),
@@ -2112,8 +2258,6 @@ mod tests {
                 result: None,
                 error_code: Some("expected".into()),
                 error_message: Some("test".into()),
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -2155,8 +2299,6 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -2168,14 +2310,12 @@ mod tests {
                 document_id: created.document_id.clone(),
                 capture_id: None,
                 clear_capture_id: false,
-                status: "recovery_required".into(),
-                stage: Some("completed".into()),
+                status: "processing".into(),
+                stage: Some("extracting".into()),
                 raw: None,
                 result: None,
                 error_code: Some("runtime_terminal_failed".into()),
                 error_message: Some("terminal evidence".into()),
-                recovery_code: Some("runtime_cleanup_failed".into()),
-                recovery_message: Some("retry cleanup".into()),
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -2184,10 +2324,6 @@ mod tests {
         assert_eq!(
             preserved.error_code.as_deref(),
             Some("runtime_terminal_failed")
-        );
-        assert_eq!(
-            preserved.recovery_code.as_deref(),
-            Some("runtime_cleanup_failed")
         );
 
         let cleared = library
@@ -2201,8 +2337,6 @@ mod tests {
                 result: None,
                 error_code: Some("runtime_terminal_failed".into()),
                 error_message: Some("terminal evidence".into()),
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -2225,8 +2359,6 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -2690,8 +2822,6 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })
@@ -2710,8 +2840,6 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
-                recovery_code: None,
-                recovery_message: None,
                 ocr_evidence: None,
                 capture_options: None,
             })

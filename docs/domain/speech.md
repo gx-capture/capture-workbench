@@ -68,6 +68,8 @@ sequenceDiagram
 
 `cpu` 內容沒有 GPU 路徑，一律在 CPU 上執行。`preferGpu` 與 `allowCpuFallback` 不改變裝置，也不會因為不允許 CPU 後援而回報 CUDA 裝置不存在。`auto` 載入 TEA-ASR-1.1-mini，回報模型 `tea-asr-1.1-mini`、裝置 `cpu`。明確的 `tea-asr-1.1-mini` 同樣載入 mini。明確的 `tea-asr-1.1` 在任何 worker 啟動或沿用之前失敗，不會改載 mini。擷取以既有的 `requirement_unavailable` 失敗，階段是 `extraction`，`retryable` 為 false。訊息說明這個模型不在已安裝的 `cpu` 內容，並請把 `CAPTURE_SPEECH_RECOGNITION_MODEL` 設成 `auto` 或 `tea-asr-1.1-mini`，或是解除安裝 `speech-recognition` 後以 `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda` 重新安裝。`GET /v2/runtime/requirements` 仍是 `ready`（`auto` 與 mini 仍可執行），`detail` 是同一句話。worker 內部仍以 `model not installed` 拒絕，留作第二道檢查。`probe` 在 mini、它的架構目錄與 aligner 都存在時就緒，不要求 primary。
 
+`CAPTURE_SPEECH_PREFER_GPU` 控制語音辨識與說話者分離的 GPU 偏好。`CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK` 控制語音辨識的 CPU 後援，預設開啟。桌面程式會從已儲存的偏好設定讀取前者，並獨立讀取後者。說話者分離固定允許 CPU 後援。
+
 ## Finalized recording decoding
 
 Without speaker identification, `PyAVFileDecoder.windows()` opens the finalized
@@ -105,7 +107,10 @@ normalizes in place and releases PCM before inference. Waveform and model memory
 still grow with duration; this is not a fixed-memory inference path.
 
 Capture deletion waits for the task and its worker cleanup before removing the
-capture record or its last-reference ingestion. Cancellation is requested once;
+capture record or its last-reference ingestion. Each speech recognition session
+worker writes its window files to its own temporary directory, which is removed
+when the worker closes (including after a cancel or delete), or at the next
+runtime startup if a crash left it behind. Cancellation is requested once;
 worker cleanup remains joined even if cancellation is repeated. Deleting a
 terminal capture's ingestion also waits for cleanup, while deleting an ingestion
 used by a non-terminal capture retains the existing rejection. Disconnecting a

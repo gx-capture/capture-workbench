@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "requirementId": {
+      "enum": [
+        "text-recognition",
+        "speech-recognition",
+        "speaker-diarization",
+        "vertical-japanese-reader",
+        "structuring-runtime"
+      ],
+      "title": "Requirementid",
+      "type": "string"
+    },
+    "consent": {
+      "const": true,
+      "title": "Consent",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "requirementId",
+    "consent"
+  ],
+  "title": "StartRuntimeInstallation",
+  "type": "object"
+}

@@ -42,7 +42,7 @@ def _raw_capture(*, text_chars: int = 24) -> dict[str, object]:
         "segments": segments,
         "sourceText": "\n".join(str(segment["text"]) for segment in segments),
         "extractionEngine": {
-            "engine": "windowsml-ocr",
+            "engine": "text-recognition",
             "model": "capture-ocr-v1",
             "digest": f"sha256:{'b' * 64}",
             "device": "igpu",

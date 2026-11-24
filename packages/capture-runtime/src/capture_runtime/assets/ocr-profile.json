@@ -28,7 +28,7 @@
     }
   ],
   "cpuFallback": "provider-missing-only",
-  "device": "windowsml-dml",
+  "device": "directml",
   "dictionary": {
     "languageCoverage": "traditional-chinese-multilingual",
     "path": "rec/ppocrv6_dict.txt",
@@ -47,7 +47,7 @@
     "requireExecutionEvidence": true
   },
   "failClosedOnDmlError": true,
-  "model": "pp-ocrv6-medium-windowsml",
+  "model": "pp-ocrv6-medium",
   "models": {
     "det": {
       "modelDir": "det",
@@ -96,7 +96,7 @@
       "pdf": "pdfium"
     }
   },
-  "releaseVersion": "0.10.0",
+  "releaseVersion": "0.11.0",
   "schemaVersion": "3",
   "verticalReader": {
     "artifacts": [

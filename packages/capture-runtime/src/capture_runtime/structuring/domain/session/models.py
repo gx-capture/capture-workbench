@@ -12,6 +12,10 @@ class SessionTransitionError(ValueError):
     """A batch cannot advance this structuring session."""
 
 
+class RetiredStructuringProfileError(ValueError):
+    """A fresh session names a profile id from before the consumer prefix was dropped."""
+
+
 @dataclass(frozen=True, slots=True)
 class StructuringSemanticBlock:
     """A semantic block contributed to or accepted from a structuring batch."""
@@ -75,7 +79,7 @@ class StructuringSession:
 
     session_id: str
     capture_id: str
-    raw_source_sha256: str
+    source_sha256: str
     contract_set_sha256: str
     schema_dialect: str
     batch_count: int

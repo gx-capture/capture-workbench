@@ -23,7 +23,7 @@ ESTIMATED_BYTES_PER_TOKEN = 3
 """Conservative UTF-8 byte-to-token estimate used by batch planning."""
 
 MIN_REQUEST_TOKENS = 256
-"""Smallest adaptive provider request budget."""
+"""Smallest adaptive output budget."""
 
 IDENTITY_TEXT_PREVIEW_CHARACTERS = 256
 """Maximum source preview sent to the identity classifier."""

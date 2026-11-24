@@ -22,7 +22,6 @@ def _extractor(tmp_path: Path, *, max_pdf_pages: int = 3) -> StandaloneRuntimeCa
     return StandaloneRuntimeCaptureExtractor(
         SystemClock(),
         ExtractionRuntimeConfig(
-            windowsml_model_dir=tmp_path / "windowsml",
             temp_dir=tmp_path / "temp",
             max_pdf_pages=max_pdf_pages,
             max_image_pixels=100_000,

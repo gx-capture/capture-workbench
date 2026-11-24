@@ -71,7 +71,7 @@ jobs:
             --promotion-evidence promotion-input/promotion-evidence.json \
             --consumer-gate-ledger promotion-input/consumer-gate-ledger.json \
             --registry-directory registry-ledgers \
-            --output promotion-input/candidate/capture-release-manifest-v1.json
+            --output promotion-input/candidate/capture-release-manifest-v2.json
 
       - name: Stage the public contract snapshot asset
         shell: bash
@@ -97,8 +97,8 @@ jobs:
             promotion-input/candidate/desktop/**
             promotion-input/candidate/candidate-manifest.json
             promotion-input/candidate/capture-contract-snapshot.json
-            promotion-input/candidate/capture-release-manifest-v1.json
-            promotion-input/candidate/capture-release-manifest-v1.json.sha256
+            promotion-input/candidate/capture-release-manifest-v2.json
+            promotion-input/candidate/capture-release-manifest-v2.json.sha256
 
       - name: Verify anonymous immutable release-manifest download
         shell: bash
@@ -107,13 +107,13 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --location \
-            "https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}/capture-release-manifest-v1.json" \
+            "https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}/capture-release-manifest-v2.json" \
             --output "$RUNNER_TEMP/anonymous-release-manifest.json"
           cmp --silent \
-            promotion-input/candidate/capture-release-manifest-v1.json \
+            promotion-input/candidate/capture-release-manifest-v2.json \
             "$RUNNER_TEMP/anonymous-release-manifest.json"
           gh attestation verify \
-            promotion-input/candidate/capture-release-manifest-v1.json \
+            promotion-input/candidate/capture-release-manifest-v2.json \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_publish-github-release.yml"
 

@@ -56,7 +56,7 @@ impl WindowsJob {
         let handle = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
         if handle.is_null() {
             return Err(format!(
-                "An owned runtime process job could not be created: {}",
+                "An owned sidecar process job could not be created: {}",
                 io::Error::last_os_error()
             ));
         }
@@ -76,7 +76,7 @@ impl WindowsJob {
                 CloseHandle(handle);
             }
             return Err(format!(
-                "The owned runtime process job could not be configured: {error}"
+                "The owned sidecar process job could not be configured: {error}"
             ));
         }
         Ok(Self {
@@ -138,7 +138,7 @@ impl WindowsJob {
         let terminated = unsafe { TerminateJobObject(self.handle as *mut c_void, 1) };
         if terminated == 0 {
             Err(format!(
-                "Owned runtime process job did not stop cleanly: {}",
+                "Owned sidecar process job did not stop cleanly: {}",
                 io::Error::last_os_error()
             ))
         } else {
@@ -159,7 +159,7 @@ impl WindowsJob {
         };
         if queried == 0 {
             Err(format!(
-                "The owned runtime process job could not be queried: {}",
+                "The owned sidecar process job could not be queried: {}",
                 io::Error::last_os_error()
             ))
         } else {
@@ -186,7 +186,7 @@ impl WindowsJob {
         loop {
             let bytes = size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>()
                 .checked_add((capacity - 1).saturating_mul(size_of::<usize>()))
-                .ok_or_else(|| "Owned runtime Job process list size overflowed.".to_string())?;
+                .ok_or_else(|| "Owned sidecar Job process list size overflowed.".to_string())?;
             let words = (bytes + size_of::<usize>() - 1) / size_of::<usize>();
             let mut buffer = vec![0usize; words];
             let queried = unsafe {
@@ -205,7 +205,7 @@ impl WindowsJob {
                     continue;
                 }
                 return Err(format!(
-                    "The owned runtime Job process list could not be queried: Windows error {error}."
+                    "The owned sidecar Job process list could not be queried: Windows error {error}."
                 ));
             }
             let information =
@@ -224,7 +224,7 @@ impl WindowsJob {
                 .iter()
                 .filter_map(|raw_pid| {
                     let pid = u32::try_from(*raw_pid)
-                        .map_err(|_| "The owned runtime Job returned an invalid process ID.");
+                        .map_err(|_| "The owned sidecar Job returned an invalid process ID.");
                     let pid = match pid {
                         Ok(pid) => pid,
                         Err(error) => return Some(Err(error.to_string())),
@@ -273,7 +273,7 @@ impl WindowsJob {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         Err(
-            "The owned runtime Job still reports active processes after termination attempts."
+            "The owned sidecar Job still reports active processes after termination attempts."
                 .into(),
         )
     }
@@ -308,7 +308,7 @@ impl WindowsJob {
             return match result {
                 Ok(()) => Ok(()),
                 Err(error) => Err(format!(
-                    "The owned runtime process remained alive outside its Job; cleanup is retained: {error}"
+                    "The owned sidecar process remained alive outside its Job; cleanup is retained: {error}"
                 )),
             };
         }
@@ -316,7 +316,7 @@ impl WindowsJob {
         let observed = process_identity_from_handle(handle.raw(), expected.pid)?;
         if !same_process_identity(expected, observed) {
             return Err(format!(
-                "The owned runtime process {} creation identity changed before termination.",
+                "The owned sidecar process {} creation identity changed before termination.",
                 expected.pid
             ));
         }
@@ -331,7 +331,7 @@ impl WindowsJob {
                 );
             }
             return Err(format!(
-                "The owned runtime process {} could not be terminated: Windows error {error}.",
+                "The owned sidecar process {} could not be terminated: Windows error {error}.",
                 expected.pid,
             ));
         }
@@ -348,7 +348,7 @@ impl WindowsJob {
             .get(&expected)
             .ok_or_else(|| {
                 format!(
-                    "The owned runtime process {} has no captured handle for terminal proof.",
+                    "The owned sidecar process {} has no captured handle for terminal proof.",
                     expected.pid
                 )
             })?;
@@ -389,7 +389,7 @@ impl WindowsJob {
         };
         if queried == 0 {
             Err(format!(
-                "The owned runtime process job limits could not be queried: {}",
+                "The owned sidecar process job limits could not be queried: {}",
                 io::Error::last_os_error()
             ))
         } else {

@@ -6,16 +6,19 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from PIL import Image
 
 from capture_runtime._worker_payloads import WorkerProbeResult, WorkerRunResult, WorkerSegment
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.provisioning.infrastructure import engine_installation
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineArtifactDescriptor,
+    EngineArtifactPart,
     EngineCatalog,
     canonical_json_bytes,
 )
@@ -24,6 +27,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 )
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
+from capture_runtime.workers.ocr_main import _page_manifest
 from tests.direct_model_fixtures import approved_source_lock, pending_source_lock
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -95,14 +99,14 @@ def test_candidate_fixture_download_requests_identity_encoding(
     assert captured["headers"] == {"Accept-Encoding": "identity"}
 
 
-def test_whisper_candidate_uses_bounded_one_hour_audio_budget() -> None:
-    assert candidate.WHISPER_CANDIDATE_MAX_DURATION_MS == 3_600_000
-    assert candidate.WHISPER_CANDIDATE_TIMEOUT_SECONDS == 3_600
+def test_speech_candidate_uses_bounded_one_hour_audio_budget() -> None:
+    assert candidate.SPEECH_CANDIDATE_MAX_DURATION_MS == 3_600_000
+    assert candidate.SPEECH_CANDIDATE_TIMEOUT_SECONDS == 3_600
 
 
 def test_cuda_source_lock_candidate_disables_cpu_fallback() -> None:
     assert candidate._speech_run_options({"preferGpu": True, "expectedDevice": "cuda"}) == {
-        "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "maxDurationMs": candidate.SPEECH_CANDIDATE_MAX_DURATION_MS,
         "preferGpu": True,
         "allowCpuFallback": False,
     }
@@ -203,7 +207,7 @@ def _candidate_catalog(
             )
         else:
             name = {
-                "windowsml-ocr": "capture-engine-ocr.zip",
+                "text-recognition": "capture-engine-ocr.zip",
                 "speech-recognition": "capture-engine-speech-recognition.zip",
             }[requirement_id]
             if requirement_id == "speech-recognition" and legacy_speech_files is not None:
@@ -445,7 +449,7 @@ def test_model_enabled_candidate_requires_both_speech_contents(
         speech = _speech_payload(payload)
         speech["contents"] = [item for item in speech["contents"] if item["id"] == kept]
     lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
-    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    monkeypatch.delenv("CAPTURE_PRIVATE_SPEECH_FIXTURE", raising=False)
     output = tmp_path / "evidence.json"
 
     with pytest.raises(candidate.EngineInstallationError, match="cuda and cpu contents"):
@@ -455,7 +459,7 @@ def test_model_enabled_candidate_requires_both_speech_contents(
                 engine_dir=tmp_path,
                 source_lock_path=lock_path,
                 output=output,
-                private_whisper_fixture=None,
+                private_speech_fixture=None,
             )
         )
     assert not output.exists()
@@ -467,18 +471,219 @@ def test_model_enabled_candidate_with_both_speech_contents_goes_on_to_the_fixtur
     lock, _content = approved_source_lock()
     payload = _candidate_catalog(lock, speech_contents=True).to_dict()
     lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
-    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    monkeypatch.delenv("CAPTURE_PRIVATE_SPEECH_FIXTURE", raising=False)
 
-    with pytest.raises(candidate.EngineInstallationError, match="private Whisper fixture"):
+    with pytest.raises(candidate.EngineInstallationError, match="private speech fixture"):
         asyncio.run(
             candidate.verify_candidate(
                 catalog_path=catalog_path,
                 engine_dir=tmp_path,
                 source_lock_path=lock_path,
                 output=tmp_path / "evidence.json",
-                private_whisper_fixture=None,
+                private_speech_fixture=None,
             )
         )
+
+
+def test_model_candidate_sends_ocr_fixture_page_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock, _ = approved_source_lock()
+    catalog = _candidate_catalog(lock, speech_contents=True)
+    lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, catalog.to_dict())
+    fixture = next(item for item in lock["fixtures"] if item["kind"] == "ocr")
+    image_path = tmp_path / "fixture.png"
+    with Image.new("RGB", (1024, 256)) as image:
+        image.save(image_path)
+    fixture_bytes = image_path.read_bytes()
+    received_options: list[dict[str, object]] = []
+
+    class SpeechInstallReached(Exception):
+        pass
+
+    async def download(*, destination: Path, **_kwargs: object) -> None:
+        if destination.name == "ocr":
+            destination.write_bytes(fixture_bytes)
+
+    async def copy_private_fixture(*_args: object) -> None:
+        pass
+
+    async def install(requirement_id: str, **_kwargs: object) -> None:
+        if requirement_id == "speech-recognition":
+            raise SpeechInstallReached
+
+    async def select_compute(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(execution_plan=SimpleNamespace(to_dict=dict))
+
+    async def shutdown() -> None:
+        pass
+
+    class FakeWorker:
+        async def run(
+            self,
+            _engine: object,
+            *,
+            source_path: Path,
+            options: dict[str, object],
+            **_kwargs: object,
+        ) -> WorkerRunResult:
+            received_options.append(options)
+            _page_manifest(options.get("pageManifest"))
+            assert source_path.read_bytes() == fixture_bytes
+            return WorkerRunResult(
+                segments=(WorkerSegment(order=0, text=fixture["expectedText"]),),
+                engine=fixture["expectedEngine"],
+                model=fixture["expectedModel"],
+                digest="fixture-digest",
+                device=fixture["expectedDevice"],
+                warnings=(),
+            )
+
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", str(tmp_path))
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(candidate, "_download_exact_url", download)
+    monkeypatch.setattr(candidate, "_copy_private_fixture", copy_private_fixture)
+    monkeypatch.setattr(candidate, "WorkerClient", FakeWorker)
+    monkeypatch.setattr(
+        candidate,
+        "_candidate_installation_manager",
+        lambda *_args: SimpleNamespace(
+            install=install,
+            active_engine=lambda _requirement_id: object(),
+            ocr_compute_selection=select_compute,
+            shutdown=shutdown,
+        ),
+    )
+
+    with pytest.raises(SpeechInstallReached):
+        asyncio.run(
+            candidate.verify_candidate(
+                catalog_path=catalog_path,
+                engine_dir=tmp_path,
+                source_lock_path=lock_path,
+                output=tmp_path / "evidence.json",
+                private_speech_fixture=tmp_path / "speech",
+            )
+        )
+
+    assert len(received_options) == 1
+    assert received_options[0]["pageManifest"] == [
+        {
+            "page": 1,
+            "raster": {"width": 1024, "height": 256, "scale": 1.0, "coordinateSystem": "pixel"},
+        }
+    ]
+    # The worker renders at renderScale; the manifest above was built at the same scale.
+    assert received_options[0]["renderScale"] == 1.0
+    assert received_options[0]["maxImagePixels"] == 100_000_000
+
+
+def _local_worker_artifact(
+    payload: bytes, parts: tuple[EngineArtifactPart, ...] = ()
+) -> EngineArtifactDescriptor:
+    return EngineArtifactDescriptor(
+        role="worker",
+        requirement_id="speech-recognition",
+        artifact_version="0.0.1",
+        worker_protocol_version=WORKER_PROTOCOL_VERSION,
+        platform="windows",
+        arch="x86_64",
+        file_name="worker.zip",
+        bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        extracted_bytes=len(payload),
+        entry_point="worker.exe",
+        files_manifest_sha256="0" * 64,
+        url=None if parts else "https://example.invalid/worker.zip",
+        parts=parts,
+    )
+
+
+def _local_worker_parts(engine_dir: Path, *pieces: bytes) -> tuple[EngineArtifactPart, ...]:
+    parts = []
+    for index, piece in enumerate(pieces, start=1):
+        name = f"worker.zip.{index:03d}"
+        (engine_dir / name).write_bytes(piece)
+        parts.append(
+            EngineArtifactPart(
+                file_name=name,
+                bytes=len(piece),
+                sha256=hashlib.sha256(piece).hexdigest(),
+                url=f"https://example.invalid/{name}",
+            )
+        )
+    return tuple(parts)
+
+
+def _download_local_worker(
+    engine_dir: Path, artifact: EngineArtifactDescriptor, destination: Path
+) -> list[int]:
+    progress: list[int] = []
+    asyncio.run(
+        candidate.LocalWorkerDownloader(engine_dir).download(
+            artifact,
+            destination,
+            cancel_event=asyncio.Event(),
+            progress=progress.append,
+        )
+    )
+    return progress
+
+
+def test_local_worker_download_joins_a_parted_archive_in_order(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    parts = _local_worker_parts(engine_dir, b"first-part|", b"second-part")
+    destination = tmp_path / "worker.zip"
+
+    progress = _download_local_worker(
+        engine_dir, _local_worker_artifact(b"first-part|second-part", parts), destination
+    )
+
+    assert destination.read_bytes() == b"first-part|second-part"
+    assert progress[-1] == len(b"first-part|second-part")
+
+
+def test_local_worker_download_still_copies_a_single_archive(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    (engine_dir / "worker.zip").write_bytes(b"whole-archive")
+    destination = tmp_path / "worker.zip"
+
+    _download_local_worker(engine_dir, _local_worker_artifact(b"whole-archive"), destination)
+
+    assert destination.read_bytes() == b"whole-archive"
+
+
+def test_local_worker_download_rejects_a_missing_part(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    parts = _local_worker_parts(engine_dir, b"first-part|", b"second-part")
+    (engine_dir / parts[1].file_name).unlink()
+    destination = tmp_path / "worker.zip"
+
+    with pytest.raises(engine_installation.EngineInstallationError, match="missing or unsafe"):
+        _download_local_worker(
+            engine_dir, _local_worker_artifact(b"first-part|second-part", parts), destination
+        )
+    assert not destination.exists()
+
+
+def test_local_worker_download_rejects_a_part_that_differs_from_the_catalog(
+    tmp_path: Path,
+) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    parts = _local_worker_parts(engine_dir, b"first-part|", b"second-part")
+    # Same length, other bytes: the digests tell, not the sizes.
+    (engine_dir / parts[0].file_name).write_bytes(b"FIRST-PART|")
+    destination = tmp_path / "worker.zip"
+
+    with pytest.raises(engine_installation.EngineInstallationError, match="does not match"):
+        _download_local_worker(
+            engine_dir, _local_worker_artifact(b"first-part|second-part", parts), destination
+        )
+    assert not destination.exists()
 
 
 def test_speech_preflight_still_reads_a_legacy_catalog(
@@ -487,18 +692,18 @@ def test_speech_preflight_still_reads_a_legacy_catalog(
     lock = pending_source_lock()
     payload = _candidate_catalog(lock, speech_contents=False).to_dict()
     lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
-    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    monkeypatch.delenv("CAPTURE_PRIVATE_SPEECH_FIXTURE", raising=False)
 
     # The legacy catalog passes the binding check and stops only at the
     # missing private fixture, not at the release rule for both speech packs.
-    with pytest.raises(candidate.EngineInstallationError, match="private Whisper fixture"):
+    with pytest.raises(candidate.EngineInstallationError, match="private speech fixture"):
         asyncio.run(
             candidate.verify_candidate(
                 catalog_path=catalog_path,
                 engine_dir=tmp_path,
                 source_lock_path=lock_path,
                 output=tmp_path / "evidence.json",
-                private_whisper_fixture=None,
+                private_speech_fixture=None,
                 preflight=True,
             )
         )
@@ -575,12 +780,12 @@ def _cpu_engine(tmp_path: Path, content_id: str | None = "cpu") -> InstalledEngi
 
 def _cpu_pass(tmp_path: Path, worker: _FakeCpuWorker, content_id: str | None = "cpu"):
     lock, _content = approved_source_lock()
-    fixture = next(item for item in lock["fixtures"] if item["kind"] == "whisper")
+    fixture = next(item for item in lock["fixtures"] if item["kind"] == "speech-recognition")
     return asyncio.run(
         candidate._verify_cpu_speech_engine(
             _cpu_engine(tmp_path, content_id),
             cast(Any, worker),
-            source_path=tmp_path / "whisper",
+            source_path=tmp_path / "speech-recognition",
             fixture=fixture,
         )
     ), fixture
@@ -594,7 +799,7 @@ def test_cpu_pass_records_mini_on_the_cpu_without_the_transcript(tmp_path: Path)
     assert worker.probe_options == [{"preferGpu": True, "content": "cpu"}]
     assert worker.run_options == [
         {
-            "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
+            "maxDurationMs": candidate.SPEECH_CANDIDATE_MAX_DURATION_MS,
             "preferGpu": True,
             "allowCpuFallback": True,
             "content": "cpu",

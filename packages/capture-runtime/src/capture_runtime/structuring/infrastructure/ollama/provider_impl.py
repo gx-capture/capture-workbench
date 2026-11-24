@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
+from contextlib import AsyncExitStack
+from pathlib import Path
 
 import httpx
 
 from capture_runtime.clock import Clock
-from capture_runtime.contracts import CaptureEngine, RawCapture
+from capture_runtime.contracts import CaptureDocument, CaptureEngine, RawCapture
 from capture_runtime.structuring.infrastructure.constants import (
     DEFAULT_STRUCTURING_NUM_CTX,
     DEFAULT_STRUCTURING_NUM_PREDICT,
@@ -18,11 +21,24 @@ from capture_runtime.structuring.infrastructure.coordinator import (
     StructuringCoordinator,
     StructuringGenerationRequest,
 )
-from capture_runtime.structuring.infrastructure.model_catalog import model_option
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    MODEL_OPTIONS,
+    legacy_profile_id,
+    model_option,
+)
+from capture_runtime.structuring.infrastructure.ollama.device_policy import corrected_device_policy
+from capture_runtime.structuring.infrastructure.ollama.device_verification import (
+    DeviceExecution,
+    verify_device_execution,
+)
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     RuntimeUnavailableError,
 )
+
+_RUNNER_EVIDENCE_TIMEOUT_SECONDS = 0.25
+_RUNNER_EVIDENCE_POLL_SECONDS = 0.02
+_LOG = logging.getLogger(__name__)
 
 _QWEN_0_8B_PROFILE_ID = model_option("qwen3.5-0.8b-v1").profile_id
 
@@ -52,7 +68,7 @@ class OllamaCaptureStructuringProvider:
             single_segment_profile_id=_QWEN_0_8B_PROFILE_ID,
         )
         self._engine_identity: CaptureEngine | None = None
-        self._structure_lock = asyncio.Lock()
+        self.device_execution: DeviceExecution | None = None
 
     @property
     def engine_identity(self) -> CaptureEngine | None:
@@ -65,12 +81,15 @@ class OllamaCaptureStructuringProvider:
         target_language: str | None,
         cancel_event: asyncio.Event,
     ) -> object:
-        async with self._structure_lock:
-            return await self._structure_exclusive(
+        async with self._lifecycle.lease(cancel_event):
+            document = await self._structure_exclusive(
                 raw,
                 target_language=target_language,
                 cancel_event=cancel_event,
             )
+
+        self._engine_identity = document.structuring_engine
+        return document
 
     async def _structure_exclusive(
         self,
@@ -78,29 +97,68 @@ class OllamaCaptureStructuringProvider:
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
-    ) -> object:
-        profile_id = self._selected_profile_id()
-        self._lifecycle.start()
+    ) -> CaptureDocument:
+        model_name = self._selected_model_name()
+        profile_id = _planning_profile_id(model_name)
+        self.device_execution = None
+        self._engine_identity = None
+        starting = asyncio.create_task(
+            asyncio.to_thread(self._lifecycle.start, cancel_event=cancel_event)
+        )
         try:
-            engine_identity = await self._wait_until_ready(cancel_event, profile_id)
-            self._engine_identity = engine_identity
-            async with httpx.AsyncClient(
-                base_url=self._lifecycle.host_url,
-                timeout=self._timeout,
-                follow_redirects=False,
-                trust_env=False,
-                transport=self._transport,
-            ) as client:
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                cancel_event.set()
+                await asyncio.gather(starting, return_exceptions=True)
+                raise
+            engine_identity = await self._wait_until_ready(cancel_event, model_name)
+            async with AsyncExitStack() as clients:
+                client = await clients.enter_async_context(self._generation_client())
+                first_batch = True
 
                 async def generate(request: StructuringGenerationRequest) -> str:
-                    return await self._generate_batch(
-                        client,
-                        request,
-                        cancel_event=cancel_event,
-                        profile_id=profile_id,
+                    nonlocal client, first_batch
+                    revision = self._load_revision()
+                    candidate = await self._generate_batch(
+                        client, request, cancel_event=cancel_event, model_name=model_name
                     )
+                    execution = await self._observe_load(revision, first_batch, cancel_event)
+                    if first_batch:
+                        first_batch = False
+                        policy = self._lifecycle.device_policy
+                        parser = self._lifecycle.log_parser
+                        if execution and execution.state == "mismatch" and policy and parser:
+                            correction = corrected_device_policy(
+                                policy, parser.discovered_devices()
+                            )
+                            if correction is not None:
+                                await client.aclose()
+                                await self._lifecycle.restart_for_device(correction, cancel_event)
+                                if await self._wait_until_ready(cancel_event, model_name) != (
+                                    engine_identity
+                                ):
+                                    raise RuntimeUnavailableError(
+                                        "isolated Ollama model identity changed after restart"
+                                    )
+                                client = await clients.enter_async_context(
+                                    self._generation_client()
+                                )
+                                revision = self._load_revision()
+                                candidate = await self._generate_batch(
+                                    client,
+                                    request,
+                                    cancel_event=cancel_event,
+                                    model_name=model_name,
+                                )
+                                execution = await self._observe_load(revision, True, cancel_event)
+                        self.device_execution = execution
+                    elif execution is not None:
+                        self._record_reload(execution)
+                    self._require_owned_process(str(client.base_url).rstrip("/"))
+                    return candidate
 
-                return await self._coordinator.structure(
+                document = await self._coordinator.structure(
                     raw,
                     target_language=target_language,
                     cancel_event=cancel_event,
@@ -109,11 +167,80 @@ class OllamaCaptureStructuringProvider:
                     profile_id=profile_id,
                     generate=generate,
                 )
+                execution = self.device_execution
+                if execution is not None and execution.observed_backend is not None:
+                    observed_identity = CaptureEngine(
+                        engine=engine_identity.engine,
+                        model=engine_identity.model,
+                        digest=engine_identity.digest,
+                        device=execution.observed_backend,
+                        device_name=(execution.observed_description or "").strip() or None,
+                    )
+                    document = document.model_copy(update={"structuring_engine": observed_identity})
+                return document
         finally:
             # The process owns native model allocations beyond one request.
             # End the bounded per-document lease before another extractor,
             # especially speech recognition CPU fallback, needs those resources.
             self._lifecycle.stop()
+
+    def _generation_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self._lifecycle.host_url,
+            timeout=self._timeout,
+            follow_redirects=False,
+            trust_env=False,
+            transport=self._transport,
+        )
+
+    def _load_revision(self) -> int:
+        parser = self._lifecycle.log_parser
+        return parser.load_revision() if parser is not None else 0
+
+    async def _observe_load(
+        self, revision: int, first_batch: bool, cancel_event: asyncio.Event
+    ) -> DeviceExecution | None:
+        parser = self._lifecycle.log_parser
+        policy = self._lifecycle.device_policy
+        if parser is None or policy is None:
+            return None
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        if not first_batch and parser.load_revision() <= revision:
+            return None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _RUNNER_EVIDENCE_TIMEOUT_SECONDS
+        execution = None
+        while True:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            if parser.load_revision() > revision:
+                execution = verify_device_execution(
+                    policy, parser.latest_load(), parser.discovered_devices()
+                )
+                if execution.observed_backend is not None:
+                    return execution
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                if execution is None and first_batch:
+                    return verify_device_execution(policy, (), ())
+                return execution
+            await asyncio.sleep(min(_RUNNER_EVIDENCE_POLL_SECONDS, remaining))
+
+    def _record_reload(self, execution: DeviceExecution) -> None:
+        previous = self.device_execution
+        if previous is None or previous.observed_backend is None:
+            self.device_execution = execution
+        elif execution.observed_backend is not None and (
+            previous.observed_backend,
+            previous.observed_description,
+            previous.observed_pci_bus,
+        ) != (
+            execution.observed_backend,
+            execution.observed_description,
+            execution.observed_pci_bus,
+        ):
+            _LOG.warning("Owned Ollama model reload disagreed with the document device")
 
     async def _generate_batch(
         self,
@@ -121,14 +248,14 @@ class OllamaCaptureStructuringProvider:
         generation_request: StructuringGenerationRequest,
         *,
         cancel_event: asyncio.Event,
-        profile_id: str,
+        model_name: str,
     ) -> str:
         self._require_owned_process(str(client.base_url).rstrip("/"))
         request = asyncio.create_task(
             client.post(
                 "/api/generate",
                 json={
-                    "model": profile_id,
+                    "model": model_name,
                     "stream": False,
                     "think": False,
                     # Keep the selected model resident for the bounded
@@ -176,7 +303,7 @@ class OllamaCaptureStructuringProvider:
                 await asyncio.gather(request, return_exceptions=True)
 
     async def _wait_until_ready(
-        self, cancel_event: asyncio.Event, profile_id: str
+        self, cancel_event: asyncio.Event, model_name: str
     ) -> CaptureEngine:
         deadline = asyncio.get_running_loop().time() + 30
         async with httpx.AsyncClient(
@@ -198,8 +325,8 @@ class OllamaCaptureStructuringProvider:
                         for model in models:
                             name = str(model.get("name") or model.get("model") or "")
                             if name not in {
-                                profile_id,
-                                f"{profile_id}:latest",
+                                model_name,
+                                f"{model_name}:latest",
                             }:
                                 continue
                             digest = str(model.get("digest") or "")
@@ -211,16 +338,22 @@ class OllamaCaptureStructuringProvider:
                                 )
                             return CaptureEngine(
                                 engine="ollama",
-                                model=profile_id,
+                                model=model_name,
                                 digest=digest,
-                                device="local",
                             )
                 except httpx.HTTPError:
                     pass
                 await asyncio.sleep(0.2)
         raise RuntimeUnavailableError("isolated Ollama profile did not become ready")
 
-    def _selected_profile_id(self) -> str:
+    def _selected_model_name(self) -> str:
+        """Return the Ollama model the verified selection or install marker names.
+
+        A selection or marker written before profile ids lost their consumer
+        prefix names the model under its old name; it is used only when it
+        matches the expected option and its digests.
+        """
+
         selection_reader = getattr(self._lifecycle, "active_model_selection", None)
         if not callable(selection_reader):
             return self._lifecycle.config.profile_id
@@ -233,7 +366,11 @@ class OllamaCaptureStructuringProvider:
             self._lifecycle.config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
         )
         if legacy_marker.is_file():
-            return self._lifecycle.config.profile_id
+            marker_profile = _verified_marker_profile_id(
+                legacy_marker, self._lifecycle.config.profile_id
+            )
+            if marker_profile is not None:
+                return marker_profile
         raise RuntimeUnavailableError("model_selection_required")
 
     def _require_owned_process(self, expected_url: str) -> None:
@@ -243,3 +380,37 @@ class OllamaCaptureStructuringProvider:
             raise RuntimeUnavailableError(
                 "isolated Ollama process stopped before provider response validation"
             )
+
+
+def _planning_profile_id(model_name: str) -> str:
+    """Plan batches for the option's current profile, also under its old model name."""
+
+    for option in MODEL_OPTIONS:
+        if model_name in {option.profile_id, legacy_profile_id(option)}:
+            return option.profile_id
+    return model_name
+
+
+def _verified_marker_profile_id(marker: Path, expected_profile_id: str) -> str | None:
+    """Return the marker's profile only when it records the expected option's digests."""
+
+    option = next(
+        (option for option in MODEL_OPTIONS if option.profile_id == expected_profile_id),
+        None,
+    )
+    if option is None:
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    profile_id = payload.get("profileId")
+    if (
+        profile_id in {option.profile_id, legacy_profile_id(option)}
+        and payload.get("baseModel") == option.model_reference
+        and payload.get("modelfileSha256") == option.profile_spec_sha256
+    ):
+        return str(profile_id)
+    return None

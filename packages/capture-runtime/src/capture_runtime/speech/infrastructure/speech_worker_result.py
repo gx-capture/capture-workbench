@@ -25,7 +25,7 @@ from capture_runtime._worker_payloads import (
     parse_engine_timings as _parse_engine_timings,
 )
 from capture_runtime._worker_payloads import (
-    parse_suggested_units as _parse_suggested_units,
+    parse_suggested_requirement_ids as _parse_suggested_requirement_ids,
 )
 from capture_runtime._worker_payloads import (
     parse_words as _parse_words,
@@ -33,7 +33,7 @@ from capture_runtime._worker_payloads import (
 from capture_runtime._worker_payloads import (
     permille_handler as _permille_handler,
 )
-from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerProcess
 
@@ -42,7 +42,7 @@ class _ProcessClient(Protocol):
     process: WorkerProcess
 
 
-def _parse_ocr_provenance(value: object) -> OcrProvenanceV3:
+def _parse_ocr_provenance(value: object) -> OcrProvenance:
     if not isinstance(value, dict):
         raise WorkerResultError("worker OCR provenance has unexpected fields")
     status = value.get("status")
@@ -64,7 +64,7 @@ def _parse_ocr_provenance(value: object) -> OcrProvenanceV3:
     if expected_fields is None or set(value) != expected_fields:
         raise WorkerResultError("worker OCR provenance has unexpected fields")
     try:
-        return OcrProvenanceV3.model_validate(value)
+        return OcrProvenance.model_validate(value)
     except Exception as error:
         raise WorkerResultError("worker OCR provenance is invalid") from error
 
@@ -72,7 +72,7 @@ def _parse_ocr_provenance(value: object) -> OcrProvenanceV3:
 def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
     fields = set(payload)
     if not {"segments", "provenance", "warnings"}.issubset(fields) or not fields.issubset(
-        {"segments", "provenance", "warnings", "pages", "executionProof", "suggestedUnits"}
+        {"segments", "provenance", "warnings", "pages", "executionProof", "suggestedRequirementIds"}
     ):
         raise WorkerResultError("worker run result has unexpected fields")
     raw_segments = payload["segments"]
@@ -118,7 +118,7 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         raise WorkerResultError("worker provenance is invalid")
     ocr_provenance = (
         _parse_ocr_provenance(provenance)
-        if provenance.get("engine") == "windowsml-ocr"
+        if provenance.get("engine") == "text-recognition"
         or provenance.get("status") in ("resolved", "unavailable")
         else None
     )
@@ -161,7 +161,9 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         device=_string(device, "worker device"),
         warnings=parsed_warnings,
         ocr_provenance=ocr_provenance,
-        suggested_units=_parse_suggested_units(payload.get("suggestedUnits")),
+        suggested_requirement_ids=_parse_suggested_requirement_ids(
+            payload.get("suggestedRequirementIds")
+        ),
         elapsed_ms=elapsed_ms,
         stage_ms=stage_ms,
     )

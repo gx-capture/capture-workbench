@@ -22,10 +22,10 @@ describe('RuntimeStatusStore', () => {
           ...(status === 'installable' ? { ocrCompute: signal(null) } : {}),
           getRequirements: vi.fn(() => of([
             {
-              requirementId: 'windowsml-ocr',
-              displayName: 'WindowsML OCR',
+              requirementId: 'text-recognition',
+              displayName: 'Text recognition',
               status,
-              kind: 'engine',
+              kind: 'text-recognition',
               requiredFor: ['capture'],
               installStrategy: status === 'installable' ? 'runtime-catalog' : 'none',
               ...(status === 'unavailable' ? { detail: 'No catalog artifact is available.' } : {}),
@@ -58,18 +58,18 @@ describe('RuntimeStatusStore', () => {
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([
         {
-          requirementId: 'windowsml-ocr',
-          displayName: 'WindowsML OCR',
+          requirementId: 'text-recognition',
+          displayName: 'Text recognition',
           status: 'installable',
-          kind: 'engine',
+          kind: 'text-recognition',
           requiredFor: ['capture'],
           installStrategy: 'runtime-catalog',
         },
         {
-          requirementId: 'ollama-runtime',
+          requirementId: 'structuring-runtime',
           displayName: 'Ollama',
           status: 'missing',
-          kind: 'runtime',
+          kind: 'structuring-runtime',
           requiredFor: ['structuring'],
           installStrategy: 'winget',
         },
@@ -80,7 +80,7 @@ describe('RuntimeStatusStore', () => {
 
     expect(store.state()).toBe('ready');
     expect(TestBed.inject(RecognitionFeaturesStore).missingFor('ocr').map((item) => item.requirementId)).toEqual([
-      'windowsml-ocr',
+      'text-recognition',
     ]);
   });
 
@@ -173,9 +173,9 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       service: 'capture-runtime',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,

@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { verifyContractImpact } from './classify-release-contract.ts';
+import { FULL_RELEASE_MANIFEST_V2 } from './release/full-release-manifest.ts';
 import { assertPublishableRuntimeReleaseFile } from './release/github-release-support.ts';
 
 type JsonRecord = Record<string, unknown>;
@@ -221,7 +222,7 @@ async function main(): Promise<void> {
     },
   );
   const manifest = {
-    schemaVersion: '1',
+    schemaVersion: '2',
     status: 'released',
     candidateId: identity.candidateId,
     sourceCommit: identity.sourceCommit,
@@ -239,7 +240,7 @@ async function main(): Promise<void> {
         `${right.registry}:${String(right.name)}`,
       ),
     ),
-    runtimeAssets: await assetRecords(candidateRoot),
+    releaseAssets: await assetRecords(candidateRoot),
     contractClassification: {
       classification: contractImpact.classification,
       baselineRelease: contractImpact.baselineRelease,
@@ -254,6 +255,8 @@ async function main(): Promise<void> {
     },
   };
   const output = resolve(values.get('--output')!);
+  if (basename(output) !== FULL_RELEASE_MANIFEST_V2)
+    throw new Error(`Full release manifests must be written as ${FULL_RELEASE_MANIFEST_V2}.`);
   const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(output, bytes);
   await writeFile(

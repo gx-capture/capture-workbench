@@ -179,7 +179,6 @@ class ExternalOllamaCaptureStructuringProvider:
                         engine="ollama",
                         model=self._config.model,
                         digest=digest,
-                        device="remote",
                     )
                 await asyncio.sleep(0.2)
         raise RuntimeUnavailableError("configured external Ollama model did not become ready")

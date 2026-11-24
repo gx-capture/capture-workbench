@@ -1,5 +1,5 @@
 // Selects recognition requirements and model options for the desktop app.
-import type { CaptureRequirementId, RuntimeModelOption, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
+import type { CaptureRequirementId, StructuringModelOption, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { isRecordingMediaType } from './capture-media-types';
 
@@ -9,25 +9,26 @@ export type RecognitionFeature = 'ocr' | 'asr' | 'asr.speakers';
 export const FEATURE_REQUIREMENTS: Readonly<
   Record<RecognitionFeature, readonly CaptureRequirementId[]>
 > = {
-  ocr: ['windowsml-ocr'],
+  ocr: ['text-recognition'],
   asr: ['speech-recognition'],
   'asr.speakers': ['speaker-diarization'],
 };
 
 /** User-facing recognition requirements shown in settings and cards. */
 export const RECOGNITION_REQUIREMENTS: readonly CaptureRequirementId[] = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
   'vertical-japanese-reader',
 ];
 
 export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
-  ['windowsml-ocr', 0],
+  ['text-recognition', 0],
   ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
-  ['ollama-runtime', 4],
+  ['structuring-runtime', 4],
+  ['structuring-model', 5],
 ]);
 
 /**
@@ -117,15 +118,15 @@ export function selectInstallableRequirements(
 
 /** Indicates whether an active model option must be selected by the user. */
 export function modelSelectionRequired(
-  options: readonly RuntimeModelOption[],
+  options: readonly StructuringModelOption[],
 ): boolean {
   return options.length > 0 && !options.some((option) => option.status === 'active');
 }
 
 /** Returns the active model option, if the catalog has one. */
 export function activeModelOption(
-  options: readonly RuntimeModelOption[],
-): RuntimeModelOption | null {
+  options: readonly StructuringModelOption[],
+): StructuringModelOption | null {
   return options.find((option) => option.status === 'active') ?? null;
 }
 
@@ -135,7 +136,7 @@ const SPEECH_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
 ]);
 
 const OCR_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
-  'windowsml-ocr',
+  'text-recognition',
   'vertical-japanese-reader',
 ]);
 

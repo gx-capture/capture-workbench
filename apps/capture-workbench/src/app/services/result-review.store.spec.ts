@@ -3,9 +3,10 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap } from '@angular/router';
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
 import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
-import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
+import type { DesktopLibraryDetail, DesktopLibraryEdits, DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import {
@@ -43,18 +44,25 @@ describe('ResultReviewStore', () => {
     readonly sourceBytes?: ReturnType<typeof vi.fn>;
     readonly saveEdits?: ReturnType<typeof vi.fn>;
     readonly pdfOpen?: ReturnType<typeof vi.fn>;
+    readonly documents?: readonly DesktopLibrarySummary[];
   } = {}) {
     const paramMap$ = new BehaviorSubject(
       convertToParamMap({ id: options.id ?? DOC_ID }),
     );
     const queryParamMap$ = new BehaviorSubject(convertToParamMap({ from: options.from ?? '' }));
     const library = {
+      allDocuments: signal<readonly DesktopLibrarySummary[]>(options.documents ?? []),
       get: options.get ?? vi.fn(() => of(makeDetail())),
       saveEdits: options.saveEdits ?? vi.fn((_id: string, edits: DesktopLibraryEdits) => of(edits)),
       sourceBytes: options.sourceBytes ?? vi.fn(() => of(new ArrayBuffer(8))),
     };
     const runtime = {
       started: signal(true),
+    };
+    const capture = {
+      busyIds: signal<ReadonlySet<string>>(new Set()),
+      cancellingIds: signal<ReadonlySet<string>>(new Set()),
+      unstoredOutcomes: signal<ReadonlyMap<string, string | null>>(new Map()),
     };
     const defaultHandle: PdfDocumentHandle = {
       pageCount: 2,
@@ -79,14 +87,153 @@ describe('ResultReviewStore', () => {
         { provide: LibraryStore, useValue: library },
         { provide: DesktopLibraryService, useValue: { sourceBytes: library.sourceBytes } },
         { provide: DesktopRuntimeClientService, useValue: runtime },
+        { provide: DesktopCaptureService, useValue: capture },
         { provide: PdfPageRenderer, useValue: pdfRenderer },
       ],
     });
 
     const store = TestBed.inject(ResultReviewStore);
     TestBed.tick();
-    return { store, library, paramMap$, queryParamMap$, pdfRenderer, defaultHandle };
+    return { store, library, capture, paramMap$, queryParamMap$, pdfRenderer, defaultHandle };
   }
+
+  it.each<[string, Partial<DesktopLibraryDetail>, string]>([
+    ['left processing by another run, link and all', { status: 'processing', captureId: 'capture-1' }, '已中斷'],
+    ['waiting with an earlier version’s raw result', { status: 'queued', hasRaw: true }, '已中斷'],
+    ['an earlier version’s failed cleanup after a cancel', {
+      status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage: 'cancelled',
+    }, '已取消'],
+  ])('shows the status of a document %s as its queue row does', (_case, stored, text) => {
+    const { store } = setup({ get: vi.fn(() => of(makeDetail({ hasRaw: false, raw: undefined, ...stored }))) });
+
+    expect(store.statusText()).toBe(text);
+    expect(store.details()?.statusLabel).toBe(text);
+  });
+
+  it('shows processing, then cancelling, while an attempt of this run owns the document', () => {
+    const { store, capture } = setup({
+      get: vi.fn(() => of(makeDetail({ status: 'processing', captureId: 'capture-1', hasRaw: false, raw: undefined }))),
+    });
+    capture.busyIds.set(new Set([DOC_ID]));
+    expect(store.statusText()).toBe('處理中');
+    capture.cancellingIds.set(new Set([DOC_ID]));
+    expect(store.statusText()).toBe('取消中');
+  });
+
+  describe('a change of the open document committed to the library', () => {
+    const raw = { sourceText: 'recognized', segments: [
+      { segmentId: 'p1', order: 0, locator: { kind: 'page', page: 1 }, text: 'recognized' },
+    ] } as unknown as RawCapture;
+    const running = makeDetail({ status: 'processing', stage: 'extracting', captureId: 'capture-1', hasRaw: false });
+    const doneSummary = makeDetail({ status: 'awaiting_confirmation', stage: 'awaiting_structuring', updatedAtMs: 3_000 });
+    const done = { ...doneSummary, raw };
+    /** The row the list shows: what `LibraryStore.applyDocumentState` puts there for a write. */
+    const listed = (detail: DesktopLibraryDetail): DesktopLibrarySummary =>
+      detail === done ? doneSummary : { ...detail };
+    /** The resource publishes a streamed value after a microtask. */
+    const settle = async (): Promise<void> => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      TestBed.tick();
+    };
+
+    it('is read again when the capture ends while the view is open, without navigation', () => {
+      const get = vi.fn().mockReturnValueOnce(of(running)).mockReturnValue(of(done));
+      const { store, library, capture } = setup({ get, documents: [listed(running)] });
+      capture.busyIds.set(new Set([DOC_ID]));
+      expect(store.statusText()).toBe('處理中');
+      expect(store.hasResult()).toBe(false);
+
+      // The terminal write is in the list at once; then the attempt ends.
+      library.allDocuments.set([listed(done)]);
+      capture.busyIds.set(new Set());
+      TestBed.tick();
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(store.hasResult()).toBe(true);
+      expect(store.currentPage()?.text).toBe('recognized');
+      expect(store.statusText()).toBe('完成');
+      expect(store.loading()).toBe(false);
+    });
+
+    it('shows the committed status, never interrupted, while that read is answered, and keeps the view', async () => {
+      const reread = new Subject<DesktopLibraryDetail>();
+      const get = vi.fn().mockReturnValueOnce(of(running)).mockReturnValueOnce(reread);
+      const { store, library, capture } = setup({ get, documents: [listed(running)] });
+      capture.busyIds.set(new Set([DOC_ID]));
+
+      library.allDocuments.set([listed(done)]);
+      capture.busyIds.set(new Set());
+      TestBed.tick();
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(store.statusText()).toBe('完成');
+      // The page is not replaced by the loading text while the detail is read again.
+      expect(store.loading()).toBe(false);
+      expect(store.detail()?.status).toBe('processing');
+      reread.next(done);
+      reread.complete();
+      await settle();
+      expect(store.hasResult()).toBe(true);
+    });
+
+    it('is read again once the first read answers when the change came while it was in flight', async () => {
+      const first = new Subject<DesktopLibraryDetail>();
+      const get = vi.fn().mockReturnValueOnce(first).mockReturnValue(of(done));
+      const { store, library } = setup({ get, documents: [listed(running)] });
+
+      library.allDocuments.set([listed(done)]);
+      TestBed.tick();
+      first.next(running);
+      first.complete();
+      await settle();
+      await settle();
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(store.hasResult()).toBe(true);
+    });
+
+    it('is not read again when the list is reloaded without a change of the document', () => {
+      const get = vi.fn(() => of(running));
+      const { library } = setup({ get, documents: [listed(running)] });
+
+      library.allDocuments.set([{ ...listed(running) }]);
+      TestBed.tick();
+
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.each<[string, Partial<DesktopLibraryDetail>, string | null]>([
+    ['its stored error', { status: 'failed', errorMessage: 'The runtime stopped.' }, 'The runtime stopped.'],
+    ['nothing for an earlier version’s recovery row', { status: 'recovery_required', recoveryCode: 'capture_recovery_required' }, null],
+  ])('says why a document holds no result with %s', (_case, stored, reason) => {
+    const { store } = setup({ get: vi.fn(() => of(makeDetail({ hasRaw: false, raw: undefined, ...stored }))) });
+
+    expect(store.noResultReason()).toBe(reason);
+  });
+
+  it('says why this run could not end the capture of a document, as its queue row does', () => {
+    const { store, capture } = setup({
+      get: vi.fn(() => of(makeDetail({ status: 'processing', captureId: 'capture-1', hasRaw: false, raw: undefined }))),
+    });
+    capture.unstoredOutcomes.set(new Map([[DOC_ID, 'the disk is full']]));
+    expect(store.statusText()).toBe('已中斷');
+    expect(store.noResultReason()).toBe('the disk is full');
+
+    capture.unstoredOutcomes.set(new Map());
+    expect(store.noResultReason()).toBeNull();
+  });
+
+  it.each<[string, Partial<DesktopLibraryDetail>, string, string | null]>([
+    ['cancelled', { status: 'canceled', stage: 'cancelled' }, '已取消', null],
+    ['failed as stored', { status: 'failed', errorCode: 'capture_failed', errorMessage: 'The runtime stopped.' },
+      '需要處理', 'The runtime stopped.'],
+  ])('takes the status and the reason of a document shown %s from its row, not from this run’s reason', (_case, stored, text, reason) => {
+    const { store, capture } = setup({ get: vi.fn(() => of(makeDetail({ hasRaw: false, raw: undefined, ...stored }))) });
+    capture.unstoredOutcomes.set(new Map([[DOC_ID, 'the disk is full']]));
+
+    expect([store.statusText(), store.noResultReason()]).toEqual([text, reason]);
+  });
 
   it('returns a history origin to history and ignores unknown origins', () => {
     const { store, queryParamMap$ } = setup({ from: 'history' });

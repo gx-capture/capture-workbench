@@ -1,11 +1,17 @@
 # Capture Workbench release runbook
 
-Current as of 2026-11-15. This is the operational procedure for publishing a
+Current as of 2026-11-24. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
 ## Current state
 
+- **0.11.0** (minor, changes the contract) is being prepared on the
+  integration branch `feat/contract-0.11.0`. Its release conditions, the
+  issues it closes and the remaining steps are tracked in
+  [#491](https://github.com/gx-capture/capture-workbench/issues/491); it is
+  published only after the packaged acceptance
+  ([#163](https://github.com/gx-capture/capture-workbench/issues/163)) passes.
 - **0.9.0** is the latest published release (2026-11-03): Route A first, then
   the full route (release candidate 41649253900, consumer gates 41659676388,
   release promotion 41666190542), so `v0.9.0` carries
@@ -34,7 +40,7 @@ source of truth for inputs.
   its hash, and only a contract change moves it.
 - **Open**: the licence lineage of the NDLOCR-Lite line detector's weights,
   delivered only in the optional `vertical-japanese-reader` unit; see
-  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md` ([#248](https://github.com/gx-capture/capture-workbench/issues/248)).
+  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md` ([#490](https://github.com/gx-capture/capture-workbench/issues/490)).
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
@@ -74,7 +80,7 @@ source of truth for inputs.
   capture document schema unchanged (`5452631c…`). Clients require the same
   runtime minor, so 0.9.x clients refuse a 0.10.0 runtime at the handshake.
   `capture-sidecar-launcher` 0.10.0 removes public API (see the changelog).
-- Model-source Commit A `3834db2` (annotated tag
+- Model-source snapshot `3834db2` (annotated tag
   `capture-runtime-model-sources-v0.10.0`, pushed before the candidates). The
   lock pins the same models as 0.9.0, with the same approval record. OCR
   profile `capture-workbench-ocr-8530e3130b89f10b`.
@@ -166,7 +172,7 @@ source of truth for inputs.
   and `downloadedBytes`, `CaptureOperationV2.pagesTotal`, `pagesDone`,
   `durationMs` and `coveredUntilMs`), besides the handshake's minor and
   contract-set checks. Capture document schema unchanged (`5452631c…`).
-- Model-source Commit A `e2c41ae` (annotated tag
+- Model-source snapshot `e2c41ae` (annotated tag
   `capture-runtime-model-sources-v0.9.0`, pushed before the candidates). The
   lock pins the same models as 0.8.0, with the same approval record. OCR
   profile `capture-workbench-ocr-8a80b428fa4968ac`.
@@ -188,7 +194,7 @@ source of truth for inputs.
   the speech worker with `ja` covered 87.2% of the official script in order,
   against 77.9% with the default Chinese, in 350 s instead of 385 s.
 - Breaking for clients: contract-set SHA-256 `664b2b32…` (0.7.x: `60c62267…`).
-  Capture document schema unchanged (`5452631c…`). Model-source Commit A
+  Capture document schema unchanged (`5452631c…`). Model-source snapshot
   `b4b62e3` (annotated tag `capture-runtime-model-sources-v0.8.0`). The lock
   pins the same models as 0.7.2, with the same approval record. OCR profile
   `capture-workbench-ocr-cea24c3eb2bcce57`.
@@ -213,9 +219,9 @@ source of truth for inputs.
 - New host settings: `CAPTURE_SPEECH_WORKER_IDLE_SECONDS` (300) and
   `CAPTURE_OCR_WORKER_IDLE_SECONDS` (120); 0 restores a worker per capture.
   The desktop app writes `speech-gpu-settings.json` and passes
-  `CAPTURE_WHISPER_PREFER_GPU`.
+  the speech GPU preference to the runtime.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
-  capture document schema unchanged (`5452631c…`). Model-source Commit A
+  capture document schema unchanged (`5452631c…`). Model-source snapshot
   `954f19f` (annotated tag `capture-runtime-model-sources-v0.7.2`). The lock
   pins the same models as 0.7.1; its approval record is the owner's of
   2026-10-25 for the M4A private fixture (PR #108). OCR profile
@@ -254,13 +260,13 @@ source of truth for inputs.
   - Locally built 0.7.1 workers, run through the runtime's `WorkerClient` as a
     capture with speakers does, load and transcribe instead of hanging.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
-  capture document schema unchanged (`5452631c…`). Model-source Commit A
+  capture document schema unchanged (`5452631c…`). Model-source snapshot
   `61c7ecd` (annotated tag `capture-runtime-model-sources-v0.7.1`). The lock
   pins the same models as 0.7.0, and its approval record is unchanged. OCR
   profile `capture-workbench-ocr-e012547f1f9da4da`.
 - Hosts: keep `CAPTURE_APP_DATA_DIR` to about 130 characters. The speech
   worker's longest DLL path is 78 characters below its install folder.
-- The `whisper-private-reference` expected output hash was still Whisper's in
+- The private speech reference fixture's expected output hash was still Whisper's in
   0.7.1. After the release it was frozen on the owner's 40-minute M4A interview,
   which replaced the missing MP3 (see the speech recognition decision); that
   change shipped in 0.7.2 (PR #108).
@@ -286,7 +292,7 @@ source of truth for inputs.
 - Breaking: contract-set SHA-256 `60c62267…` (0.6.3: `fc8a994e…`). Consumers
   (Cert Prep; LAW's Java engine and AI service) change `whisper-primary` to
   `speech-recognition` with the version bump.
-- Model-source Commit A `d4b95bf` (annotated tag
+- Model-source snapshot `d4b95bf` (annotated tag
   `capture-runtime-model-sources-v0.7.0`). The lock (34 files, about 7.5 GB)
   was approved by the owner on 2026-10-25. OCR profile
   `capture-workbench-ocr-7680a930bb89b381`.
@@ -302,7 +308,7 @@ source of truth for inputs.
   The filter now ignores sounds shorter than 250 ms. Verified before release
   in a packaged Whisper engine installed through the runtime's install path.
 - Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
-  (`fc8a994e…`). Model-source Commit A `d16effb` (annotated tag
+  (`fc8a994e…`). Model-source snapshot `d16effb` (annotated tag
   `capture-runtime-model-sources-v0.6.3`). OCR profile
   `capture-workbench-ocr-1f5dcb0f58337c71`. Source commit `2a117cc` (merge
   of PR #97).
@@ -360,7 +366,7 @@ source of truth for inputs.
   - The window merging and the checkpoint rule run in the Whisper worker,
     so the runtime candidate rebuilt `capture-engine-whisper`.
 - Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
-  (`fc8a994e…`). Model-source Commit A `abe8b55` (annotated tag
+  (`fc8a994e…`). Model-source snapshot `abe8b55` (annotated tag
   `capture-runtime-model-sources-v0.6.2`). OCR profile
   `capture-workbench-ocr-5b63d123f524e4b1`. Source commit `251cdb9` (merge
   of PR #94).
@@ -391,7 +397,7 @@ source of truth for inputs.
   OCR no longer fails about half the time with `ocr_worker_failed` (PR #90).
 - Clients still require the exact runtime version, so consumers move to 0.6.1
   clients; the contract-set SHA-256 is unchanged (`fc8a994e…`). Model-source
-  Commit A `10524f9` (annotated tag `capture-runtime-model-sources-v0.6.1`).
+  source snapshot `10524f9` (annotated tag `capture-runtime-model-sources-v0.6.1`).
   OCR profile `capture-workbench-ocr-be5a35092b5cc3be`. Source commit
   `90b386f` (merge of PR #91).
 - Runs: package candidate 38558758781, runtime candidate 38559118888 (both
@@ -420,11 +426,11 @@ source of truth for inputs.
 - Incompatible with 0.5.x. Contract-set SHA-256
   `fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523`; the set no
   longer carries the release version, so the version bump did not change it.
-- Model-source Commit A `99bfd21` (annotated tag
+- Model-source snapshot `99bfd21` (annotated tag
   `capture-runtime-model-sources-v0.6.0`). OCR profile
   `capture-workbench-ocr-09c2568f8a130abe`: the profile still carries the
   release version, so its id changes with every release.
-- The lock has four units: `windowsml-ocr`, `speech-recognition` (until 0.6.3:
+- The lock has four units: the OCR unit, `speech-recognition` (until 0.6.3:
   `whisper-primary`), and the optional
   `speaker-diarization` (worker archive about 272 MB, models from
   `gx-capture/capture-model-sources`) and `vertical-japanese-reader` (models
@@ -475,11 +481,11 @@ person:
   `verify-speech-recognition-preflight` are the way to freeze the private
   speech fixture again when the private recording or the speech model changes.
   They accept only a model-source lock whose approval is `blocked` with the
-  single pending-freeze blocker (`PENDING_WHISPER_FREEZE_BLOCKER` in
-  `scripts/model_source_lock.py`) and whose `whisper` fixture has no expected
+  single pending-freeze blocker (`PENDING_SPEECH_FREEZE_BLOCKER` in
+  `scripts/model_source_lock.py`) and whose `speech-recognition` fixture has no expected
   model, device or output hash. On the approved lock they stop with an error;
   that is intended. Procedure: put the lock in that blocked state, run the
-  preflight twice with the private recording (`--private-whisper-fixture`),
+  preflight twice with the private recording (`--private-speech-fixture`),
   compare the two evidence files (they hold hashes, provenance and segment
   bounds, never the audio path or the transcript), then write the frozen
   model, device and normalized output hash into the lock and approve it.
@@ -491,7 +497,7 @@ From 0.10.0, a full release publishes 19 assets:
 - Runtime: `capture-runtime-x86_64-pc-windows-msvc.exe`, `capture-runtime-manifest.json`, `capture-document-v2.schema.json`.
 - Engines: `capture-engine-catalog.json`; each worker archive (the CUDA speech recognition worker is `capture-engine-speech-recognition-<version>-windows-x64.zip.001` and `.zip.002`, the CPU one is the single `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`); and the four `*-files.json` manifests (OCR, speech recognition, CPU speech recognition, diarization).
 - Desktop: `Capture.Workbench_<version>_x64-setup.exe`.
-- Evidence: `candidate-manifest.json`, `capture-runtime-candidate-manifest.json` (the Route A seed), `capture-contract-snapshot.json`, `capture-release-manifest-v1.json`, and `capture-release-manifest-v1.json.sha256`.
+- Evidence: `candidate-manifest.json`, `capture-runtime-candidate-manifest.json` (the Route A seed), `capture-contract-snapshot.json`, `capture-release-manifest-v2.json`, and `capture-release-manifest-v2.json.sha256`.
 
 GitHub also attaches the source zip and tarball. A release keeps the assets it was published with. `tools/resolve-capture-release.ts` checks the release-manifest bytes against `release-index/stable.json` `manifestSha256` and the attestation. That check holds whether or not the release also carries per-asset `.sha256` files.
 
@@ -499,26 +505,47 @@ Check a new release like this:
 
 - The executable and schema bytes match `capture-runtime-manifest.json` (`sha256`, `schemaSha256`).
 - Each engine archive, split part, and `*-files.json` matches
-  `capture-engine-catalog.json` (`sha256`, `parts[].sha256`,
-  `filesManifestSha256`). A requirement is either the legacy delivery
-  (`requirementId`, `artifacts`, `modelFiles`, `unavailableReason`) or
-  `requirementId` plus `contents` (each of `cuda` and `cpu` has those
-  delivery fields). A `contents` requirement counts as complete only when
-  each content is. Releases up to 0.9.0 published the legacy shape. From
-  0.10.0 `speech-recognition` must be `contents` with exactly `cuda` and
-  `cpu`:
-  - `build-release-artifacts` (`release.py`), the candidate verifier and the
-    local release consumer smoke fail a model-enabled release whose speech
-    requirement is the legacy delivery or has a single content.
-  - `build-release-artifacts`, the local release consumer smoke and the
-    practical installed check verify every content's worker archive, its
-    parts and its `*-files.json` manifest; the consumer smoke also requires
-    exactly those asset names. The real-media smoke only requires every
-    content of the embedded catalog to be complete.
-  - Re-checking a published legacy release still works: the practical
-    installed check and the real-media smoke read both shapes, and the tag
-    audit (`audit-release-tag.ts`), `resolve-capture-release.ts` and
-    `verify-release-candidate.ts` do not read the speech requirement's shape.
+  `capture-engine-catalog.json`, and a new model-enabled release's
+  `speech-recognition` requirement must use `contents` with exactly `cuda` and
+  `cpu`. Two checks verify this on the local release output, before
+  publication; neither reads the published GitHub assets:
+  - `capture-runtime:build-release-artifacts`
+    (`packages/capture-runtime/src/capture_runtime/release.py`) validates the
+    local engine directory: every delivery of every requirement is complete;
+    each worker archive and part matches the catalog's size and sha256 and
+    has exactly one matching `*-files.json`, equal to the archive's inner
+    manifest; and the directory holds no uncatalogued archive or manifest.
+  - `capture-runtime:local-release-consumer-smoke`
+    (`tools/local-release-consumer-smoke.ts`, catalog shapes tested in
+    `tools/release/engine-catalog-parts.test.ts`) verifies the local release
+    directory and then a copy downloaded from a loopback mirror: each worker
+    archive, its parts and its `*-files.json` manifest against the catalog
+    digests. It also requires exactly the canonical asset names: a missing or
+    extra file fails it.
+  - Both, and the model-candidate verifier, reject a legacy or single-content
+    speech requirement.
+  - Re-checking a published legacy release (up to 0.9.0) still works, and each
+    check that reads both shapes proves only its own part. The practical
+    installed OCR rehearsal (`practical-installed-ocr.ts`), given a runtime
+    release directory, checks its executable, manifest and schema and
+    verifies the bytes of the OCR worker the installer selected, not every
+    content's archive or manifest. The
+    real-media smoke only requires each delivery of the embedded catalog to be
+    complete (worker artifacts and model files listed, no unavailable reason);
+    it reads no archive bytes. The tag audit (`audit-release-tag.ts`),
+    `resolve-capture-release.ts` and `verify-release-candidate.ts` do not read
+    the speech requirement's shape. The model-candidate verifier
+    (`verify_release_model_candidate.py`) requires the two packs explicitly
+    and installs both (below).
+  - When the full local model check (`pnpm nx run
+    capture-runtime:verify-release-model-candidate`) is required: whenever
+    `release-model-source-lock.json`, an engine worker or a model delivery
+    differs from the last published release (compare those files and the
+    engine catalogue against the last release tag). 0.11.0 is such a release:
+    the text recognition sources were re-committed and re-pinned. Otherwise
+    the check is an optional diagnostic. Record its evidence file
+    (`dist/candidate/model-probe-evidence.json`: hashes and counts only)
+    beside the manual CPU transcription below.
   - `verify_release_model_candidate.py` compares model deliveries with the
     source lock: `cuda` must carry the lock's full speech files, and `cpu`
     exactly the subset that `cpu_speech_model_delivery` in `model_source_lock.py` derives,
@@ -543,11 +570,18 @@ Check a new release like this:
     `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The ambient-environment
     check in `release-candidate.yml` rejects any
     `CAPTURE_SPEECH_RECOGNITION_*` variable.
-- Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
-- That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
+- Every runtime, engine, and desktop asset matches `releaseAssets` in `capture-release-manifest-v2.json` (size and SHA-256). Published v1 releases keep their original asset list and bytes.
+- That manifest's digest is recorded in `capture-release-manifest-v2.json.sha256` and `release-index/stable.json` `manifestSha256`.
 
-For local checks, the application-level journey with real engines is
-`pnpm nx run capture-workbench-e2e:smoke-real-engines` on the dev server; a
+For local checks, the application-level journeys with real engines run on the
+dev server: `pnpm nx run capture-workbench-e2e:smoke-real-engines-installation` on an empty app data after a change to
+installation, the engine catalog, a worker or a model delivery, and before a
+release; `pnpm nx run capture-workbench-e2e:smoke-real-engines-execution` on the app data an installation journey of
+the same build left, for every runtime or UI fix and before a release (it
+checks that the installed engines match this build and never installs). A
+change to code or data that a worker packages changes that worker's archive,
+so the execution journey then needs a new installation journey first; other
+runtime changes leave the archives byte-identical (#478). A
 Desktop App run is only for WebView2 behaviour, native dialogs, drag and drop of
 native paths, the installer, process cleanup on exit and pixel baselines.
 
@@ -575,8 +609,8 @@ Candidate checksums stay inside the candidate artifact and are not release asset
    (Python `zipfile` over a range-reading file object, on the blob URL that
    `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to). Then run the
    manual `cpu` speech pack transcription against this runtime candidate and
-   record it (see "Two speech recognition packs" under
-   "Published through Route A: 0.10.0").
+   record the runtime candidate ID and digest, installed `cpu` content, `tea-asr-1.1-mini` / `cpu` provenance, non-empty output, ordered segment count and elapsed time (see "Two speech recognition packs" under
+   "Published through Route A: 0.10.0"). Record this manual evidence for every release that ships the CPU speech pack. When the full local model check is required, record its evidence as well.
 3. Route A: dispatch `package-promote.yml`, then `runtime-promote.yml`. The
    runtime promotion requires a successful `workflow_dispatch` package promotion
    on `main` whose commit contains the candidate source.
@@ -610,7 +644,7 @@ manifest.
   classification: the output is `no-impact` when `current-contract-set-sha256`
   matches, else `manual-review`.
 - `mode: stable` (gate before an app release): the tag `stable.json` names. It
-  checks `capture-release-manifest-v1.json` against `stable.json`'s
+  checks the v1 or v2 full release manifest named by `stable.json`'s `manifestAssetName` against its
   `manifestSha256`, verifies it against `_publish-github-release.yml`, and takes
   `contract_classification` from the manifest's
   `contractClassification.classification` and `contract_set_sha256` from the
@@ -687,30 +721,49 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   move only the two `@gx-capture` lock entries (integrity and tarball from
   GitHub Packages) and verify with `pnpm install --frozen-lockfile`.
 - A version bump needs a new model-source snapshot before the lock can follow:
-  set the version in `scripts/generate_commit_a_fixtures.py`, regenerate, commit
-  only `model-sources/commit-a/` (Commit A), push it with the annotated tag
+  first set the lock's `releaseVersion` and every requirement's
+  `artifactVersion` to the new version by hand (`release-version-sync` never
+  rewrites the lock, `repin-text-recognition` keeps both, and `validate`
+  rejects any that differ from `release/version.json`), then
+  run `scripts/generate_text_recognition_sources.py` after synchronizing the release version, then commit
+  only `model-sources/text-recognition/` (source snapshot), push it with the annotated tag
   `capture-runtime-model-sources-v<version>`, then put its SHA in
-  `COMMIT_A_SHA` and the lock, recompute the digests and byte counts of the
-  first-party files from the committed bytes (the NOTICE names the version, so
-  its size follows the version string's length), and copy `commit-a/model/pipeline.json` to
-  `src/capture_runtime/assets/ocr-profile.json`. The lock's approval record
+  `TEXT_RECOGNITION_SOURCE_COMMIT`, then run `scripts/model_source_lock.py repin-text-recognition` to recompute the digests and byte counts of the
+  first-party files from the committed bytes (`pipeline.json` and the
+  provenance record the release version), and copy `text-recognition/model/pipeline.json` to
+  `src/capture_runtime/assets/ocr-profile.json` (from 0.11.0 its profile id
+  reads `ocr-<16 hex>`, e.g. `ocr-c3a409ecfd46b9ab`). The lock's approval record
   changes only with the owner's consent.
-- Version management has two stages: ordinary source/tests reference a scoped
-  owner, then code updates the explicit owner/native metadata list. Preview with
-  `pnpm nx run capture-tools:release-version-plan --args="--version <version>"` and apply
-  with `pnpm nx run capture-tools:release-version-sync --args="--version <version>"`.
-  `release/version.json` is the release intent; package metadata and packaged
-  Python constants are explicit mirrors. The updater never scans/replaces the
-  tree, rewrites locks, or approves model provenance and contract hashes.
-  Its `followUp` lists package-manager lock refresh, model-source approval and
-  existing contract/engine/profile generators. After those steps, run
-  `pnpm nx run capture-tools:release-version-check`; this validates source,
-  generated identities, local Cargo/uv lock versions and the existing inventory.
-  Passing this check is not candidate publication or installed acceptance.
-  Keep negative versions and historical byte/digest evidence independent;
-  ordinary current-version fixtures reference the scoped shared constant.
+- Version management: preview with
+  `pnpm nx run capture-tools:release-version-plan --args="--version <version>"`
+  and apply with
+  `pnpm nx run capture-tools:release-version-sync --args="--version <version>"`
+  (`release/version.json` is the release intent). The updater never rewrites
+  locks or approves model provenance and contract hashes. When the version
+  changes, its `followUp` lists the steps that remain, in this order:
+  1. Refresh the Python and Cargo locks with their package managers,
+     keeping external dependency resolutions.
+  2. Prepare and verify the model-source snapshot and lock through the
+     existing model approval workflow (the snapshot bullet above); never
+     rewrite approval or provenance.
+  3. Run `pnpm nx run capture-runtime:generate-contracts` and the existing
+     engine/profile generators for the selected source lock. The placeholder
+     catalog `src/capture_runtime/assets/engine-catalog.json` comes from
+     `uv run python scripts/generate_engine_catalog.py --development-stub
+     --output src/capture_runtime/assets/engine-catalog.json` (in
+     `packages/capture-runtime`).
+  4. Recompute and review the contract and receipt identities from canonical
+     bytes, then run `pnpm nx run capture-tools:release-version-check`.
+
+  The check verifies the version owners and derived declarations, the
+  generated versions and identities, the local Cargo and uv lock versions and
+  the release inventory; it fails on a mismatch and otherwise prints one
+  success line. Passing it is not candidate publication or installed
+  acceptance. Keep negative versions and historical byte/digest evidence
+  independent.
 - Pull requests run only the quick `checks` job of `ci.yml` (lint, type
-  checks, unit tests); docs-only ones run nothing. Only `main` runs the full
+  checks, unit tests, and `capture-workbench:production-bundle-check` when the
+  Workbench is affected); docs-only ones run nothing. Only `main` runs the full
   verification, so a build, packaging, or installer failure first shows on
   `main`'s push run: run the affected build targets locally before merging such
   a change, and fix `main` before dispatching a candidate. Tests never assert
@@ -733,6 +786,24 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   `--skip-nx-cache`, or the cache restores them and the catalog step rejects them.
   The ignored `src-tauri/resources/capture-runtime-manifest.json` is re-staged by
   `capture-workbench-desktop:stage-core-runtime`.
+- Worker archives are built to be reproducible: the four worker builds run
+  PyInstaller with a fixed `SOURCE_DATE_EPOCH` and `PYTHONHASHSEED`, UPX is off,
+  and `scripts/worker_archive.py` writes explicit ZIP metadata and compression.
+  To check it, build a worker twice with `--skip-nx-cache` from the same
+  commit, compare the files manifests first, then the archive and part SHA-256
+  values and lengths, then the catalog's worker descriptors (issue #478).
+- Each worker build is cached on its own named input in
+  `packages/capture-runtime/project.json` (its entry's import closure, data and
+  notices, its spec and build script, and the shared archive inputs), so a
+  runtime change outside that closure restores the archive from the Nx cache.
+  The cache holds only the archive, its parts and its files manifest, not the
+  onedir tree; a worker probe checks `dist/workers/<worker>` against the files
+  manifest and re-extracts it from the archive when it differs. Use
+  `--skip-nx-cache` to force a rebuild; in Nx 24 such a run also stores
+  nothing in the cache, so the next run without the flag builds again. To
+  probe without rebuilding the worker, add `--exclude-task-dependencies` to the
+  `verify-*-worker` run. `test_worker_cache_inputs.py` fails when a module a
+  worker imports is missing from its named input.
 - Pin upstream model and configuration digests from git blobs or a real download,
   never from a checkout with `autocrlf`: text files there are CRLF copies.
 - `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its

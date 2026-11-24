@@ -33,17 +33,17 @@ from capture_runtime.contracts import (
     CaptureBlock,
     CaptureDocument,
     CaptureEngine,
-    CaptureFailureV2,
+    CaptureEventType,
     CaptureSourceKind,
     CaptureSpeaker,
-    OcrPageScopeV2,
-    OpenIngestionV2,
+    CaptureStatus,
+    OcrPageScope,
+    OpenIngestion,
+    OperationFailure,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
-    StartCaptureV2,
-    StreamingCaptureStatus,
-    StreamingEventType,
+    StartCapture,
     StructuringMode,
     TimeLocator,
 )
@@ -52,6 +52,10 @@ from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     InMemoryOcrExecutionEvidenceSink,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPageInput, OcrPipeline
+from capture_runtime.structuring.infrastructure.ollama import RuntimeUnavailableError
+from capture_runtime.structuring.infrastructure.structuring_provider import (
+    FakeCaptureStructuringProvider,
+)
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerResponse
 from tests.conftest import TOKEN
@@ -93,11 +97,11 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
     release = threading.Event()
     provenance = {
         "status": "resolved",
-        "engine": "windowsml-ocr",
-        "model": "pp-ocrv6-medium-windowsml",
+        "engine": "text-recognition",
+        "model": "pp-ocrv6-medium",
         "modelDigest": "sha256:" + "a" * 64,
-        "device": "windowsml-dml",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "device": "directml",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
     }
 
@@ -213,9 +217,9 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
             sequence = service.get_capture(capture_id).last_event_sequence
         release.set()
         expected = {
-            "success": StreamingCaptureStatus.AWAITING_STRUCTURING,
-            "invalid": StreamingCaptureStatus.FAILED,
-            "cancel": StreamingCaptureStatus.CANCELLED,
+            "success": CaptureStatus.AWAITING_STRUCTURING,
+            "invalid": CaptureStatus.FAILED,
+            "cancel": CaptureStatus.CANCELLED,
         }[terminal]
         _wait_for_capture_status(service, capture_id, expected)
         # Wait for the service task as well as the public terminal status.
@@ -250,6 +254,7 @@ def _open(client: TestClient) -> tuple[str, str]:
     response = client.post(
         "/v2/ingestions",
         json={
+            "kind": "recording",
             "clientRequestId": "api-stream-open-1",
             "fileName": "sample.mp3",
             "mediaType": "audio/mpeg",
@@ -262,15 +267,22 @@ def _open(client: TestClient) -> tuple[str, str]:
     return response.json()["ingestionId"], hashlib.sha256(source).hexdigest()
 
 
-def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
+def _seed_host_capture(
+    client: TestClient,
+    *,
+    structuring_mode: StructuringMode = StructuringMode.HOST,
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING,
+) -> tuple[str, dict[str, object]]:
     repository = client.app.state.streaming_repository
     source = b"host-stream"
     source_sha256 = hashlib.sha256(source).hexdigest()
+    pdf = kind is CaptureSourceKind.PDF
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
+            kind=kind,
             client_request_id=f"host-ingestion-{uuid4()}",
-            file_name="sample.mp3",
-            media_type="audio/mpeg",
+            file_name="sample.pdf" if pdf else "sample.mp3",
+            media_type="application/pdf" if pdf else "audio/mpeg",
             total_bytes=len(source),
             source_sha256=source_sha256,
         )
@@ -290,10 +302,10 @@ def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
         sha256=source_sha256,
     )
     operation = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id=f"host-capture-{uuid4()}",
             ingestion_id=ingestion.ingestion_id,
-            structuring_mode=StructuringMode.HOST,
+            structuring_mode=structuring_mode,
         )
     )
     assert operation.source is not None
@@ -404,7 +416,7 @@ def _finalized_pdf_ingestion(client: TestClient, source: bytes, prefix: str) -> 
     return ingestion_id
 
 
-def _wait_for_capture_status(service, capture_id: str, expected: StreamingCaptureStatus) -> None:
+def _wait_for_capture_status(service, capture_id: str, expected: CaptureStatus) -> None:
     for _ in range(100):
         if service.get_capture(capture_id).status is expected:
             return
@@ -447,10 +459,10 @@ class _HostProofExtractor:
             text=self._text,
         )
         engine = CaptureEngine(
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model="test-ocr-model",
             digest="sha256:" + "1" * 64,
-            device="windowsml-dml",
+            device="directml",
         )
         projection = (
             OcrPipeline().build(
@@ -512,33 +524,41 @@ class _GatedHostProofExtractor(_HostProofExtractor):
             self.finished.set()
 
 
-def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None:
-    response = client.get("/v2/streaming/health/ready")
+def test_readiness_advertises_every_capture_capability_in_one_document(
+    client: TestClient,
+) -> None:
+    response = client.get("/v2/health/ready")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "protocolVersion": "2",
-        "captureKinds": ["pdf", "image", "audio"],
-        "supportsProgressiveAudio": True,
+    assert response.json()["capabilities"] == {
+        "captureKinds": ["pdf", "image", "recording"],
+        "structuringModes": ["runtime", "host"],
+        "supportsCancellation": True,
+        "supportsRawDiagnostics": True,
+        "maxUploadBytes": 50 * 1024 * 1024,
         "maxChunkBytes": 4 * 1024 * 1024,
         "checkpointIntervalMs": 300_000,
         "heartbeatIntervalMs": 5_000,
         "stallTimeoutMs": 90_000,
+        "supportsProgressiveRecording": True,
     }
+    assert client.get("/v2/streaming/health/ready").status_code == 404
 
 
-def test_streaming_capability_keeps_ocr_available_without_progressive_decoder(
+def test_readiness_keeps_ocr_available_without_progressive_decoder(
     client: TestClient, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "capture_runtime.capture.api.streaming.progressive_decoder_ready", lambda: False
+        "capture_runtime.capture.application.streaming_capture_service.progressive_decoder_ready",
+        lambda: False,
     )
 
-    response = client.get("/v2/streaming/health/ready")
+    response = client.get("/v2/health/ready")
 
     assert response.status_code == 200
-    assert response.json()["captureKinds"] == ["pdf", "image", "audio"]
-    assert response.json()["supportsProgressiveAudio"] is False
+    capabilities = response.json()["capabilities"]
+    assert capabilities["captureKinds"] == ["pdf", "image", "recording"]
+    assert capabilities["supportsProgressiveRecording"] is False
 
 
 def test_open_ingestion_and_start_capture_require_matching_idempotency_headers(
@@ -546,6 +566,7 @@ def test_open_ingestion_and_start_capture_require_matching_idempotency_headers(
 ) -> None:
     source = _source()
     request = {
+        "kind": "recording",
         "clientRequestId": "required-open-key",
         "fileName": "sample.mp3",
         "mediaType": "audio/mpeg",
@@ -621,12 +642,12 @@ def test_pdf_page_scope_crosses_start_route_and_extractor_to_raw_route(
                     segments=[segment],
                     source_text=segment.text,
                     extraction_engine=CaptureEngine(
-                        engine="windowsml-ocr",
+                        engine="text-recognition",
                         model="test-model",
                         digest="sha256:" + "a" * 64,
-                        device="windowsml-dml",
+                        device="directml",
                     ),
-                    ocr_page_scope=OcrPageScopeV2(
+                    ocr_page_scope=OcrPageScope(
                         source_page_count=46,
                         requested_page_numbers=[1],
                         processed_page_numbers=[1],
@@ -691,12 +712,12 @@ def test_pdf_page_scope_omission_uses_legacy_all_page_extractor_path(
                     segments=segments,
                     source_text="\n".join(segment.text for segment in segments),
                     extraction_engine=CaptureEngine(
-                        engine="windowsml-ocr",
+                        engine="text-recognition",
                         model="test-model",
                         digest="sha256:" + "a" * 64,
-                        device="windowsml-dml",
+                        device="directml",
                     ),
-                    ocr_page_scope=OcrPageScopeV2(
+                    ocr_page_scope=OcrPageScope(
                         source_page_count=3,
                         requested_page_numbers=[1, 2, 3],
                         processed_page_numbers=[1, 2, 3],
@@ -727,11 +748,11 @@ def test_pdf_page_scope_omission_uses_legacy_all_page_extractor_path(
 
 _OCR_PROVENANCE = {
     "status": "resolved",
-    "engine": "windowsml-ocr",
-    "model": "pp-ocrv6-medium-windowsml",
+    "engine": "text-recognition",
+    "model": "pp-ocrv6-medium",
     "modelDigest": "sha256:" + "a" * 64,
-    "device": "windowsml-dml",
-    "profileId": "capture-workbench-ocr-pipeline-v1",
+    "device": "directml",
+    "profileId": "ocr-pipeline-v1",
     "profileSpecSha256": "b" * 64,
 }
 
@@ -844,7 +865,7 @@ def test_non_contiguous_pdf_page_selection_keeps_source_page_numbers_end_to_end(
         "selected-source-pages",
         page_numbers=selection,
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
 
     assert len(requests) == 1
     assert requests[0]["pageNumbers"] == selection
@@ -864,7 +885,7 @@ def test_non_contiguous_pdf_page_selection_keeps_source_page_numbers_end_to_end(
     ocr = client.get(f"/v2/captures/{capture_id}/ocr")
     assert ocr.status_code == 200, ocr.text
     assert ocr.json()["status"] == "completed"
-    assert ocr.json()["pageCount"] == 4
+    assert ocr.json()["processedPageCount"] == 4
     assert [page["page"] for page in ocr.json()["pages"]] == selection
     assert [page["text"] for page in ocr.json()["pages"]] == [
         f"text of source page {page}" for page in selection
@@ -898,7 +919,7 @@ def test_all_page_capture_still_rejects_a_source_past_the_page_limit(
     )
 
     capture_id = _start_pdf_capture(client, b"%PDF-1.7 long source", "long-all-pages")
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.FAILED)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.FAILED)
 
     assert requests == []
     assert service.get_capture(capture_id).error.code == "ocr_source_preflight_failed"
@@ -928,7 +949,7 @@ def test_pdf_page_selection_the_source_cannot_satisfy_fails_typed_without_ocr(
     capture_id = _start_pdf_capture(
         client, b"%PDF-1.7 unsatisfiable selection", "unsatisfiable", page_numbers=selection
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.FAILED)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.FAILED)
 
     assert requests == []
     failure = client.get(f"/v2/captures/{capture_id}").json()["error"]
@@ -991,15 +1012,15 @@ def test_ocr_route_returns_conflict_while_projection_is_pending(client: TestClie
 
 
 def test_authenticated_ocr_route_returns_ordered_page_projection(client: TestClient) -> None:
-    capture_id, _candidate = _seed_host_capture(client)
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
     repository = client.app.state.streaming_repository
     operation = repository.get_capture(capture_id)
     assert operation.source is not None
     engine = CaptureEngine(
-        engine="windowsml-ocr",
-        model="pp-ocrv6-medium-windowsml",
+        engine="text-recognition",
+        model="pp-ocrv6-medium",
         digest="sha256:" + "c" * 64,
-        device="windowsml-dml",
+        device="directml",
     )
     projection = OcrPipeline().build(
         capture_id=capture_id,
@@ -1046,11 +1067,11 @@ def test_authenticated_ocr_route_returns_ordered_page_projection(client: TestCli
 
 
 def test_failed_capture_exposes_readable_typed_ocr_projection(client: TestClient) -> None:
-    capture_id, _candidate = _seed_host_capture(client)
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
     repository = client.app.state.streaming_repository
     repository.fail_capture(
         capture_id,
-        CaptureFailureV2(
+        OperationFailure(
             code="ocr_worker_failed",
             message="OCR worker failed.",
             stage="ocr",
@@ -1067,6 +1088,142 @@ def test_failed_capture_exposes_readable_typed_ocr_projection(client: TestClient
     assert payload["pages"] == []
 
 
+def test_failed_recording_has_no_ocr_projection_and_keeps_an_old_one(
+    client: TestClient,
+) -> None:
+    capture_id, _candidate = _seed_host_capture(client)
+    repository = client.app.state.streaming_repository
+    service = client.app.state.streaming_capture_service
+    service._fail(capture_id, "extraction_failed", "Capture extraction failed.")
+    ocr_path = repository.root / "captures" / capture_id / "ocr.json"
+    assert not ocr_path.exists()
+
+    response = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "ocr_unavailable"
+    assert not ocr_path.exists()
+
+    # A 0.10.x runtime wrote a failed projection for a recording; it stays as it was.
+    operation = repository.get_capture(capture_id)
+    old = OcrPipeline().failed(
+        capture_id=capture_id,
+        source=operation.source,
+        failure=OperationFailure(code="progressive_failed", message="Old failure."),
+        created_at=operation.updated_at,
+    )
+    ocr_path.write_text(old.model_dump_json(by_alias=True), encoding="utf-8")
+    before = ocr_path.read_bytes()
+    response = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert response.status_code == 409, response.text
+    assert ocr_path.read_bytes() == before
+
+
+def test_historical_document_failure_reads_its_current_code(client: TestClient) -> None:
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
+    repository = client.app.state.streaming_repository
+    repository.fail_capture(
+        capture_id,
+        OperationFailure(code="extraction_failed", message="Capture extraction failed."),
+    )
+    directory = repository.root / "captures" / capture_id
+    operation = repository.get_capture(capture_id)
+    old = OcrPipeline().failed(
+        capture_id=capture_id,
+        source=operation.source,
+        failure=OperationFailure(code="extraction_failed", message="Capture extraction failed."),
+        created_at=operation.updated_at,
+    )
+    files = {
+        "metadata.json": directory / "metadata.json",
+        "events.jsonl": directory / "events.jsonl",
+    }
+    # Spell the stored failure the way a 0.10.x runtime did.
+    for path in files.values():
+        path.write_bytes(path.read_bytes().replace(b'"extraction_failed"', b'"progressive_failed"'))
+    (directory / "ocr.json").write_bytes(
+        old.model_dump_json(by_alias=True)
+        .replace('"extraction_failed"', '"streaming_source_unavailable"')
+        .encode()
+    )
+    files["ocr.json"] = directory / "ocr.json"
+    before = {name: path.read_bytes() for name, path in files.items()}
+    assert b"progressive_failed" in before["metadata.json"]
+
+    repository.initialize()
+    assert client.get(f"/v2/captures/{capture_id}").json()["error"]["code"] == "extraction_failed"
+    events = client.get(f"/v2/captures/{capture_id}/events")
+    assert '"extraction_failed"' in events.text and "progressive_failed" not in events.text
+    ocr = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert ocr.status_code == 200, ocr.text
+    assert ocr.json()["failure"]["code"] == "ingestion_source_unavailable"
+    assert {name: path.read_bytes() for name, path in files.items()} == before
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [(CaptureSourceKind.PDF, None), (CaptureSourceKind.RECORDING, 0)],
+)
+def test_a_0_10_document_partial_reads_without_media_time(
+    client: TestClient, kind: CaptureSourceKind, expected: int | None
+) -> None:
+    capture_id, _candidate = _seed_host_capture(client, kind=kind)
+    repository = client.app.state.streaming_repository
+    operation = repository.get_capture(capture_id)
+    path = repository.root / "captures" / capture_id / "partial.json"
+    # 0.10.x wrote 0 on every partial, documents included.
+    path.write_text(
+        json.dumps(
+            {
+                "protocolVersion": "2",
+                "captureId": capture_id,
+                "source": operation.source.model_dump(mode="json", by_alias=True),
+                "revision": 1,
+                "coveredUntilMs": 0,
+                "segments": [],
+                "sourceText": "",
+                "extractionEngine": None,
+                "updatedAt": operation.updated_at.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = path.read_bytes()
+    response = client.get(f"/v2/captures/{capture_id}/partial")
+    assert response.status_code == 200, response.text
+    if expected is None:
+        assert "coveredUntilMs" not in response.json()
+    else:
+        assert response.json()["coveredUntilMs"] == expected
+    assert path.read_bytes() == before
+
+
+def test_historical_ocr_failure_metadata_and_events_remain_readable(client: TestClient) -> None:
+    capture_id, _ = _seed_host_capture(client)
+    repository = client.app.state.streaming_repository
+    repository.fail_capture(
+        capture_id,
+        OperationFailure(
+            code="dml_provider_unavailable",
+            message="WindowsML OCR provider was unavailable.",
+            stage="ocr",
+        ),
+    )
+    directory = repository.root / "captures" / capture_id
+    before = {
+        path: path.read_bytes()
+        for path in (directory / "metadata.json", directory / "events.jsonl")
+    }
+    repository.initialize()
+    response = client.get(f"/v2/captures/{capture_id}")
+    assert response.status_code == 200, response.text
+    assert response.json()["error"]["code"] == "dml_provider_unavailable"
+    assert response.json()["error"]["message"] == "WindowsML OCR provider was unavailable."
+    events = client.get(f"/v2/captures/{capture_id}/events")
+    assert events.status_code == 200, events.text
+    assert "dml_provider_unavailable" in events.text
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def test_worker_failure_persists_complete_ocr_projection_before_get_route(
     client: TestClient,
 ) -> None:
@@ -1081,7 +1238,7 @@ def test_worker_failure_persists_complete_ocr_projection_before_get_route(
         async def extract(
             self, _content: bytes, capture_source, _cancel_event, *, ocr_progress=None
         ) -> CaptureExtractionOutcome:
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_worker_timeout",
                 message="OCR worker timed out before completing all pages.",
                 stage="extraction",
@@ -1091,10 +1248,10 @@ def test_worker_failure_persists_complete_ocr_projection_before_get_route(
                 capture_id=capture_source.sha256,
                 source=capture_source,
                 provenance=CaptureEngine(
-                    engine="windowsml-ocr",
-                    model="pp-ocrv6-medium-windowsml",
+                    engine="text-recognition",
+                    model="pp-ocrv6-medium",
                     digest="sha256:" + "c" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                 ),
                 failure=failure,
                 created_at=datetime.now(UTC),
@@ -1204,7 +1361,7 @@ def test_runtime_unavailable_persists_manifest_complete_projection_for_get_route
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["pageCount"] == 3
+    assert payload["processedPageCount"] == 3
     assert [page["page"] for page in payload["pages"]] == [1, 2, 3]
     assert [page["status"] for page in payload["pages"]] == ["failed"] * 3
     assert all(
@@ -1255,10 +1412,10 @@ def test_runtime_completion_publishes_only_after_successful_completion(
                 text="proof-backed page",
             )
             engine = CaptureEngine(
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model="test-ocr-model",
                 digest="sha256:" + "1" * 64,
-                device="windowsml-dml",
+                device="directml",
             )
             raw = RawCapture(
                 source=source,
@@ -1365,7 +1522,7 @@ def test_host_proof_publishes_before_successful_host_commit(client: TestClient, 
         "host-pending-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     events = client.get(f"/v2/captures/{capture_id}/events")
     assert events.status_code == 200, events.text
     _wait_for_proof_artifact(root)
@@ -1405,7 +1562,7 @@ def test_host_ocr_success_publishes_execution_proof_at_awaiting_structuring_once
         "host-ocr-awaiting-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
 
     raw = service.repository.read_raw(capture_id)
     assert raw.source_text == "host OCR awaiting page"
@@ -1434,7 +1591,7 @@ def test_failed_host_ocr_never_publishes_success_execution_proof(client: TestCli
             return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
 
         async def extract(self, _content, capture_source, _cancel_event, *, ocr_progress=None):
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code="ocr_worker_failed",
                 message="OCR worker failed.",
                 stage="extraction",
@@ -1444,10 +1601,10 @@ def test_failed_host_ocr_never_publishes_success_execution_proof(client: TestCli
                 capture_id=capture_source.sha256,
                 source=capture_source,
                 provenance=CaptureEngine(
-                    engine="windowsml-ocr",
+                    engine="text-recognition",
                     model="test-ocr-model",
                     digest="sha256:" + "1" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                 ),
                 failure=failure,
                 created_at=datetime.now(UTC),
@@ -1462,7 +1619,7 @@ def test_failed_host_ocr_never_publishes_success_execution_proof(client: TestCli
         "host-ocr-failure-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.FAILED)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.FAILED)
 
     assert sink.proofs == []
 
@@ -1509,7 +1666,7 @@ def test_host_ocr_checkpoint_requires_persistence_and_transition(
         f"host-ocr-{failure_point}-failure",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.FAILED)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.FAILED)
 
     assert sink.proofs == []
 
@@ -1530,7 +1687,7 @@ def test_cancel_before_host_ocr_checkpoint_publishes_no_execution_proof(
     )
 
     assert extractor.entered.wait(timeout=5)
-    assert service.get_capture(capture_id).status is StreamingCaptureStatus.EXTRACTING
+    assert service.get_capture(capture_id).status is CaptureStatus.EXTRACTING
     cancelled = client.post(f"/v2/captures/{capture_id}/cancel")
     assert cancelled.status_code == 200, cancelled.text
     assert extractor.finished.wait(timeout=5)
@@ -1554,7 +1711,7 @@ def test_delete_before_host_ocr_checkpoint_publishes_no_execution_proof(
     )
 
     assert extractor.entered.wait(timeout=5)
-    assert service.get_capture(capture_id).status is StreamingCaptureStatus.EXTRACTING
+    assert service.get_capture(capture_id).status is CaptureStatus.EXTRACTING
     deleted = client.delete(f"/v2/captures/{capture_id}")
     assert deleted.status_code == 204, deleted.text
     assert extractor.finished.wait(timeout=5)
@@ -1578,7 +1735,7 @@ def test_host_proof_commit_persistence_failure_preserves_checkpoint_artifact(
         "host-commit-failure-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     candidate = _host_proof_candidate(service.repository.read_raw(capture_id))
     _wait_for_proof_artifact(root)
 
@@ -1611,25 +1768,23 @@ def test_host_proof_pull_session_keeps_checkpoint_artifact_before_final_batch_co
         "host-pull-session-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     _wait_for_proof_artifact(root)
 
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json={
-            "captureId": capture_id,
             "targetLanguage": "fr",
+            "profileId": "qwen3.5-0.8b-structure-v1",
             "providerCapability": {
                 "provider": {
                     "engine": "ollama",
-                    "model": "capture-workbench-qwen3.5-0.8b-structure-v1",
+                    "model": "qwen3.5-0.8b-structure-v1",
                     "digest": "sha256:" + "b" * 64,
                 },
-                "capability": "capture-structuring",
                 "schemaDialect": SCHEMA_DIALECT,
             },
             "schemaDialect": SCHEMA_DIALECT,
-            "clientRequestId": "host-pull-session-proof-request",
         },
         headers={"X-Idempotency-Key": "host-pull-session-proof-request"},
     )
@@ -1673,28 +1828,26 @@ def test_host_proof_pull_session_validation_failure_keeps_checkpoint_artifact(
         "host-invalid-session-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     _wait_for_proof_artifact(root)
 
     request = {
-        "captureId": capture_id,
         "targetLanguage": "fr",
+        "profileId": "qwen3.5-0.8b-structure-v1",
         "providerCapability": {
             "provider": {
                 "engine": "ollama",
-                "model": "capture-workbench-qwen3.5-0.8b-structure-v1",
+                "model": "qwen3.5-0.8b-structure-v1",
                 "digest": "sha256:" + "b" * 64,
             },
-            "capability": "capture-structuring",
             "schemaDialect": SCHEMA_DIALECT,
         },
         "schemaDialect": SCHEMA_DIALECT,
-        "clientRequestId": "host-invalid-session-request",
     }
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json=request,
-        headers={"X-Idempotency-Key": request["clientRequestId"]},
+        headers={"X-Idempotency-Key": "host-invalid-session-request"},
     )
     assert opened.status_code == 201, opened.text
     batch = client.get(f"/v2/captures/{capture_id}/structure/session/batches/0")
@@ -1735,7 +1888,7 @@ def test_host_proof_validation_failure_preserves_checkpoint_artifact(
         "host-invalid-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     events = client.get(f"/v2/captures/{capture_id}/events")
     assert events.status_code == 200, events.text
     _wait_for_proof_artifact(root)
@@ -1750,7 +1903,7 @@ def test_host_proof_validation_failure_preserves_checkpoint_artifact(
         headers={"X-Idempotency-Key": "host-invalid-commit"},
     )
     assert response.status_code == 422, response.text
-    assert service.get_capture(capture_id).status is StreamingCaptureStatus.FAILED
+    assert service.get_capture(capture_id).status is CaptureStatus.FAILED
     assert (root / "ocr-device-proof-v1.json").is_file()
     assert not list(root.glob(".ocr-device-proof-*.tmp"))
 
@@ -1773,7 +1926,7 @@ def test_host_proof_abort_paths_do_not_duplicate_checkpoint_artifact(
         f"host-{action}-proof",
         structuring_mode="host",
     )
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     events = client.get(f"/v2/captures/{capture_id}/events")
     assert events.status_code == 200, events.text
     _wait_for_proof_artifact(root)
@@ -1828,7 +1981,7 @@ def test_manifest_preflight_failure_is_typed_without_fabricated_pages(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["pageCount"] == 0
+    assert payload["processedPageCount"] == 0
     assert payload["pages"] == []
     assert payload["failure"]["code"] == "ocr_source_preflight_failed"
     assert payload["provenance"]["status"] == "unavailable"
@@ -1837,7 +1990,7 @@ def test_manifest_preflight_failure_is_typed_without_fabricated_pages(
 def test_streaming_service_persists_all_empty_ocr_projection_as_terminal_no_text(
     client: TestClient,
 ) -> None:
-    capture_id, _candidate = _seed_host_capture(client)
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
     repository = client.app.state.streaming_repository
     operation = repository.get_capture(capture_id)
     assert operation.source is not None
@@ -1845,10 +1998,10 @@ def test_streaming_service_persists_all_empty_ocr_projection_as_terminal_no_text
         capture_id=capture_id,
         source=operation.source,
         provenance=CaptureEngine(
-            engine="windowsml-ocr",
-            model="pp-ocrv6-medium-windowsml",
+            engine="text-recognition",
+            model="pp-ocrv6-medium",
             digest="sha256:" + "c" * 64,
-            device="windowsml-dml",
+            device="directml",
         ),
         created_at=datetime.now(UTC),
         pages=[
@@ -1951,12 +2104,12 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
     )
     assert finalized.status_code == 200, finalized.text
     assert finalized.json()["status"] == "ready"
-    assert finalized.json()["kind"] == "audio"
+    assert finalized.json()["kind"] == "recording"
 
     capture = client.get(f"/v2/captures/{capture_id}")
     assert capture.status_code == 200
     assert capture.json()["status"] == "failed"
-    assert capture.json()["kind"] == "audio"
+    assert capture.json()["kind"] == "recording"
     assert capture.json()["source"]["sha256"] == source_sha256
 
     events = client.get(f"/v2/captures/{capture_id}/events")
@@ -1988,8 +2141,10 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
     assert partial.json()["error"]["code"] == "partial_unavailable"
 
 
+@pytest.mark.parametrize("historical", [False, True])
 def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
     client: TestClient,
+    historical: bool,
 ) -> None:
     source = b"%PDF-1.7\nCAPTURE_TEXT:ocr text from a PDF page"
     digest = hashlib.sha256(source).hexdigest()
@@ -2048,6 +2203,129 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
     result = client.get(f"/v2/captures/{capture_id}/result")
     assert result.status_code == 200, result.text
     assert result.json()["raw"]["sourceText"] == "ocr text from a PDF page"
+    if not historical:
+        # A document has no media time: the partial leaves the key out.
+        partial = client.get(f"/v2/captures/{capture_id}/partial")
+        assert partial.status_code == 200, partial.text
+        assert "coveredUntilMs" not in partial.json()
+        stored_partial = (
+            client.app.state.streaming_repository.root / "captures" / capture_id / "partial.json"
+        )
+        assert "coveredUntilMs" not in json.loads(stored_partial.read_bytes())
+        return
+
+    repository = client.app.state.streaming_repository
+    directory = repository.root / "captures" / capture_id
+    raw = RawCapture.model_validate(result.json()["raw"])
+    repository.write_ocr_projection(
+        capture_id,
+        OcrPipeline().build(
+            capture_id=capture_id,
+            source=raw.source,
+            provenance=CaptureEngine(
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
+                digest="sha256:" + "a" * 64,
+                device="directml",
+            ),
+            created_at=raw.created_at,
+            pages=[
+                OcrPageInput(
+                    page=1,
+                    text=raw.source_text,
+                    raster_width=100,
+                    raster_height=80,
+                    raster_scale=2,
+                    boxes=((4, 5, 20, 10),),
+                    region_confidences=(0.91,),
+                )
+            ],
+        ),
+    )
+    for filename in ("raw.json", "result.json", "partial.json", "ocr.json"):
+        path = directory / filename
+        payload = json.loads(path.read_bytes())
+        if filename == "ocr.json":
+            payload["pageCount"] = payload.pop("processedPageCount")
+            payload["contractSha256"] = payload.pop("contractSetSha256")
+            for projection in (payload, *payload["pages"]):
+                projection["provenance"].update(
+                    engine="windowsml-ocr",
+                    model="pp-ocrv6-medium-windowsml",
+                    device="windowsml-dml",
+                    profileId="capture-workbench-ocr-pipeline-v1",
+                )
+        else:
+            payload["extractionEngine"].update(
+                engine="windowsml-ocr", model="deterministic-windowsml-v1"
+            )
+            if filename != "partial.json":
+                payload.pop("suggestedRequirementIds", None)
+                payload["suggestedUnits"] = [
+                    "windowsml-ocr",
+                    "ollama-runtime",
+                    "capture-ollama-model",
+                ]
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    before = {path: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+    repository.initialize()
+    assert client.get(f"/v2/captures/{capture_id}").json() == completed
+    assert "event: completed" in client.get(f"/v2/captures/{capture_id}/events").text
+    for route in ("raw", "partial", "ocr", "result"):
+        response = client.get(f"/v2/captures/{capture_id}/{route}")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        stored = json.loads(before[directory / f"{route}.json"])
+        if route == "ocr":
+            for projection in (payload, *payload["pages"]):
+                identity = projection["provenance"]
+                assert (identity["engine"], identity["model"], identity["device"]) == (
+                    "text-recognition",
+                    "pp-ocrv6-medium",
+                    "directml",
+                )
+            assert payload["provenance"]["modelDigest"] == stored["provenance"]["modelDigest"]
+            assert payload["processedPageCount"] == stored["pageCount"]
+            assert payload["contractSetSha256"] == stored["contractSha256"]
+            assert "pageCount" not in payload
+            assert "contractSha256" not in payload
+        else:
+            documents = (payload["raw"], payload["result"]) if route == "result" else (payload,)
+            for document in documents:
+                identity = document["extractionEngine"]
+                assert (identity["engine"], identity["model"], identity["device"]) == (
+                    "text-recognition",
+                    "deterministic-ocr-v1",
+                    "fake",
+                )
+                assert "suggestedUnits" not in document
+                if route != "partial":
+                    assert document["suggestedRequirementIds"] == [
+                        "text-recognition",
+                        "structuring-runtime",
+                        "structuring-model",
+                    ]
+            assert (
+                documents[-1]["extractionEngine"]["digest"] == stored["extractionEngine"]["digest"]
+            )
+    assert {path: path.read_bytes() for path in before} == before
+
+    # Neither schema wrote an old key beside a current one, or one old key alone.
+    ocr_path = directory / "ocr.json"
+    historical_ocr = json.loads(before[ocr_path])
+    for mixed in (
+        {**historical_ocr, "processedPageCount": historical_ocr["pageCount"]},
+        {key: value for key, value in historical_ocr.items() if key != "contractSha256"}
+        | {"contractSetSha256": historical_ocr["contractSha256"]},
+        {key: value for key, value in historical_ocr.items() if key != "contractSha256"},
+    ):
+        ocr_path.write_text(json.dumps(mixed, indent=2), encoding="utf-8")
+        mixed_bytes = ocr_path.read_bytes()
+        rejected = client.get(f"/v2/captures/{capture_id}/ocr")
+        assert rejected.status_code != 200, rejected.text
+        assert ocr_path.read_bytes() == mixed_bytes
+    ocr_path.write_bytes(before[ocr_path])
 
 
 def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClient) -> None:
@@ -2064,6 +2342,20 @@ def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClien
     )
     assert total_conflict.status_code == 409
     assert total_conflict.json()["error"]["code"] == "chunk_total_conflict"
+
+    # An end at or past the total is a malformed range, whatever its size.
+    for content_range, body in (("bytes 4-6/6", data), ("bytes 0-5/3", b"abcdef")):
+        out_of_range = client.put(
+            f"/v2/ingestions/{ingestion_id}/chunks/0",
+            content=body,
+            headers={
+                "Content-Range": content_range,
+                "Digest": f"sha-256={hashlib.sha256(body).hexdigest()}",
+                "X-Idempotency-Key": "api-stream-out-of-range",
+            },
+        )
+        assert out_of_range.status_code == 422, out_of_range.text
+        assert out_of_range.json()["error"]["code"] == "invalid_chunk_headers"
 
     gap = client.put(
         f"/v2/ingestions/{ingestion_id}/chunks/1",
@@ -2178,6 +2470,99 @@ def test_v2_host_commit_and_failure_routes_preserve_terminal_semantics(
     assert client.get(f"/v2/captures/{failed_id}/result").status_code == 409
 
 
+def test_a_host_reported_failure_keeps_its_code_even_a_retired_runtime_code(
+    client: TestClient,
+) -> None:
+    capture_id, _ = _seed_host_capture(client)
+    # The host chooses its codes; one may equal a code the runtime retired.
+    reported = client.post(
+        f"/v2/captures/{capture_id}/structure/failure",
+        headers={"X-Idempotency-Key": "host-failure-retired-code"},
+        json={"code": "progressive_failed", "message": "Host model stopped."},
+    )
+    assert reported.status_code == 200, reported.text
+
+    def failure_codes() -> tuple[str, list[str]]:
+        capture = client.get(f"/v2/captures/{capture_id}").json()
+        events = client.get(f"/v2/captures/{capture_id}/events").text
+        failed = [
+            json.loads(line.removeprefix("data: "))
+            for line in events.splitlines()
+            if line.startswith("data: ") and '"error"' in line
+        ]
+        return capture["error"]["code"], [
+            event["error"]["code"] for event in failed if event["error"]
+        ]
+
+    assert failure_codes() == ("progressive_failed", ["progressive_failed"])
+    metadata = (
+        client.app.state.streaming_repository.root / "captures" / capture_id / "metadata.json"
+    )
+    before = metadata.read_bytes()
+    client.app.state.streaming_repository.initialize()
+    assert failure_codes() == ("progressive_failed", ["progressive_failed"])
+    assert metadata.read_bytes() == before
+
+
+def test_historical_host_commit_replays_with_new_recommendation_field(client: TestClient) -> None:
+    capture_id, candidate = _seed_host_capture(client)
+    headers = {"X-Idempotency-Key": "historical-host-commit"}
+    route = f"/v2/captures/{capture_id}/structure/commit"
+    committed = client.post(route, headers=headers, json=candidate)
+    assert committed.status_code == 200, committed.text
+
+    repository = client.app.state.streaming_repository
+    directory = repository.root / "captures" / capture_id
+    metadata_path = directory / "metadata.json"
+    result_path = directory / "result.json"
+    metadata = json.loads(metadata_path.read_bytes())
+    result = json.loads(result_path.read_bytes())
+    old_candidate = CaptureDocument.model_validate(candidate).model_dump(mode="json", by_alias=True)
+    for payload in (result, old_candidate):
+        payload["suggestedUnits"] = payload.pop("suggestedRequirementIds")
+    metadata["commitFingerprint"] = hashlib.sha256(
+        json.dumps(
+            old_candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    before = {path: path.read_bytes() for path in (metadata_path, result_path)}
+
+    repository.initialize()
+    replay = client.post(route, headers=headers, json=candidate)
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == committed.json()
+    invalid = client.post(
+        route,
+        headers=headers,
+        json={**candidate, "suggestedRequirementIds": ["structuring-model"]},
+    )
+    assert invalid.status_code == 409
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_interrupted_host_commit_preserves_historical_result(client: TestClient) -> None:
+    capture_id, candidate = _seed_host_capture(client)
+    repository = client.app.state.streaming_repository
+    directory = repository.root / "captures" / capture_id
+    result_path = directory / "result.json"
+    result = CaptureDocument.model_validate(candidate).model_dump(mode="json", by_alias=True)
+    result["suggestedUnits"] = result.pop("suggestedRequirementIds")
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    repository.initialize()
+    committed = client.post(
+        f"/v2/captures/{capture_id}/structure/commit",
+        headers={"X-Idempotency-Key": "interrupted-host-commit"},
+        json=candidate,
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["status"] == "completed"
+    assert result_path.read_bytes() == before
+
+
 def test_v2_host_commit_invalid_candidate_fails_the_capture(client: TestClient) -> None:
     capture_id, candidate = _seed_host_capture(client)
     invalid = {**candidate, "source": {**candidate["source"], "sha256": "0" * 64}}
@@ -2194,6 +2579,234 @@ def test_v2_host_commit_invalid_candidate_fails_the_capture(client: TestClient) 
     assert operation["status"] == "failed"
     assert operation["error"]["code"] == "structuring_invalid_output"
     assert client.get(f"/v2/captures/{capture_id}/partial").status_code == 409
+
+
+_PROVIDER_UNAVAILABLE = "The structuring provider is unavailable."
+_PROVIDER_SECRET = "super-secret-token"
+
+
+class _UnavailableStructurer:
+    engine_identity = None
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def structure(self, _raw, *, target_language, cancel_event):
+        del target_language, cancel_event
+        self.calls += 1
+        raise RuntimeUnavailableError(
+            f"provider {_PROVIDER_SECRET} at http://127.0.0.1:11434/private"
+        )
+
+
+def _assert_requirement_unavailable(response) -> None:
+    assert response.status_code == 503, response.text
+    assert response.json() == {
+        "error": {
+            "code": "requirement_unavailable",
+            "message": _PROVIDER_UNAVAILABLE,
+        }
+    }
+    assert _PROVIDER_SECRET not in response.text
+    assert "11434" not in response.text
+
+
+def _assert_awaiting_structuring(client: TestClient, capture_id: str) -> None:
+    operation = client.get(f"/v2/captures/{capture_id}").json()
+    assert operation["status"] == "awaiting_structuring"
+    assert operation["status"] != "structuring"
+    assert not operation.get("error")
+
+
+def test_structure_route_retries_after_the_provider_is_unavailable(client: TestClient) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    unavailable = _UnavailableStructurer()
+    service._structurer = unavailable  # type: ignore[assignment]
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_requirement_unavailable(rejected)
+    assert unavailable.calls == 1
+    _assert_awaiting_structuring(client, capture_id)
+
+    service._structurer = FakeCaptureStructuringProvider(service._clock)  # type: ignore[assignment]
+    structured = client.post(f"/v2/captures/{capture_id}/structure")
+    assert structured.status_code == 200, structured.text
+    assert structured.json()["targetText"] == "host words"
+    assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
+
+
+def test_structure_route_reports_a_missing_provider_as_requirement_unavailable(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    service._structurer = None
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_requirement_unavailable(rejected)
+    _assert_awaiting_structuring(client, capture_id)
+
+    service._structurer = FakeCaptureStructuringProvider(service._clock)  # type: ignore[assignment]
+    structured = client.post(f"/v2/captures/{capture_id}/structure")
+    assert structured.status_code == 200, structured.text
+    assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
+
+
+_STRUCTURING_INVALID = "Structuring output failed strict schema or provenance validation."
+_PROVIDER_LEAK = "provider-secret-output-9f3c"
+_CAPTURE_CANCELLED = "The capture was cancelled."
+
+
+def _assert_structuring_invalid(response) -> None:
+    assert response.status_code == 422, response.text
+    assert response.json() == {
+        "error": {
+            "code": "structuring_invalid_output",
+            "message": _STRUCTURING_INVALID,
+        }
+    }
+    assert _PROVIDER_LEAK not in response.text
+    assert "issues" not in response.text
+
+
+def _complete_structure_with_fake_provider(client: TestClient, capture_id: str) -> None:
+    service = client.app.state.streaming_capture_service
+    service._structurer = FakeCaptureStructuringProvider(service._clock)  # type: ignore[assignment]
+    structured = client.post(f"/v2/captures/{capture_id}/structure")
+    assert structured.status_code == 200, structured.text
+    assert structured.json()["targetText"] == "host words"
+    assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
+
+
+class _InvalidOutputStructurer:
+    engine_identity = None
+
+    async def structure(self, _raw, *, target_language, cancel_event):
+        del target_language, cancel_event
+        return "{" + _PROVIDER_LEAK
+
+
+class _MismatchedProvenance(FakeCaptureStructuringProvider):
+    @property
+    def engine_identity(self) -> CaptureEngine:
+        return CaptureEngine(
+            engine="other-structurer",
+            model=_PROVIDER_LEAK,
+            digest=f"sha256:{'c' * 64}",
+            device="fake",
+        )
+
+
+def test_structure_route_releases_when_provider_output_is_invalid(client: TestClient) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    service._structurer = _InvalidOutputStructurer()  # type: ignore[assignment]
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_structuring_invalid(rejected)
+    _assert_awaiting_structuring(client, capture_id)
+    _complete_structure_with_fake_provider(client, capture_id)
+
+
+def test_structure_route_releases_when_provider_provenance_does_not_match(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    service._structurer = _MismatchedProvenance(service._clock)  # type: ignore[assignment]
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_structuring_invalid(rejected)
+    _assert_awaiting_structuring(client, capture_id)
+    _complete_structure_with_fake_provider(client, capture_id)
+
+
+def test_structure_attempt_that_is_itself_cancelled_gives_the_capture_back(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+
+    class _NeverFinishes:
+        engine_identity = None
+
+        def __init__(self) -> None:
+            self.entered = asyncio.Event()
+
+        async def structure(self, _raw, *, target_language, cancel_event):
+            del target_language, cancel_event
+            self.entered.set()
+            await asyncio.Event().wait()
+
+    async def abandon_the_request() -> None:
+        structurer = _NeverFinishes()
+        service._structurer = structurer  # type: ignore[assignment]
+        attempt = asyncio.create_task(service.structure(capture_id))
+        await asyncio.wait_for(structurer.entered.wait(), timeout=5)
+        # No cancel request: the request ends the way it does when the client
+        # goes away or the runtime stops.
+        attempt.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await attempt
+
+    asyncio.run(abandon_the_request())
+
+    _assert_awaiting_structuring(client, capture_id)
+    _complete_structure_with_fake_provider(client, capture_id)
+
+
+def test_structure_route_cancel_while_the_provider_is_working(client: TestClient) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    entered = threading.Event()
+
+    class _WaitingStructurer:
+        engine_identity = None
+
+        async def structure(self, _raw, *, target_language, cancel_event):
+            del target_language
+            entered.set()
+            await cancel_event.wait()
+            raise asyncio.CancelledError
+
+    service._structurer = _WaitingStructurer()  # type: ignore[assignment]
+    outcome: dict[str, object] = {}
+
+    def post_structure() -> None:
+        try:
+            outcome["response"] = client.post(f"/v2/captures/{capture_id}/structure")
+        except (Exception, asyncio.CancelledError) as error:
+            outcome["error"] = error
+
+    worker = threading.Thread(target=post_structure, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(timeout=5)
+        # Through the route, as a client does: the cancel event belongs to the
+        # application's event loop and is not woken from another thread.
+        cancelled = client.post(f"/v2/captures/{capture_id}/cancel")
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["status"] == "cancelled"
+    finally:
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    response = outcome.get("response")
+    assert response is not None, outcome.get("error")
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "error": {
+            "code": "invalid_capture_state",
+            "message": _CAPTURE_CANCELLED,
+        }
+    }
+    operation = client.get(f"/v2/captures/{capture_id}").json()
+    assert operation["status"] == "cancelled"
+    assert operation["status"] != "structuring"
 
 
 class _ProgressReportingExtractor(_HostProofExtractor):
@@ -2229,7 +2842,7 @@ def test_page_progress_persistence_failure_does_not_fail_ocr(
         structuring_mode="host",
     )
 
-    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    _wait_for_capture_status(service, capture_id, CaptureStatus.AWAITING_STRUCTURING)
     assert failed_writes == [pytest.approx(0.45)]
     assert service.repository.read_raw(capture_id).source_text == "progress write failure page"
 
@@ -2240,7 +2853,8 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
     content = b"long-recording"
     digest = hashlib.sha256(content).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
+            kind="recording",
             client_request_id=f"long-ingestion-{uuid4()}",
             file_name="sample.mp3",
             media_type="audio/mpeg",
@@ -2259,7 +2873,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
     )
     repository.finalize_ingestion(ingestion.ingestion_id, total_bytes=len(content), sha256=digest)
     operation = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id=f"long-capture-{uuid4()}",
             ingestion_id=ingestion.ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -2295,11 +2909,13 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
 
     class Extractor:
         def sniff(self, _content: bytes) -> SimpleNamespace:
-            return SimpleNamespace(kind=CaptureSourceKind.AUDIO, media_type="audio/mpeg")
+            return SimpleNamespace(kind=CaptureSourceKind.RECORDING, media_type="audio/mpeg")
 
         async def extract(self, *_args: object, **options: object) -> SimpleNamespace:
             requested.append(options.get("identify_speakers") is True)
-            return SimpleNamespace(raw=raw, ocr_projection=None, _execution_proof=None)
+            return SimpleNamespace(
+                raw=raw, ocr_projection=None, _execution_proof=None, duration_ms=23_000
+            )
 
     service._extractor = Extractor()
 
@@ -2307,7 +2923,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
         service._extract_finalized_source(
             operation.capture_id,
             operation.source,
-            CaptureSourceKind.AUDIO,
+            CaptureSourceKind.RECORDING,
             repository.source_path(operation.ingestion_id),
             asyncio.Event(),
         )
@@ -2317,10 +2933,15 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
     counts = [
         len(event.segments)
         for event in repository.read_events(operation.capture_id, after_sequence=0)
-        if event.event_type is StreamingEventType.SEGMENT
+        if event.event_type is CaptureEventType.SEGMENT
     ]
     assert counts == [1_000, 1_000, 300]
-    assert len(repository.read_partial(operation.capture_id).segments) == 2_300
+    partial = repository.read_partial(operation.capture_id)
+    assert len(partial.segments) == 2_300
+    # The completed batch recording covers the length the worker measured.
+    assert partial.covered_until_ms == 23_000
+    stored = repository.root / "captures" / operation.capture_id / "partial.json"
+    assert json.loads(stored.read_bytes())["coveredUntilMs"] == 23_000
 
 
 def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
@@ -2344,7 +2965,7 @@ def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
                 "clientRequestId": "open-audio-limit-ok",
                 "fileName": "audio.mp3",
                 "mediaType": "audio/mpeg",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": sixty_mib,
             },
             headers={"X-Idempotency-Key": "open-audio-limit-ok"},
@@ -2357,7 +2978,7 @@ def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
                 "clientRequestId": "open-audio-limit-exceeded",
                 "fileName": "audio.mp3",
                 "mediaType": "audio/mpeg",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": sixty_mib + 1,
             },
             headers={"X-Idempotency-Key": "open-audio-limit-exceeded"},
@@ -2378,7 +2999,7 @@ def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
                 "clientRequestId": "open-audio-limit-exceeded",
                 "fileName": "audio.mp3",
                 "mediaType": "audio/mpeg",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": sixty_mib,
             },
             headers={"X-Idempotency-Key": "open-audio-limit-exceeded"},
@@ -2498,7 +3119,7 @@ def test_streaming_api_chunk_zero_audio_sniffing_and_cleanup(
                 "clientRequestId": "audio-forged-pdf-open",
                 "fileName": "memo.wav",
                 "mediaType": "audio/wav",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": declared_total,
             },
             headers={"X-Idempotency-Key": "audio-forged-pdf-open"},
@@ -2532,7 +3153,7 @@ def test_streaming_api_chunk_zero_audio_sniffing_and_cleanup(
                 "clientRequestId": "audio-genuine-wav-open",
                 "fileName": "real.wav",
                 "mediaType": "audio/wav",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": declared_total,
             },
             headers={"X-Idempotency-Key": "audio-genuine-wav-open"},

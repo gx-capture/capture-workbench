@@ -3,17 +3,18 @@ import {
   type CaptureEvent,
   type CaptureOperation,
   type CaptureOcrProjection,
-  type CaptureStreamingResult,
+  type CaptureRequirementId,
+  type InstallableRequirementId,
+  type CaptureResult,
   type PartialCapture,
   type RawCapture,
   type RuntimeDiscovery,
   type RuntimeInstallation,
-  type RuntimeModelInstallation,
-  type RuntimeModelOptions,
+  type StructuringModelInstallation,
+  type StructuringModelOptions,
   type RuntimeReady,
   type RuntimeRequirement,
   type RuntimeRequirements,
-  type RuntimeStreamingCapabilities,
   type RuntimeTransport,
   type RuntimeTransportRequest,
   type CaptureUpload,
@@ -36,7 +37,7 @@ import {
 import { negotiateRuntime } from './private/discovery.js';
 import {
   captureEvents as streamCaptureEvents,
-  startStreamingCapture as startStreamingCaptureRequest,
+  startCapture as startCaptureRequest,
 } from './private/streaming.js';
 import { requestWithRetry } from './private/transport-retry.js';
 
@@ -55,6 +56,13 @@ export class CaptureRuntimeClient {
     this.options = isTransport(options)
       ? { baseUrl: 'http://127.0.0.1:1' }
       : options;
+    // An untyped caller that still passes the renamed option would otherwise
+    // be checked silently against the bundled schema digest.
+    if (!isTransport(options) && 'expectedSchemaSha256' in options) {
+      throw new TypeError(
+        'expectedSchemaSha256 was renamed; pass expectedCaptureDocumentSchemaSha256.',
+      );
+    }
     if (
       (this.options.maxRetries ?? 2) < 0 ||
       !Number.isInteger(this.options.maxRetries ?? 2)
@@ -94,7 +102,6 @@ export class CaptureRuntimeClient {
           transport: this.transport,
           json: this.json.bind(this),
           getReady: this.getReady.bind(this),
-          getStreamingCapabilities: this.getStreamingCapabilities.bind(this),
         },
         signal,
       ).catch((error: unknown) => {
@@ -106,21 +113,14 @@ export class CaptureRuntimeClient {
     return this.discovery;
   }
 
-  /** Read `/v2/health/ready`: runtime version, API version, and contract identity. */
+  /**
+   * Read `/v2/health/ready`: runtime version, API version, contract identity,
+   * and the capabilities (capture kinds, structuring modes, upload limits).
+   */
   getReady(signal?: AbortSignal): Promise<RuntimeReady> {
     return this.json<RuntimeReady>(
       { path: '/v2/health/ready', signal },
       'RuntimeReady',
-    );
-  }
-
-  /** Read streaming limits such as the maximum upload chunk size. */
-  getStreamingCapabilities(
-    signal?: AbortSignal,
-  ): Promise<RuntimeStreamingCapabilities> {
-    return this.json(
-      { path: '/v2/streaming/health/ready', signal },
-      'RuntimeStreamingCapabilities',
     );
   }
 
@@ -135,12 +135,22 @@ export class CaptureRuntimeClient {
     return response.items;
   }
 
-  /** Start installing a requirement with user consent; the idempotency key makes retries safe. */
+  /**
+   * Start installing a requirement with user consent; the idempotency key makes
+   * retries safe. The structuring model is installed with `startModelInstallation`.
+   */
   startInstallation(
-    requirementId: string,
+    requirementId: InstallableRequirementId,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<RuntimeInstallation> {
+    if ((requirementId as CaptureRequirementId) === 'structuring-model') {
+      return Promise.reject(
+        new TypeError(
+          'The structuring model is installed with startModelInstallation, not startInstallation.',
+        ),
+      );
+    }
     return this.json(
       {
         path: '/v2/runtime/installations',
@@ -197,7 +207,7 @@ export class CaptureRuntimeClient {
    * now not installed. Uninstalling one that is not installed returns it as is.
    */
   uninstallRequirement(
-    requirementId: string,
+    requirementId: CaptureRequirementId,
     signal?: AbortSignal,
   ): Promise<RuntimeRequirement> {
     return this.json(
@@ -211,10 +221,10 @@ export class CaptureRuntimeClient {
   }
 
   /** List the structuring model options the runtime allows. */
-  getModelOptions(signal?: AbortSignal): Promise<RuntimeModelOptions> {
+  getModelOptions(signal?: AbortSignal): Promise<StructuringModelOptions> {
     return this.json(
-      { path: '/v2/runtime/model-options', signal },
-      'RuntimeModelOptions',
+      { path: '/v2/runtime/structuring-model-options', signal },
+      'StructuringModelOptions',
     );
   }
 
@@ -223,10 +233,10 @@ export class CaptureRuntimeClient {
     optionId: string,
     idempotencyKey: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.json(
       {
-        path: '/v2/runtime/model-installations',
+        path: '/v2/runtime/structuring-model-installations',
         method: 'POST',
         signal,
         headers: {
@@ -235,7 +245,7 @@ export class CaptureRuntimeClient {
         },
         body: JSON.stringify({ optionId, consent: true }),
       },
-      'RuntimeModelInstallation',
+      'StructuringModelInstallation',
     );
   }
 
@@ -243,52 +253,53 @@ export class CaptureRuntimeClient {
   getModelInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.json(
       {
-        path: `/v2/runtime/model-installations/${encodeURIComponent(id)}`,
+        path: `/v2/runtime/structuring-model-installations/${encodeURIComponent(id)}`,
         signal,
       },
-      'RuntimeModelInstallation',
+      'StructuringModelInstallation',
     );
-  }
-
-  /** Alias retained for callers that use the status-oriented operation name. */
-  getModelInstallationStatus(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
-    return this.getModelInstallation(id, signal);
   }
 
   /** Cancel a structuring model installation. */
   cancelModelInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.json(
       {
-        path: `/v2/runtime/model-installations/${encodeURIComponent(id)}/cancel`,
+        path: `/v2/runtime/structuring-model-installations/${encodeURIComponent(id)}/cancel`,
         method: 'POST',
         signal,
       },
-      'RuntimeModelInstallation',
+      'StructuringModelInstallation',
     );
   }
 
-  /** Upload a file and start its capture (see `startStreamingCapture`). */
-  createCapture(upload: CaptureUpload): Promise<CaptureOperation> {
-    return this.startStreamingCapture(upload);
+  /** Upload a file through a chunked ingestion and start its capture. */
+  startCapture(upload: CaptureUpload): Promise<CaptureOperation> {
+    return startCaptureRequest(
+      { json: this.json.bind(this), discover: this.discover.bind(this) },
+      upload,
+    );
   }
 
   /** Read a capture operation's current state. */
   getCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
-    return this.getStreamingCapture(id, signal);
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}`, signal },
+      'CaptureOperation',
+    );
   }
 
-  /** Request cancellation of a capture operation. */
-  cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
-    return this.cancelStreamingCapture(id, signal);
+  /** Read the partial result a capture has produced so far. */
+  getPartial(id: string, signal?: AbortSignal): Promise<PartialCapture> {
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}/partial`, signal },
+      'PartialCapture',
+    );
   }
 
   /** Read the raw extraction of a capture. */
@@ -308,8 +319,23 @@ export class CaptureRuntimeClient {
   }
 
   /** Read the terminal capture state, raw extraction, and structured document. */
-  getResult(id: string, signal?: AbortSignal): Promise<CaptureStreamingResult> {
-    return this.getStreamingResult(id, signal);
+  getResult(id: string, signal?: AbortSignal): Promise<CaptureResult> {
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}/result`, signal },
+      'CaptureResult',
+    );
+  }
+
+  /** Request cancellation of a capture operation. */
+  cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(id)}/cancel`,
+        method: 'POST',
+        signal,
+      },
+      'CaptureOperation',
+    );
   }
 
   /** Commit the final structured document for a capture. */
@@ -319,11 +345,18 @@ export class CaptureRuntimeClient {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<CaptureOperation> {
-    return this.commitStreamingStructuredResult(
-      id,
-      candidate,
-      idempotencyKey,
-      signal,
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(id)}/structure/commit`,
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(candidate),
+      },
+      'CaptureOperation',
     );
   }
 
@@ -335,32 +368,59 @@ export class CaptureRuntimeClient {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<CaptureOperation> {
-    return this.reportStreamingStructuringFailure(
-      id,
-      code,
-      message,
-      idempotencyKey,
-      signal,
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(id)}/structure/failure`,
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify({ protocolVersion: '2', code, message }),
+      },
+      'CaptureOperation',
     );
   }
 
-  /** Open an authenticated pull-based structuring session for one capture. */
+  /** Delete a capture and its stored artifacts from the runtime. */
+  deleteCapture(id: string, signal?: AbortSignal): Promise<void> {
+    return this.json<void>({
+      path: `/v2/captures/${encodeURIComponent(id)}`,
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  /**
+   * Delete an ingestion and its uploaded bytes. The runtime rejects it with
+   * `ingestion_delete_rejected` while a capture of it is still running.
+   */
+  deleteIngestion(id: string, signal?: AbortSignal): Promise<void> {
+    return this.json<void>({
+      path: `/v2/ingestions/${encodeURIComponent(id)}`,
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  /**
+   * Open an authenticated pull-based structuring session for one capture. The
+   * route names the capture and the idempotency key identifies the request;
+   * repeating the key with the same body returns the same session.
+   */
   openStructuringSession(
     captureId: string,
     request: OpenStructuringSession,
-    idempotencyKey = request.clientRequestId,
+    idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<StructuringSession> {
-    if (request.captureId !== captureId) {
+    if (!idempotencyKey) {
       throw new CaptureRuntimeProtocolError(
-        'Structuring session captureId must match the route capture.',
+        'Opening a structuring session needs an X-Idempotency-Key.',
       );
     }
-    if (!idempotencyKey || idempotencyKey !== request.clientRequestId) {
-      throw new CaptureRuntimeProtocolError(
-        'X-Idempotency-Key must match structuring session clientRequestId.',
-      );
-    }
+    assertOpenStructuringSessionFields(request);
     return this.json(
       {
         path: `/v2/captures/${encodeURIComponent(captureId)}/structure/session`,
@@ -410,15 +470,6 @@ export class CaptureRuntimeClient {
     );
   }
 
-  /** Alias that makes the pull nature explicit for host coordinators. */
-  pullStructuringBatch(
-    captureId: string,
-    batchIndex: number,
-    signal?: AbortSignal,
-  ): Promise<StructuringBatch> {
-    return this.getStructuringBatch(captureId, batchIndex, signal);
-  }
-
   /** Submit the host's result for one structuring batch. */
   submitStructuringBatch(
     captureId: string,
@@ -452,115 +503,6 @@ export class CaptureRuntimeClient {
       },
       'StructuringSession',
     );
-  }
-
-  /** Upload a file through a chunked ingestion and start its capture. */
-  async startStreamingCapture(
-    upload: CaptureUpload,
-  ): Promise<CaptureOperation> {
-    return startStreamingCaptureRequest(
-      {
-        json: this.json.bind(this),
-        getStreamingCapabilities: this.getStreamingCapabilities.bind(this),
-      },
-      upload,
-    );
-  }
-
-  /** Read a capture operation's current state. */
-  getStreamingCapture(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      { path: `/v2/captures/${encodeURIComponent(id)}`, signal },
-      'CaptureOperation',
-    );
-  }
-  /** Read the partial result a capture has produced so far. */
-  getStreamingPartial(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<PartialCapture> {
-    return this.json(
-      { path: `/v2/captures/${encodeURIComponent(id)}/partial`, signal },
-      'PartialCapture',
-    );
-  }
-  /** Read the terminal capture state, raw extraction, and structured document. */
-  getStreamingResult(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureStreamingResult> {
-    return this.json(
-      { path: `/v2/captures/${encodeURIComponent(id)}/result`, signal },
-      'StreamingResult',
-    );
-  }
-  /** Request cancellation of a capture operation. */
-  cancelStreamingCapture(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      {
-        path: `/v2/captures/${encodeURIComponent(id)}/cancel`,
-        method: 'POST',
-        signal,
-      },
-      'CaptureOperation',
-    );
-  }
-  /** Commit the final structured document for a capture. */
-  commitStreamingStructuredResult(
-    id: string,
-    candidate: CaptureDocument,
-    idempotencyKey: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      {
-        path: `/v2/captures/${encodeURIComponent(id)}/structure/commit`,
-        method: 'POST',
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify(candidate),
-      },
-      'CaptureOperation',
-    );
-  }
-  /** Report that host-side structuring failed for a capture. */
-  reportStreamingStructuringFailure(
-    id: string,
-    code: string,
-    message: string,
-    idempotencyKey: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      {
-        path: `/v2/captures/${encodeURIComponent(id)}/structure/failure`,
-        method: 'POST',
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({ protocolVersion: '2', code, message }),
-      },
-      'CaptureOperation',
-    );
-  }
-  /** Delete a capture and its stored artifacts from the runtime. */
-  deleteCapture(id: string, signal?: AbortSignal): Promise<void> {
-    return this.json<void>({
-      path: `/v2/captures/${encodeURIComponent(id)}`,
-      method: 'DELETE',
-      signal,
-    });
   }
 
   /** Yield capture events from the SSE stream until a terminal event, resuming after the last seen event. */
@@ -606,4 +548,38 @@ function isTransport(
   value: CaptureRuntimeClientOptions | RuntimeTransport,
 ): value is RuntimeTransport {
   return typeof (value as RuntimeTransport).request === 'function';
+}
+
+const OPEN_STRUCTURING_SESSION_FIELDS: ReadonlySet<string> = new Set([
+  'protocolVersion',
+  'targetLanguage',
+  'profileId',
+  'providerCapability',
+  'schemaDialect',
+]);
+const PROVIDER_CAPABILITY_FIELDS: ReadonlySet<string> = new Set([
+  'provider',
+  'schemaDialect',
+]);
+
+/**
+ * A variable can satisfy the request type and still carry fields the runtime
+ * rejects, such as the retired `captureId`, `clientRequestId` and
+ * `capability`: the route and the idempotency key now carry the first two.
+ */
+function assertOpenStructuringSessionFields(request: OpenStructuringSession): void {
+  const capability = (request as { providerCapability?: unknown }).providerCapability;
+  const unknown = [
+    ...Object.keys(request).filter((field) => !OPEN_STRUCTURING_SESSION_FIELDS.has(field)),
+    ...(capability !== null && typeof capability === 'object'
+      ? Object.keys(capability)
+          .filter((field) => !PROVIDER_CAPABILITY_FIELDS.has(field))
+          .map((field) => `providerCapability.${field}`)
+      : []),
+  ];
+  if (unknown.length > 0) {
+    throw new CaptureRuntimeProtocolError(
+      `Structuring session request has fields outside the contract: ${unknown.join(', ')}.`,
+    );
+  }
 }

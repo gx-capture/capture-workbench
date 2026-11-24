@@ -11,6 +11,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from worker_archive import ensure_worker_tree
+
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.worker_contracts import WorkerRequest, WorkerResponse
 
@@ -19,7 +21,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("executable", type=Path)
     parser.add_argument("requirement_id")
+    parser.add_argument("archive", type=Path)
+    parser.add_argument("manifest", type=Path)
     arguments = parser.parse_args()
+    ensure_worker_tree(
+        Path(__file__).resolve().parents[1],
+        arguments.executable,
+        arguments.archive,
+        arguments.manifest,
+    )
     request = WorkerRequest(
         request_id="packaged-code-probe",
         operation="probe",

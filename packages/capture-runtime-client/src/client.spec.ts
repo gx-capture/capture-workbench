@@ -7,14 +7,17 @@ import {
   CAPTURE_CONTRACT_SET_SHA256,
   CAPTURE_DOCUMENT_SCHEMA_SHA256,
   RUNTIME_VERSION,
+  type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
   type RuntimeInstallation,
+  type StructuringSession,
   type SubmitStructuringBatch,
 } from './contracts';
 import { decodeJson, type RuntimeResponseModel } from './codec';
 import {
   CaptureAuthenticationError,
+  CaptureRemoteError,
   CaptureRuntimeCompatibilityError,
   CaptureRuntimeError,
   CaptureRuntimeProtocolError,
@@ -35,8 +38,8 @@ const ready = {
     service: 'capture-runtime',
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
-    contractSha256: CAPTURE_CONTRACT_SET_SHA256,
-    mode: 'gpu-dml',
+    contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,
@@ -48,6 +51,11 @@ const ready = {
     supportsCancellation: true,
     supportsRawDiagnostics: true,
     maxUploadBytes: 100,
+    maxChunkBytes: 10,
+    checkpointIntervalMs: 500,
+    heartbeatIntervalMs: 1000,
+    stallTimeoutMs: 5000,
+    supportsProgressiveRecording: true,
   },
 };
 
@@ -60,7 +68,6 @@ const canonicalBundleBytes = Uint8Array.from(
   ),
 );
 const canonicalContractIndex = {
-  catalogVersion: '2',
   runtimeVersion: RUNTIME_VERSION,
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
@@ -70,11 +77,11 @@ const canonicalContractIndex = {
 
 const ocrEngine = {
   status: 'resolved',
-  engine: 'windowsml-ocr',
-  model: 'pp-ocrv6-medium-windowsml',
+  engine: 'text-recognition',
+  model: 'pp-ocrv6-medium',
   modelDigest: `sha256:${'a'.repeat(64)}`,
-  device: 'windowsml-dml',
-  profileId: 'capture-workbench-ocr-pipeline-v1',
+  device: 'directml',
+  profileId: 'ocr-pipeline-v1',
   profileSpecSha256: 'b'.repeat(64),
 };
 
@@ -91,9 +98,9 @@ const completedOcr = {
   captureId: 'cap',
   status: 'completed',
   source: ocrSource,
-  pageCount: 1,
+  processedPageCount: 1,
   runtimeVersion: RUNTIME_VERSION,
-  contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+  contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
   pages: [
     {
       page: 1,
@@ -129,9 +136,9 @@ const failedOcr = {
   captureId: 'cap',
   status: 'failed',
   pages: [],
-  pageCount: 0,
+  processedPageCount: 0,
   runtimeVersion: RUNTIME_VERSION,
-  contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+  contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
   source: null,
   provenance: ocrEngine,
   warnings: [],
@@ -154,7 +161,7 @@ function sharedPerspectiveOcrFixture(): Record<string, unknown> {
       'utf8',
     ),
   ) as Record<string, unknown>;
-  fixture['contractSha256'] = CAPTURE_CONTRACT_SET_SHA256;
+  fixture['contractSetSha256'] = CAPTURE_CONTRACT_SET_SHA256;
   fixture['runtimeVersion'] = RUNTIME_VERSION;
   return fixture;
 }
@@ -176,7 +183,7 @@ function sharedPageSelectionFixture(): SharedPageSelectionFixture {
       'utf8',
     ),
   ) as SharedPageSelectionFixture;
-  fixture.projection['contractSha256'] = CAPTURE_CONTRACT_SET_SHA256;
+  fixture.projection['contractSetSha256'] = CAPTURE_CONTRACT_SET_SHA256;
   fixture.projection['runtimeVersion'] = RUNTIME_VERSION;
   return fixture;
 }
@@ -253,19 +260,6 @@ function withDiscovery(
         });
       },
     },
-    {
-      path: '/v2/streaming/health/ready',
-      handle: () => {
-        observe('/v2/streaming/health/ready');
-        return Response.json({
-          protocolVersion: '2',
-          maxChunkBytes: 10,
-          checkpointIntervalMs: 500,
-          heartbeatIntervalMs: 1000,
-          stallTimeoutMs: 5000,
-        });
-      },
-    },
     ...routes,
   ];
 }
@@ -304,7 +298,7 @@ describe('CaptureRuntimeClient', () => {
           handle: () => Response.json({ items: [] }),
         },
         {
-          path: '/v2/runtime/model-options',
+          path: '/v2/runtime/structuring-model-options',
           handle: () => Response.json({ catalogSha256: 'a'.repeat(64), items: [] }),
         },
       ]),
@@ -323,7 +317,7 @@ describe('CaptureRuntimeClient', () => {
     await client.getRequirements();
     await client.listInstallations();
     await client.getModelOptions();
-    await client.getStreamingCapabilities();
+    await client.getReady();
 
     expect(requestedPaths.length).toBeGreaterThan(0);
     for (const path of requestedPaths) {
@@ -336,7 +330,23 @@ describe('CaptureRuntimeClient', () => {
     expect(Object.keys(publicSdk)).not.toContain('CaptureJobV1');
     expect(Object.keys(publicSdk)).not.toContain('CaptureJobV2');
     expect(Object.keys(publicSdk)).not.toContain('CaptureFailureV1');
-    expect(Object.keys(publicSdk)).not.toContain('CaptureFailureV2');
+    expect(Object.keys(publicSdk)).not.toContain('CaptureFailure');
+  });
+
+  it('exports no type under a retired or moved name', () => {
+    // Object.keys sees only values. Each entry fails the type check when the
+    // package exports that type again. The suffixed schema name is guarded by
+    // the retired-names gate, which rejects it anywhere in the source.
+    type RetiredOrMovedTypes = [
+      // @ts-expect-error -- retired: the async failure object is OperationFailure.
+      import('./index').CaptureFailure,
+      // @ts-expect-error -- moved: the Workbench UI package owns the review types.
+      import('./index').CaptureReview,
+      // @ts-expect-error -- moved: the Workbench UI package owns the review types.
+      import('./index').CaptureReviewEdit,
+    ];
+    const retired: RetiredOrMovedTypes | undefined = undefined;
+    expect(retired).toBeUndefined();
   });
 
   it('publishes the canonical value-level OCR projection parser', () => {
@@ -379,15 +389,14 @@ describe('CaptureRuntimeClient', () => {
           requiredHeaders: ['X-Idempotency-Key'],
           idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
         }),
-        operation('/v2/streaming/health/ready'),
         operation('/v2/runtime/requirements'),
         operation('/v2/runtime/installations', {
           method: 'POST',
           requiredHeaders: ['X-Idempotency-Key'],
           idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
         }),
-        operation('/v2/runtime/model-options'),
-        operation('/v2/runtime/model-installations', {
+        operation('/v2/runtime/structuring-model-options'),
+        operation('/v2/runtime/structuring-model-installations', {
           method: 'POST',
           requiredHeaders: ['X-Idempotency-Key'],
           idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
@@ -405,7 +414,7 @@ describe('CaptureRuntimeClient', () => {
         }),
         operation('/v2/captures/{capture_id}/raw'),
         operation('/v2/captures/{capture_id}/ocr', {
-          responseSchema: 'CaptureOcrProjectionV3',
+          responseSchema: 'CaptureOcrProjection',
         }),
         operation('/v2/captures/{capture_id}/result'),
         operation('/v2/captures/{capture_id}/structure/session', {
@@ -425,6 +434,7 @@ describe('CaptureRuntimeClient', () => {
         }),
       ],
       problems: [],
+      failureCodes: [],
       invariants: [],
     };
     const bytes = new TextEncoder().encode(JSON.stringify(bundle));
@@ -433,7 +443,6 @@ describe('CaptureRuntimeClient', () => {
       byte.toString(16).padStart(2, '0'),
     ).join('');
     const index = {
-      catalogVersion: '2',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
@@ -442,17 +451,6 @@ describe('CaptureRuntimeClient', () => {
     };
     const transport = new InMemoryRuntimeTransport([
       { path: '/v2/health/ready', handle: () => Response.json(ready) },
-      {
-        path: '/v2/streaming/health/ready',
-        handle: () =>
-          Response.json({
-            protocolVersion: '2',
-            maxChunkBytes: 10,
-            checkpointIntervalMs: 500,
-            heartbeatIntervalMs: 1000,
-            stallTimeoutMs: 5000,
-          }),
-      },
       { path: '/meta/v2/contracts', handle: () => Response.json(index) },
       {
         path: index.href,
@@ -471,7 +469,7 @@ describe('CaptureRuntimeClient', () => {
       transport,
       expectedContractSetSha256: digest,
     }).discover();
-    expect(discovery.schemaSha256).toBe(CAPTURE_DOCUMENT_SCHEMA_SHA256);
+    expect(discovery.captureDocumentSchemaSha256).toBe(CAPTURE_DOCUMENT_SCHEMA_SHA256);
   });
 
   it('fails closed on an incompatible schema hash', async () => {
@@ -516,7 +514,6 @@ describe('CaptureRuntimeClient', () => {
       '/v2/health/ready',
       '/meta/v2/contracts',
       canonicalContractIndex.href,
-      '/v2/streaming/health/ready',
       '/v2/runtime/requirements',
       '/v2/runtime/requirements',
     ]);
@@ -544,7 +541,7 @@ describe('CaptureRuntimeClient', () => {
       pageProvenance !== undefined && pageProvenance.status === 'resolved'
         ? pageProvenance.engine
         : undefined,
-    ).toBe('windowsml-ocr');
+    ).toBe('text-recognition');
     expect(completed.pages[0]?.boxes?.[0]?.polygon).toEqual([
       { x: 10.5, y: 20.25 },
       { x: 310.75, y: 12.5 },
@@ -571,9 +568,13 @@ describe('CaptureRuntimeClient', () => {
 
   it.each([
     [401, 'unauthorized', CaptureAuthenticationError],
+    [403, 'origin_not_allowed', CaptureRemoteError],
+    [403, 'forbidden_by_proxy', CaptureRemoteError],
+    // The status decides: a 403 naming `unauthorized` is still a refusal.
+    [403, 'unauthorized', CaptureRemoteError],
     [404, 'capture_not_found', CaptureRuntimeError],
     [409, 'ocr_unavailable', CaptureRuntimeError],
-  ] as const)('maps OCR HTTP %s to the stable error taxonomy', async (status, code, errorType) => {
+  ] as const)('maps OCR HTTP %s %s to the stable error taxonomy', async (status, code, errorType) => {
     const transport = new InMemoryRuntimeTransport(
       withDiscovery([
         {
@@ -584,7 +585,10 @@ describe('CaptureRuntimeClient', () => {
                 error: {
                   code,
                   message: code === 'ocr_unavailable' ? 'OCR is pending.' : 'OCR request failed.',
-                  details: { retryable: status === 409 },
+                  details: {
+                    retryable: status === 409,
+                    ...(status === 403 ? { category: 'authentication' } : {}),
+                  },
                 },
               }),
               { status, headers: { 'Content-Type': 'application/json' } },
@@ -598,6 +602,14 @@ describe('CaptureRuntimeClient', () => {
     await expect(
       new CaptureRuntimeClient({ baseUrl: 43123, transport }).getOcr('cap'),
     ).rejects.toBeInstanceOf(errorType);
+    if (status === 403) {
+      // A refused origin is an authorization error, never a bad token.
+      const refused = await new CaptureRuntimeClient({ baseUrl: 43123, transport })
+        .getOcr('cap')
+        .catch((error: unknown) => error);
+      expect(refused).not.toBeInstanceOf(CaptureAuthenticationError);
+      expect(refused).toMatchObject({ category: 'authorization' });
+    }
   });
 
   it('reads download bytes on an installation and rejects an inconsistent pair', async () => {
@@ -659,7 +671,7 @@ describe('CaptureRuntimeClient', () => {
     expect([pdf.pagesDone, pdf.pagesTotal]).toEqual([9, 12]);
     const audio = await decode({
       ...operation,
-      kind: 'audio',
+      kind: 'recording',
       durationMs: 2_490_000,
       coveredUntilMs: 724_000,
       pagesDone: null,
@@ -674,11 +686,11 @@ describe('CaptureRuntimeClient', () => {
       { kind: 'pdf', pagesDone: 4, pagesTotal: 3 },
       { kind: 'pdf', pagesDone: 0, pagesTotal: 0 },
       { kind: 'image', pagesDone: 0.5, pagesTotal: 1 },
-      { kind: 'audio', pagesDone: 1, pagesTotal: 2 },
+      { kind: 'recording', pagesDone: 1, pagesTotal: 2 },
       { pagesDone: 1, pagesTotal: 2 },
       { kind: 'pdf', durationMs: 1000 },
       { kind: 'image', coveredUntilMs: 1000 },
-      { kind: 'audio', durationMs: -1 },
+      { kind: 'recording', durationMs: -1 },
     ]) {
       await expect(decode({ ...operation, ...progress })).rejects.toBeInstanceOf(
         CaptureRuntimeProtocolError,
@@ -723,8 +735,8 @@ data: ${JSON.stringify(event)}
     ]);
     expect(seen.map((item) => item.pagesDone ?? null)).toEqual([0, 1, null]);
     const audio = await read([
-      { ...event, kind: 'audio', sequence: 1, coveredUntilMs: 60_000, durationMs: 120_000 },
-      { ...event, kind: 'audio', sequence: 2, eventType: 'completed' },
+      { ...event, kind: 'recording', sequence: 1, coveredUntilMs: 60_000, durationMs: 120_000 },
+      { ...event, kind: 'recording', sequence: 2, eventType: 'completed' },
     ]);
     expect(audio[0]?.durationMs).toBe(120_000);
     await expect(
@@ -823,13 +835,13 @@ data: ${JSON.stringify(event)}
 
     const unavailableProvenance = {
       status: 'unavailable',
-      profileId: 'capture-workbench-ocr-pipeline-v1',
+      profileId: 'ocr-pipeline-v1',
       profileSpecSha256: 'b'.repeat(64),
       reason: 'model_unavailable',
     };
     const failedWithUnavailableProvenance = {
       ...failedOcr,
-      pageCount: 1,
+      processedPageCount: 1,
       pages: [
         {
           page: 1,
@@ -1042,6 +1054,7 @@ data: ${JSON.stringify(event)}
             received = request as RequestInit;
             const event = {
               captureId: 'cap',
+              kind: 'recording',
               sequence: 2,
               eventType: 'completed',
             };
@@ -1057,7 +1070,7 @@ data: ${JSON.stringify(event)}
             received = request as RequestInit;
             return Response.json({
               installationId: 'i1',
-              requirementId: 'r1',
+              requirementId: 'speech-recognition',
               status: 'queued',
               progress: 0,
               createdAt: '2026-01-01T00:00:00Z',
@@ -1066,7 +1079,7 @@ data: ${JSON.stringify(event)}
           },
         },
         {
-          path: '/v2/runtime/model-installations/model-1',
+          path: '/v2/runtime/structuring-model-installations/model-1',
           handle: () =>
             Response.json({
               installationId: 'model-1',
@@ -1079,7 +1092,7 @@ data: ${JSON.stringify(event)}
         },
         {
           method: 'POST',
-          path: '/v2/runtime/model-installations/model-1/cancel',
+          path: '/v2/runtime/structuring-model-installations/model-1/cancel',
           handle: () =>
             Response.json({
               installationId: 'model-1',
@@ -1097,12 +1110,9 @@ data: ${JSON.stringify(event)}
     for await (const event of client.captureEvents('cap', { lastEventId: 1 }))
       events.push(event);
     expect(events).toHaveLength(1);
-    await client.startInstallation('r1', 'idempotency-1');
+    await client.startInstallation('speech-recognition', 'idempotency-1');
     expect(received).toBeDefined();
     expect((await client.getModelInstallation('model-1')).status).toBe(
-      'running',
-    );
-    expect((await client.getModelInstallationStatus('model-1')).status).toBe(
       'running',
     );
     expect((await client.cancelModelInstallation('model-1')).status).toBe(
@@ -1110,13 +1120,43 @@ data: ${JSON.stringify(event)}
     );
   });
 
+  it('rejects the renamed schema digest option instead of ignoring it', () => {
+    const options = {
+      baseUrl: 43123,
+      transport: new InMemoryRuntimeTransport([]),
+      expectedSchemaSha256: 'a'.repeat(64),
+    };
+    expect(() => new CaptureRuntimeClient(options)).toThrow(
+      'expectedCaptureDocumentSchemaSha256',
+    );
+  });
+
+  it('installs the structuring model only through model installation', async () => {
+    const requested: string[] = [];
+    const client = new CaptureRuntimeClient({
+      baseUrl: 43123,
+      transport: {
+        request: (request) => {
+          requested.push(request.path);
+          return Promise.resolve(Response.json({}));
+        },
+      },
+    });
+    // @ts-expect-error -- a general installation does not take the structuring model.
+    const modelId: Parameters<CaptureRuntimeClient['startInstallation']>[0] = 'structuring-model';
+    await expect(client.startInstallation(modelId, 'model-request')).rejects.toThrow(
+      'startModelInstallation',
+    );
+    expect(requested).toEqual([]);
+  });
+
   it('uninstalls a requirement and checks the requirement it returns', async () => {
     const requirement = {
       requirementId: 'speech-recognition',
-      kind: 'transcription',
+      kind: 'speech-recognition',
       displayName: 'Speech recognition',
       status: 'installable',
-      requiredFor: ['audio'],
+      requiredFor: ['recording'],
       installStrategy: 'runtime-catalog',
       downloadBytes: 1024,
     };
@@ -1146,6 +1186,11 @@ data: ${JSON.stringify(event)}
     ).resolves.toEqual(requirement);
     expect(methods).toEqual(['DELETE']);
 
+    body = { ...requirement, kind: 'stt' };
+    await expect(
+      client.uninstallRequirement('speech-recognition'),
+    ).rejects.toThrow('invalid RuntimeRequirement identity');
+
     body = { ...requirement, installedAt: '2026-01-01T00:00:00Z' };
     await expect(
       client.uninstallRequirement('speech-recognition'),
@@ -1170,8 +1215,8 @@ data: ${JSON.stringify(event)}
       new Response(JSON.stringify(fixture.projection)),
       undefined,
       'CaptureOcrProjection',
-    )) as { pageCount: number; pages: { page: number }[] };
-    expect(decoded.pageCount).toBe(4);
+    )) as { processedPageCount: number; pages: { page: number }[] };
+    expect(decoded.processedPageCount).toBe(4);
     expect(decoded.pages.map((item) => item.page)).toEqual(fixture.pdfPageNumbers);
 
     for (const order of fixture.invalidProjectionPageOrders) {
@@ -1264,8 +1309,8 @@ data: ${JSON.stringify(event)}
       clientRequestId: 'request-selected-pages',
     };
 
-    await client.startStreamingCapture({ ...upload, pdfPageNumbers: [3, 7, 8, 20] });
-    await client.startStreamingCapture(upload);
+    await client.startCapture({ ...upload, pdfPageNumbers: [3, 7, 8, 20] });
+    await client.startCapture(upload);
 
     expect(starts[0]?.['pdfPageNumbers']).toEqual([3, 7, 8, 20]);
     expect(starts[1]).not.toHaveProperty('pdfPageNumbers');
@@ -1276,10 +1321,143 @@ data: ${JSON.stringify(event)}
       Array.from({ length: 501 }, (_, index) => index + 1),
     ]) {
       await expect(
-        client.startStreamingCapture({ ...upload, pdfPageNumbers }),
+        client.startCapture({ ...upload, pdfPageNumbers }),
       ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
     }
     expect(opened).toBe(2);
+  });
+
+  it('uploads in chunks no larger than the readiness maxChunkBytes', async () => {
+    const body = new TextEncoder().encode('a'.repeat(25));
+    const digest = createHash('sha256').update(body).digest('hex');
+    const ingestion = (received: number, nextChunkIndex: number, status = 'open') => ({
+      protocolVersion: '2',
+      kind: 'pdf',
+      ingestionId: 'ingestion-1',
+      status,
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      totalBytes: body.byteLength,
+      receivedBytes: received,
+      contiguousBytes: received,
+      nextChunkIndex,
+      nextOffset: received,
+      sourceSha256: digest,
+      finalizedSha256: status === 'ready' ? digest : null,
+      expiresAt: '2026-01-01T00:00:00Z',
+    });
+    const ranges: string[] = [];
+    const visited: string[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery(
+        [
+          {
+            method: 'POST',
+            path: '/v2/ingestions',
+            handle: () => Response.json(ingestion(0, 0), { status: 201 }),
+          },
+          {
+            method: 'PUT',
+            path: /^\/v2\/ingestions\/ingestion-1\/chunks\/\d+$/u,
+            handle: (request) => {
+              const range = new Headers(request.headers).get('Content-Range') ?? '';
+              ranges.push(range);
+              const end = Number(/-(\d+)\//u.exec(range)?.[1]) + 1;
+              return Response.json(ingestion(end, ranges.length));
+            },
+          },
+          {
+            method: 'POST',
+            path: '/v2/ingestions/ingestion-1/finalize',
+            handle: () => Response.json(ingestion(body.byteLength, ranges.length, 'ready')),
+          },
+          {
+            method: 'POST',
+            path: '/v2/captures',
+            handle: () =>
+              Response.json(
+                {
+                  protocolVersion: '2',
+                  captureId: 'capture-1',
+                  ingestionId: 'ingestion-1',
+                  kind: 'pdf',
+                  status: 'extracting',
+                  partialRevision: 0,
+                  lastEventSequence: 0,
+                  createdAt: '2026-01-01T00:00:00Z',
+                  updatedAt: '2026-01-01T00:00:00Z',
+                },
+                { status: 202 },
+              ),
+          },
+        ],
+        visited,
+      ),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+
+    await client.startCapture({
+      fileName: 'scan.pdf',
+      body,
+      mediaType: 'application/pdf',
+      sourceKind: 'pdf',
+      clientRequestId: 'request-chunked',
+    });
+
+    expect(ranges).toEqual(['bytes 0-9/25', 'bytes 10-19/25', 'bytes 20-24/25']);
+    expect(visited.filter((path) => path === '/v2/health/ready')).toHaveLength(1);
+  });
+
+  it('deletes an ingestion through its own endpoint', async () => {
+    const deleted: string[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'DELETE',
+          path: '/v2/ingestions/ingestion%201',
+          handle: (request) => {
+            deleted.push(`${request.method ?? 'GET'} ${request.path}`);
+            return new Response(null, { status: 204 });
+          },
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+
+    await expect(client.deleteIngestion('ingestion 1')).resolves.toBeUndefined();
+    expect(deleted).toEqual(['DELETE /v2/ingestions/ingestion%201']);
+  });
+
+  it('reads every readiness capability and rejects a field outside the contract', async () => {
+    const capabilitySchema = (
+      JSON.parse(new TextDecoder().decode(canonicalBundleBytes)) as {
+        schemas: { name: string; schema: { properties: Record<string, unknown> } }[];
+      }
+    ).schemas.find((entry) => entry.name === 'RuntimeCapabilities');
+    expect(Object.keys(capabilitySchema?.schema.properties ?? {}).sort()).toEqual(
+      Object.keys(ready.capabilities).sort(),
+    );
+    let body: Record<string, unknown> = ready;
+    const transport = new InMemoryRuntimeTransport([
+      { path: '/v2/health/ready', handle: () => Response.json(body) },
+    ]);
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport, maxRetries: 0 });
+
+    expect((await client.getReady()).capabilities.supportsProgressiveRecording).toBe(true);
+
+    body = { ...ready, capabilities: { ...ready.capabilities, notInContract: true } };
+    await expect(client.getReady()).rejects.toThrow(
+      'unknown RuntimeReady capabilities field: notInContract',
+    );
+    body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 0 } };
+    await expect(client.getReady()).rejects.toThrow('invalid readiness maxChunkBytes');
+    // The runtime schema bounds both: at least one mode, at most 4 MiB a chunk.
+    body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 4 * 1024 * 1024 } };
+    expect((await client.getReady()).capabilities.maxChunkBytes).toBe(4 * 1024 * 1024);
+    body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 4 * 1024 * 1024 + 1 } };
+    await expect(client.getReady()).rejects.toThrow('invalid readiness maxChunkBytes');
+    body = { ...ready, capabilities: { ...ready.capabilities, structuringModes: [] } };
+    await expect(client.getReady()).rejects.toThrow('invalid readiness structuring modes');
   });
 
   it('names the spoken language of an audio capture only when given', async () => {
@@ -1287,7 +1465,7 @@ data: ${JSON.stringify(event)}
     const digest = createHash('sha256').update(body).digest('hex');
     const ingestion = (received: number, nextChunkIndex: number, status = 'open') => ({
       protocolVersion: '2',
-      kind: 'audio',
+      kind: 'recording',
       ingestionId: 'ingestion-1',
       status,
       fileName: 'listening.mp3',
@@ -1329,7 +1507,7 @@ data: ${JSON.stringify(event)}
                 protocolVersion: '2',
                 captureId: 'capture-1',
                 ingestionId: 'ingestion-1',
-                kind: 'audio',
+                kind: 'recording',
                 status: 'extracting',
                 partialRevision: 0,
                 lastEventSequence: 0,
@@ -1347,12 +1525,12 @@ data: ${JSON.stringify(event)}
       fileName: 'listening.mp3',
       body,
       mediaType: 'audio/mpeg',
-      sourceKind: 'audio' as const,
+      sourceKind: 'recording' as const,
       clientRequestId: 'request-spoken-language',
     };
 
-    await client.startStreamingCapture({ ...upload, spokenLanguage: 'ja' });
-    await client.startStreamingCapture(upload);
+    await client.startCapture({ ...upload, spokenLanguage: 'ja' });
+    await client.startCapture(upload);
 
     expect(starts[0]?.['spokenLanguage']).toBe('ja');
     expect(starts[1]).not.toHaveProperty('spokenLanguage');
@@ -1365,7 +1543,6 @@ data: ${JSON.stringify(event)}
       (byte) => byte.toString(16).padStart(2, '0'),
     ).join('');
     const index = {
-      catalogVersion: '2',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
@@ -1390,10 +1567,33 @@ data: ${JSON.stringify(event)}
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
 
-  it('rejects a content-addressed contract href whose terminal digest differs', async () => {
+  it('rejects a contract index that carries the retired catalogVersion', async () => {
     const digest = 'a'.repeat(64);
     const index = {
       catalogVersion: '2',
+      runtimeVersion: RUNTIME_VERSION,
+      contractSetVersion: '2',
+      surfaces: [{ id: 'v2' }],
+      sha256: digest,
+      href: `/meta/v2/contracts/sha256/${digest}`,
+      mediaType: 'application/json',
+    };
+    const transport = new InMemoryRuntimeTransport([
+      { path: '/v2/health/ready', handle: () => Response.json(ready) },
+      { path: '/meta/v2/contracts', handle: () => Response.json(index) },
+    ]);
+    await expect(
+      new CaptureRuntimeClient({
+        baseUrl: 43123,
+        transport,
+        expectedContractSetSha256: digest,
+      }).discover(),
+    ).rejects.toThrow(/fields outside the contract index/u);
+  });
+
+  it('rejects a content-addressed contract href whose terminal digest differs', async () => {
+    const digest = 'a'.repeat(64);
+    const index = {
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
@@ -1426,7 +1626,7 @@ data: ${JSON.stringify(event)}
           }),
         ),
         undefined,
-        'RuntimeModelInstallation',
+        'StructuringModelInstallation',
       ),
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
@@ -1439,8 +1639,8 @@ data: ${JSON.stringify(event)}
             ...ready,
             ocrCompute: {
               ...ready.ocrCompute,
-              mode: 'gpu-dml',
-              reasonCode: 'dml_provider_unavailable',
+              mode: 'gpu',
+              reasonCode: 'gpu_provider_unavailable',
               userNoticeRequired: true,
               noticeCode: 'ocr_cpu_fallback',
             },
@@ -1450,6 +1650,23 @@ data: ${JSON.stringify(event)}
         'RuntimeReady',
       ),
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+  });
+
+  it('accepts the current provider-unavailable fallback reason', async () => {
+    const fallback = {
+      ...ready.ocrCompute,
+      mode: 'cpu-fallback',
+      reasonCode: 'gpu_provider_unavailable',
+      userNoticeRequired: true,
+      noticeCode: 'ocr_cpu_fallback',
+    };
+    await expect(
+      decodeJson(
+        Response.json({ ...ready, ocrCompute: fallback }),
+        undefined,
+        'RuntimeReady',
+      ),
+    ).resolves.toMatchObject({ ocrCompute: fallback });
   });
 
   it('retries idempotent requests while refusing non-idempotent retries', async () => {
@@ -1519,7 +1736,7 @@ data: ${JSON.stringify(event)}
                 )
               : Response.json({
                   installationId: 'i1',
-                  requirementId: 'r1',
+                  requirementId: 'speech-recognition',
                   status: 'queued',
                   progress: 0,
                   createdAt: '2026-01-01T00:00:00Z',
@@ -1533,7 +1750,7 @@ data: ${JSON.stringify(event)}
       baseUrl: 43123,
       transport: keyedTransport,
       maxRetries: 1,
-    }).startInstallation('r1', 'request-1');
+    }).startInstallation('speech-recognition', 'request-1');
     expect(keyedAttempts).toBe(2);
   });
 
@@ -1551,8 +1768,8 @@ data: ${JSON.stringify(event)}
             );
             const event =
               calls === 1
-                ? { captureId: 'cap', sequence: 1, eventType: 'checkpoint' }
-                : { captureId: 'cap', sequence: 2, eventType: 'completed' };
+                ? { captureId: 'cap', kind: 'recording', sequence: 1, eventType: 'checkpoint' }
+                : { captureId: 'cap', kind: 'recording', sequence: 2, eventType: 'completed' };
             return new Response(
               `id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`,
               { headers: { 'Content-Type': 'text/event-stream' } },
@@ -1581,11 +1798,10 @@ data: ${JSON.stringify(event)}
       protocolVersion: '2',
       sessionId: 'session-1',
       captureId: 'cap',
-      rawSourceSha256: 'a'.repeat(64),
+      sourceSha256: 'a'.repeat(64),
       contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
       providerCapability: {
         provider: { engine: 'ollama', model: 'model-1', digest: `sha256:${'b'.repeat(64)}`, ...timings },
-        capability: 'capture-structuring',
         schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
       },
       schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
@@ -1606,12 +1822,13 @@ data: ${JSON.stringify(event)}
       sourceSegmentIds: ['segment-1'],
       providerPrompt: { rawSegments: [] },
       providerSchema: { type: 'object' },
-      numCtx: 2048,
+      numCtx: 8192,
       numPredict: 256,
       batchDigest: 'd'.repeat(64),
       status: 'ready',
     };
     let openHeaders: Headers | undefined;
+    let openBody: Record<string, unknown> | undefined;
     let submitHeaders: Headers | undefined;
     const transport = new InMemoryRuntimeTransport(
       withDiscovery([
@@ -1620,6 +1837,7 @@ data: ${JSON.stringify(event)}
           path: '/v2/captures/cap/structure/session',
           handle: (request) => {
             openHeaders = new Headers(request.headers);
+            openBody = JSON.parse(String(request.body)) as Record<string, unknown>;
             return new Response(JSON.stringify(session), {
               status: 201,
               headers: { 'Content-Type': 'application/json' },
@@ -1649,17 +1867,23 @@ data: ${JSON.stringify(event)}
     const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
     const request = {
       protocolVersion: '2' as const,
-      captureId: 'cap',
+      profileId: 'qwen3.5-0.8b-structure-v1',
       providerCapability: session.providerCapability,
       schemaDialect: session.schemaDialect,
-      clientRequestId: 'session-key',
     };
-    await client.openStructuringSession('cap', request);
-    expect((await client.openStructuringSession('cap', request)).sessionId).toBe('session-1');
+    await client.openStructuringSession('cap', request, 'session-key');
+    expect((await client.openStructuringSession('cap', request, 'session-key')).sessionId).toBe('session-1');
     expect(openHeaders?.get('X-Idempotency-Key')).toBe('session-key');
+    // The route names the capture and the header names the request.
+    expect(Object.keys(openBody ?? {}).sort()).toEqual([
+      'profileId',
+      'protocolVersion',
+      'providerCapability',
+      'schemaDialect',
+    ]);
     expect((await client.getStructuringSession('cap')).sessionId).toBe('session-1');
     expect((await client.getStructuringSession('cap')).providerCapability.provider).toEqual(session.providerCapability.provider);
-    expect((await client.pullStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
+    expect((await client.getStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
     const submission: SubmitStructuringBatch = {
       batchDigest: batch.batchDigest,
       blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }],
@@ -1667,9 +1891,22 @@ data: ${JSON.stringify(event)}
     await client.submitStructuringBatch('cap', 0, submission, 'batch-key');
     await client.submitStructuringBatch('cap', 0, submission, 'batch-key');
     expect(submitHeaders?.get('X-Idempotency-Key')).toBe('batch-key');
-    expect(() => client.openStructuringSession('other', request)).toThrow(
+    expect(() => client.openStructuringSession('cap', request, '')).toThrow(
       CaptureRuntimeProtocolError,
     );
+
+    // A variable that satisfies the type can still carry the retired fields.
+    openBody = undefined;
+    const legacy = {
+      ...request,
+      captureId: 'cap',
+      clientRequestId: 'session-key',
+      providerCapability: { ...request.providerCapability, capability: 'capture-structuring' },
+    };
+    expect(() => client.openStructuringSession('cap', legacy, 'legacy-key')).toThrow(
+      'captureId, clientRequestId, providerCapability.capability',
+    );
+    expect(openBody).toBeUndefined();
   });
 
   it('rejects extra semantic batch fields before transport and maps keyed conflicts', async () => {
@@ -1751,6 +1988,41 @@ data: ${JSON.stringify(event)}
   });
 });
 
+describe('structuring model options', () => {
+  const option = {
+    optionId: 'qwen3.5-0.8b-v1',
+    displayName: 'Qwen 3.5 0.8B',
+    modelReference: 'qwen3.5:0.8b',
+    downloadBytes: 1024,
+    profileId: 'qwen3.5-0.8b-structure-v1',
+    profileSpecSha256: 'b'.repeat(64),
+    status: 'not-installed',
+  };
+
+  it('decodes each option in its current shape', async () => {
+    const decoded = await decodeJson<{ items: unknown[] }>(
+      Response.json({ catalogSha256: 'a'.repeat(64), items: [option] }),
+      undefined,
+      'StructuringModelOptions',
+    );
+    expect(decoded.items).toEqual([option]);
+  });
+
+  it('rejects an option that carries the retired expectedBytes', async () => {
+    const { downloadBytes, ...rest } = option;
+    await expect(
+      decodeJson(
+        Response.json({
+          catalogSha256: 'a'.repeat(64),
+          items: [{ ...rest, expectedBytes: downloadBytes }],
+        }),
+        undefined,
+        'StructuringModelOptions',
+      ),
+    ).rejects.toThrow('unknown StructuringModelOption field: expectedBytes');
+  });
+});
+
 describe('response field lists follow the contract set', () => {
   // The codec rejects unknown top-level fields, so a field the runtime adds to
   // a response model must reach the codec's list in the same change.
@@ -1763,22 +2035,22 @@ describe('response field lists follow the contract set', () => {
   );
   const contractNames: Record<RuntimeResponseModel, string> = {
     RuntimeReady: 'RuntimeReady',
-    RuntimeStreamingCapabilities: 'RuntimeStreamingCapabilitiesV2',
-    RuntimeRequirement: 'RuntimeRequirementV2',
-    RuntimeRequirements: 'RuntimeRequirementsV2',
-    RuntimeInstallation: 'RuntimeInstallationV2',
-    RuntimeInstallations: 'RuntimeInstallationsV2',
-    RuntimeModelInstallation: 'RuntimeModelInstallationV2',
-    RuntimeModelOptions: 'RuntimeModelOptionsV2',
+    RuntimeRequirement: 'RuntimeRequirement',
+    RuntimeRequirements: 'RuntimeRequirements',
+    RuntimeInstallation: 'RuntimeInstallation',
+    RuntimeInstallations: 'RuntimeInstallations',
+    StructuringModelInstallation: 'StructuringModelInstallation',
+    StructuringModelOptions: 'StructuringModelOptions',
+    StructuringModelOption: 'StructuringModelOption',
     RawCapture: 'RawCapture',
-    CaptureOcrProjection: 'CaptureOcrProjectionV3',
+    CaptureOcrProjection: 'CaptureOcrProjection',
     CaptureDocument: 'CaptureDocument',
-    CaptureOperation: 'CaptureOperationV2',
-    Ingestion: 'IngestionV2',
-    PartialCapture: 'PartialCaptureV2',
-    StreamingResult: 'CaptureStreamingResult',
-    StructuringSession: 'StructuringSessionV2',
-    StructuringBatch: 'StructuringBatchV2',
+    CaptureOperation: 'CaptureOperation',
+    Ingestion: 'Ingestion',
+    PartialCapture: 'PartialCapture',
+    CaptureResult: 'CaptureResult',
+    StructuringSession: 'StructuringSession',
+    StructuringBatch: 'StructuringBatch',
   };
 
   it.each(Object.entries(contractNames) as [RuntimeResponseModel, string][])(
@@ -1798,6 +2070,84 @@ describe('response field lists follow the contract set', () => {
       await expect(
         decodeJson(Response.json({ ...body, notInContract: null }), undefined, model),
       ).rejects.toThrow(`unknown ${model} field: notInContract`);
+    },
+  );
+});
+
+
+it('preserves observed Ollama device provenance while decoding a document', async () => {
+  const engine = {
+    engine: 'ollama',
+    model: 'example',
+    digest: `sha256:${'a'.repeat(64)}`,
+  };
+  const document = {
+    schemaVersion: '2',
+    source: { fileName: 'example.pdf', mediaType: 'application/pdf', bytes: 1, sha256: 'b'.repeat(64) },
+    rawSegments: [],
+    blocks: [],
+    sourceText: '',
+    targetText: '',
+    extractionEngine: engine,
+    structuringEngine: { ...engine, device: 'cuda', deviceName: 'GPU example' },
+    createdAt: '2026-01-01T00:00:00Z',
+    completedAt: '2026-01-01T00:00:01Z',
+  } satisfies CaptureDocument;
+  const decoded = await decodeJson<CaptureDocument>(
+    Response.json(document),
+    undefined,
+    'CaptureDocument',
+  );
+  expect(decoded.structuringEngine).toEqual(document.structuringEngine);
+});
+
+describe('a pull session names the device its provider ran on', () => {
+  const provider = {
+    engine: 'ollama',
+    model: 'model-1',
+    digest: `sha256:${'b'.repeat(64)}`,
+  };
+  const decode = (extra: Record<string, unknown>) =>
+    decodeJson<StructuringSession>(
+      Response.json({
+        protocolVersion: '2',
+        sessionId: 'session-1',
+        captureId: 'cap',
+        sourceSha256: 'a'.repeat(64),
+        contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
+        providerCapability: {
+          provider: { ...provider, ...extra },
+          schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+        },
+        schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+        batchCount: 1,
+        nextBatchIndex: 0,
+        sessionDigest: 'c'.repeat(64),
+        status: 'open',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        completedAt: null,
+      }),
+      undefined,
+      'StructuringSession',
+    );
+
+  it.each([
+    { device: null, deviceName: null },
+    { device: 'cuda', deviceName: 'GPU example' },
+    { device: 'cpu', deviceName: null },
+    {},
+  ])('keeps the provider device fields %j', async (extra) => {
+    const decoded = await decode(extra);
+    expect(decoded.providerCapability.provider).toEqual({ ...provider, ...extra });
+  });
+
+  it.each([{ deviceName: '' }, { deviceName: 5 }, { deviceName: ['GPU example'] }])(
+    'rejects an invalid provider device name %j',
+    async (extra) => {
+      await expect(decode(extra)).rejects.toThrow(
+        'invalid StructuringSession provider deviceName',
+      );
     },
   );
 });

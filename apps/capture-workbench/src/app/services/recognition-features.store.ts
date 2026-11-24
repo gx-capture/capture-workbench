@@ -11,7 +11,7 @@ import { finalize } from 'rxjs';
 import type {
   CaptureRequirementId,
   RuntimeInstallation,
-  RuntimeModelOption,
+  StructuringModelOption,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -35,7 +35,7 @@ export const FIRST_RUN_DISMISSED_STORAGE_KEY =
   'capture-workbench.first-run-dismissed';
 
 const FIRST_RUN_REQUIREMENT_IDS: readonly CaptureRequirementId[] = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
 ];
@@ -66,6 +66,7 @@ export class RecognitionFeaturesStore {
   readonly activeInstallation = this.installation.activeInstallation;
   readonly startingRequirementId = this.installation.startingRequirementId;
   readonly activeModelInstallation = this.installation.activeModelInstallation;
+  readonly modelProgressUnavailable = this.installation.modelProgressUnavailable;
   readonly selectedModelOptionId = this.installation.selectedModelOptionId;
   readonly installationPercent = computed(() =>
     installationPercent(this.activeInstallation()),
@@ -108,7 +109,7 @@ export class RecognitionFeaturesStore {
   });
 
   readonly modelOptionsResource = rxResource<
-    readonly RuntimeModelOption[],
+    readonly StructuringModelOption[],
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
@@ -129,7 +130,7 @@ export class RecognitionFeaturesStore {
     });
   });
 
-  readonly modelOptions = computed<readonly RuntimeModelOption[]>(() =>
+  readonly modelOptions = computed<readonly StructuringModelOption[]>(() =>
     this.modelOptionsResource.hasValue()
       ? this.modelOptionsResource.value()
       : [],
@@ -192,6 +193,33 @@ export class RecognitionFeaturesStore {
     this.forgetUninstalled(stale);
   });
 
+  /**
+   * Every installation end refreshes what depends on it, when it happens: a
+   * failed requirement installation shows its own message, a completed one the
+   * re-check notice, while other installations keep being polled.
+   */
+  private readonly requirementEnds = this.installation.requirementEnded$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe((end) => {
+      this.runtime.reload();
+      this.requirementsResource.reload();
+      if (end.outcome === 'completed') {
+        this.message.set(desktopMessages().recheck);
+      } else if (end.outcome === 'failed' && end.record) {
+        const requirementId = end.record.requirementId;
+        const name = this.requirements().find((item) => item.requirementId === requirementId)?.displayName
+          ?? requirementId;
+        this.message.set(errorMessage(end.record.error?.message ?? desktopMessages().requirementFailed(name)));
+      }
+    });
+
+  private readonly modelEnds = this.installation.modelEnded$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe(() => {
+      this.modelOptionsResource.reload();
+      this.requirementsResource.reload();
+    });
+
   private readonly reattachEffect = effect(() => {
     const started = this.runtimeStarted();
     if (!started) {
@@ -222,6 +250,11 @@ export class RecognitionFeaturesStore {
   /** Returns requirements for a feature that are not yet ready. */
   missingFor(feature: RecognitionFeature): readonly RuntimeRequirement[] {
     return selectFeatureMissing(this.requirements(), feature);
+  }
+
+  /** True while this requirement's installation status requests fail and are being retried. */
+  isProgressUnavailable(requirementId: CaptureRequirementId): boolean {
+    return this.installation.isProgressUnavailable(requirementId);
   }
 
   /** Latest installation record for a requirement, if any. */
@@ -324,16 +357,16 @@ export class RecognitionFeaturesStore {
 
   /** Cancels a running installation and stops the rest of its install queue. */
   cancelInstallation(installationId?: string): void {
-    this.installation.cancelInstallation$(installationId).subscribe({
-      next: () => {
-        this.requirementsResource.reload();
-      },
-      error: (error: unknown) => {
-        this.message.set(errorMessage(error));
-        // Polling stopped with the cancel; pick the installation up again.
-        this.reattachInstallations();
-      },
-    });
+    this.installation
+      .cancelInstallation$(installationId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.requirementsResource.reload();
+        },
+        // The installation is still being polled: only the cancel request failed.
+        error: (error: unknown) => this.message.set(errorMessage(error)),
+      });
   }
 
   /** Remembers that the user dismissed the first-run setup card. */
@@ -377,25 +410,21 @@ export class RecognitionFeaturesStore {
           this.modelOptionsResource.reload();
           this.requirementsResource.reload();
         }),
+        takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
         error: (error: unknown) => this.message.set(errorMessage(error)),
       });
   }
 
-  /** Re-attaches to any running installation reported by the runtime. */
+  /**
+   * Re-attaches to the installations the runtime reports: each running one is
+   * followed (never twice); a call while a listing is pending joins it. Their
+   * ends arrive through the installation end subscriptions.
+   */
   reattachInstallations(): void {
-    if (!this.runtimeStarted() || this.installing()) return;
-    this.installation.reattachInstallations$().subscribe({
-      next: (terminal) => {
-        if (terminal) {
-          this.runtime.reload();
-          this.requirementsResource.reload();
-          if (terminal.status === 'completed') {
-            this.message.set(desktopMessages().recheck);
-          }
-        }
-      },
+    if (!this.runtimeStarted()) return;
+    this.installation.reattachInstallations$().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       error: (error: unknown) => {
         this.requirementsResource.reload();
         this.message.set(errorMessage(error));
@@ -409,7 +438,7 @@ export class RecognitionFeaturesStore {
     if (!this.runtimeStarted() || this.installing()) return;
     if (installable.length === 0) return;
     const ids = installable.map((item) => item.requirementId);
-    this.installation.installRequirements$(installable).subscribe({
+    this.installation.installRequirements$(installable).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (installation) => {
         this.forgetUninstalled([installation.requirementId]);
       },

@@ -40,6 +40,7 @@
       "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "cuda",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -48,6 +49,7 @@
       "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "device": "cpu",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -67,7 +69,7 @@
         "displayName": "王小明"
       }
     ],
-    "suggestedUnits": [],
+    "suggestedRequirementIds": [],
     "warnings": [],
     "ocrPageScope": null,
     "createdAt": "2026-10-13T08:00:00Z"
@@ -113,12 +115,13 @@
       "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "cuda",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
     "diarizationEngine": null,
     "speakers": [],
-    "suggestedUnits": [
+    "suggestedRequirementIds": [
       "vertical-japanese-reader"
     ],
     "warnings": [],
@@ -194,6 +197,7 @@
       "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "cuda",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -202,6 +206,7 @@
       "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "device": "cpu",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -221,12 +226,13 @@
         "displayName": "王小明"
       }
     ],
-    "suggestedUnits": [],
+    "suggestedRequirementIds": [],
     "structuringEngine": {
       "engine": "host",
       "model": "deterministic",
       "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "device": "cpu",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -238,11 +244,11 @@
     "items": [
       {
         "requirementId": "speaker-diarization",
-        "kind": "speaker-identification",
+        "kind": "speaker-diarization",
         "displayName": "Speaker identification",
         "status": "unavailable",
         "requiredFor": [
-          "audio"
+          "recording"
         ],
         "installStrategy": "runtime-catalog",
         "optional": true,
@@ -252,11 +258,11 @@
       },
       {
         "requirementId": "speech-recognition",
-        "kind": "transcription",
+        "kind": "speech-recognition",
         "displayName": "Speech recognition",
         "status": "installable",
         "requiredFor": [
-          "audio"
+          "recording"
         ],
         "installStrategy": "runtime-catalog",
         "optional": true,
@@ -297,11 +303,11 @@
     "durationMs": null,
     "coveredUntilMs": null
   },
-  "audioCaptureOperation": {
+  "recordingCaptureOperation": {
     "protocolVersion": "2",
     "captureId": "capture-audio",
     "ingestionId": "ingestion-audio",
-    "kind": "audio",
+    "kind": "recording",
     "status": "extracting",
     "progress": 0.3,
     "partialRevision": 3,

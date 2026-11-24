@@ -10,9 +10,10 @@ use crate::{
     contracts::{
         DesktopLibraryDetail, DesktopLibrarySummary, LibraryCaptureUpdate, LibraryDocumentRequest,
         LibraryEdits, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
-        LibrarySaveEditsRequest, RuntimeCancelUploadInput, RuntimeCreateCaptureInput,
-        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
-        RuntimeRequirementInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        LibrarySaveEditsRequest, RuntimeCancelUploadInput, RuntimeCaptureEventsInput,
+        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
+        RuntimeRecordingCaptureInput, RuntimeRequirementInput,
+        StructuringModelInstallationStartInput,
     },
     host_api,
     library::LibraryStore,
@@ -83,7 +84,7 @@ pub(crate) fn desktop_acceptance_runtime_process_probe(
 }
 
 /// Requests the normal Tauri close lifecycle. The window event handler owns
-/// the native runtime shutdown, including the OwnedRuntimeSession Job.
+/// the native runtime shutdown, including the OwnedSidecarSession Job.
 #[tauri::command]
 pub(crate) fn desktop_close_window(window: tauri::Window) -> Result<(), String> {
     window
@@ -330,29 +331,30 @@ pub(crate) async fn runtime_uninstall_requirement(
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_model_options(
+pub(crate) async fn runtime_structuring_model_options(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_model_options(&state)).await
+    run_blocking(move || host_api::runtime_structuring_model_options(&state)).await
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_start_model_installation(
+pub(crate) async fn runtime_start_structuring_model_installation(
     state: tauri::State<'_, DesktopState>,
-    input: RuntimeModelInstallationStartInput,
+    input: StructuringModelInstallationStartInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_start_model_installation(&state, input)).await
+    run_blocking(move || host_api::runtime_start_structuring_model_installation(&state, input))
+        .await
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_get_model_installation(
+pub(crate) async fn runtime_get_structuring_model_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_get_model_installation(&state, input)).await
+    run_blocking(move || host_api::runtime_get_structuring_model_installation(&state, input)).await
 }
 
 #[tauri::command]
@@ -377,17 +379,17 @@ pub(crate) async fn runtime_create_capture(
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_start_streaming_capture(
+pub(crate) async fn runtime_start_recording_capture(
     state: tauri::State<'_, DesktopState>,
     library: tauri::State<'_, Arc<LibraryStore>>,
     uploads: tauri::State<'_, Arc<UploadCancellations>>,
-    input: RuntimeStreamingCaptureInput,
+    input: RuntimeRecordingCaptureInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     let library = Arc::clone(library.inner());
     let uploads = Arc::clone(uploads.inner());
     run_blocking(move || {
-        host_api::runtime_start_streaming_capture(&state, &library, &uploads, input)
+        host_api::runtime_start_recording_capture(&state, &library, &uploads, input)
     })
     .await
 }
@@ -402,66 +404,21 @@ pub(crate) async fn runtime_get_capture(
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_get_streaming_capture(
+pub(crate) async fn runtime_get_capture_events(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeCaptureEventsInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || host_api::runtime_get_capture_events(&state, input)).await
+}
+
+#[tauri::command]
+pub(crate) async fn runtime_get_partial(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_get_streaming_capture(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_get_streaming_events(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeStreamingEventsInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_get_streaming_events(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_get_streaming_partial(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_get_streaming_partial(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_get_streaming_result(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_get_streaming_result(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_structure_streaming_capture(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_structure_streaming_capture(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_cancel_capture(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_cancel_capture(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_cancel_streaming_capture(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_cancel_streaming_capture(&state, input)).await
+    run_blocking(move || host_api::runtime_get_partial(&state, input)).await
 }
 
 #[tauri::command]
@@ -498,13 +455,4 @@ pub(crate) async fn runtime_delete_capture(
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || host_api::runtime_delete_capture(&state, input)).await
-}
-
-#[tauri::command]
-pub(crate) async fn runtime_delete_streaming_capture(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_delete_streaming_capture(&state, input)).await
 }

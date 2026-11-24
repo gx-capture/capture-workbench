@@ -8,6 +8,7 @@ import {
 import type {
   CaptureDocument,
   CaptureOperation,
+  CaptureResult,
   RawCapture,
   RuntimeReady,
 } from '@gx-capture/capture-workbench-ui';
@@ -23,15 +24,26 @@ const readyPayload: RuntimeReady = {
   apiVersion: '2.0',
   runtimeVersion: RUNTIME_VERSION,
   captureDocumentSchemaVersion: '2',
-  capabilities: {},
+  capabilities: {
+    captureKinds: ['pdf', 'image', 'recording'],
+    structuringModes: ['runtime', 'host'],
+    supportsCancellation: true,
+    supportsRawDiagnostics: true,
+    maxUploadBytes: 50 * 1024 * 1024,
+    maxChunkBytes: 4 * 1024 * 1024,
+    checkpointIntervalMs: 300_000,
+    heartbeatIntervalMs: 5_000,
+    stallTimeoutMs: 90_000,
+    supportsProgressiveRecording: true,
+  },
   ocrCompute: {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
-    contractSha256: 'a'.repeat(64),
-    mode: 'gpu-dml',
+    contractSetSha256: 'a'.repeat(64),
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,
@@ -63,24 +75,24 @@ const ocrProjection: CaptureOcrProjection = {
     confidence: 0.9,
     provenance: {
       status: 'resolved',
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'b'.repeat(64)}`,
-      device: 'windowsml-dml',
-      profileId: 'capture-workbench-ocr-pipeline-v1',
+      device: 'directml',
+      profileId: 'ocr-pipeline-v1',
       profileSpecSha256: 'c'.repeat(64),
     },
   }],
-  pageCount: 1,
+  processedPageCount: 1,
   runtimeVersion: RUNTIME_VERSION,
-  contractSha256: 'a'.repeat(64),
+  contractSetSha256: 'a'.repeat(64),
   provenance: {
     status: 'resolved',
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
     modelDigest: `sha256:${'b'.repeat(64)}`,
-    device: 'windowsml-dml',
-    profileId: 'capture-workbench-ocr-pipeline-v1',
+    device: 'directml',
+    profileId: 'ocr-pipeline-v1',
     profileSpecSha256: 'c'.repeat(64),
   },
   createdAt: '2026-08-14T00:00:00Z',
@@ -112,7 +124,7 @@ describe('DesktopRuntimeClientService', () => {
     expect(service.readiness.status()).toBe('resolved');
     expect(service.started()).toBe(true);
     expect(service.ready()).toBe(true);
-    expect(service.ocrCompute()?.mode).toBe('gpu-dml');
+    expect(service.ocrCompute()?.mode).toBe('gpu');
     expect(service.pdfPageNumbers()).toBeUndefined();
     expect(commands.invoke).toHaveBeenCalledWith('runtime_ready', {}, expect.any(AbortSignal));
 
@@ -200,7 +212,7 @@ describe('DesktopRuntimeClientService', () => {
     expect(service.pdfPageNumbers()).toBeUndefined();
   });
 
-  it('unwraps the v2 terminal result envelope for the one-shot capture path', () => {
+  it('reads the terminal result envelope through the one result command', () => {
     const operation = { captureId: 'capture-1', status: 'completed' } as CaptureOperation;
     const raw = { sourceText: 'OCR text' } as RawCapture;
     const result = { targetText: 'structured text' } as CaptureDocument;
@@ -219,12 +231,15 @@ describe('DesktopRuntimeClientService', () => {
     });
 
     const service = TestBed.inject(DesktopRuntimeClientService);
-    let received: CaptureDocument | undefined;
+    let received: CaptureResult | undefined;
     service.getResult('capture-1').subscribe((value) => received = value);
 
-    expect(received).toBe(result);
-    expect(received).not.toHaveProperty('operation');
-    expect(received).not.toHaveProperty('raw');
+    expect(received).toEqual({ operation, raw, result });
+    expect(commands.invoke).toHaveBeenCalledWith(
+      'runtime_get_result',
+      { input: { id: 'capture-1' } },
+      undefined,
+    );
   });
 
   it('gets the OCR projection through the fixed native command', () => {
@@ -389,10 +404,10 @@ describe('DesktopRuntimeClientService', () => {
 
   it('uninstalls a requirement through the native Tauri command', () => {
     const removed = {
-      requirementId: 'windowsml-ocr',
-      displayName: 'WindowsML OCR',
+      requirementId: 'text-recognition',
+      displayName: 'Text recognition',
       status: 'installable',
-      kind: 'runtime',
+      kind: 'text-recognition',
       requiredFor: ['capture'],
       installStrategy: 'runtime-catalog',
       downloadBytes: 144_000_000,
@@ -416,12 +431,12 @@ describe('DesktopRuntimeClientService', () => {
 
     const service = TestBed.inject(DesktopRuntimeClientService);
     let requirement: unknown;
-    service.uninstallRequirement('windowsml-ocr').subscribe((value) => (requirement = value));
+    service.uninstallRequirement('text-recognition').subscribe((value) => (requirement = value));
 
     expect(requirement).toEqual(removed);
     expect(commands.invoke).toHaveBeenCalledWith(
       'runtime_uninstall_requirement',
-      { input: { requirementId: 'windowsml-ocr' } },
+      { input: { requirementId: 'text-recognition' } },
       undefined,
     );
   });

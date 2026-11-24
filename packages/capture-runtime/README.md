@@ -8,19 +8,25 @@ diarization run as separately packaged worker processes.
 
 ## OCR
 
-The `capture-engine-ocr` worker serves requirement `windowsml-ocr`: PP-OCRv6
+The `capture-engine-ocr` worker serves requirement `text-recognition`: PP-OCRv6
 medium detection and recognition (Traditional Chinese multilingual dictionary)
 on DirectML, or on the CPU when the compute plan selects it
 (`src/capture_runtime/assets/ocr-profile.json`). The runtime orders the regions
 of each page (`ocr_reading_order.py`), including furigana on horizontal pages
 and boxed vertical passages.
 
+When upgrading from 0.10, install Text recognition once after starting
+0.11. Startup removes the retired OCR installation under the app-data
+lock. The download cache reuses verified model bytes by SHA-256. The runtime
+reads historical capture records in place and exposes the current OCR
+identities in its API.
+
 The optional unit `vertical-japanese-reader` delivers the NDLOCR-Lite models
 (no worker of its own; vendored layout code in
 `src/capture_runtime/ocr/infrastructure/_vendor/ndlocr_lite/`). A vertical page whose text has
 kana is read by it (`ocr_vertical_routing.py`, `ocr_vertical_reader.py`);
 without the unit the page keeps the regular result and the capture names the
-unit in `suggestedUnits`. See the
+requirement ID in `suggestedRequirementIds`. See the
 [decision record](../../.agents/DECISIONS/vertical-japanese-ocr.md).
 
 Routing (`ocr_vertical_routing.py`): every page gets the regular first pass. A
@@ -77,8 +83,8 @@ runs the installed pack's model: TEA-ASR-1.1 on the `cuda` pack, including the
 CPU retry, and TEA-ASR-1.1-mini on the `cpu` pack. `tea-asr-1.1-mini` runs on
 either pack. `tea-asr-1.1` runs on the `cuda` pack on either device; on the `cpu`
 pack the capture fails with `requirement_unavailable` before a worker starts.
-On the `cuda` pack `CAPTURE_WHISPER_PREFER_GPU` (default `true`) still decides
-whether CUDA is tried, and `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` turns the
+On the `cuda` pack, `CAPTURE_SPEECH_PREFER_GPU` defaults to `true` and controls
+whether CUDA is tried. `CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false` turns the
 retry off. Provenance names the model and device that produced the result.
 
 A development test that transcribes real audio sets
@@ -99,9 +105,12 @@ Speech recognition and speaker diarization engine provenance records the result 
 
 ## Public endpoints
 
-All runtime endpoints require the configured Bearer token. Runtime readiness is
-advertised at `GET /v2/health/ready`; streaming capabilities are advertised at
-`GET /v2/streaming/health/ready`.
+All runtime endpoints require the configured Bearer token. `GET /v2/health/ready`
+returns one readiness document whose `capabilities` list the capture kinds,
+structuring modes, upload and chunk limits, event timing, and whether a finalized
+recording is transcribed window by window, with partial results as each window
+completes (`supportsProgressiveRecording`). Transcription starts after the upload
+is finalized.
 The capture lifecycle uses `/v2/ingestions` and `/v2/captures`; runtime
 requirements, model options, and installations use `/v2/runtime/*`.
 
@@ -110,9 +119,33 @@ handles engine units and delegates structuring requirements through the
 `StructuringRequirementInstaller` port to `OllamaRequirementInstaller`.
 Structuring uses that same adapter for model-option installations.
 
+`POST /v2/captures/{capture_id}/structure` runs the runtime structuring provider
+for a capture that is awaiting structuring. When that provider is not
+configured, or it reports that it is unavailable, the route answers `503` with
+problem code `requirement_unavailable` and the fixed message "The structuring
+provider is unavailable." The capture stays `awaiting_structuring`, so the same
+request can succeed once the provider is available. When the provider's output
+fails validation, including a structuring engine that does not match the
+provider, the route answers `422` with problem code `structuring_invalid_output`
+and the fixed message "Structuring output failed strict schema or provenance
+validation." The capture returns to `awaiting_structuring`, so the caller can
+send the request again. The capture is not failed. A capture the runtime
+structures on its own has no caller to retry, and that flow still fails the
+capture with the same code. When the capture is cancelled while the provider is
+working, the capture ends `cancelled`. This route answers `409` with problem
+code `invalid_capture_state` and the fixed message "The capture was cancelled."
+Cancellation does not return the capture to `awaiting_structuring`. A request
+that ends without a cancel request, because the client went away or the runtime
+is stopping, does return it. Any other
+provider error, including a timeout, also returns the capture to
+`awaiting_structuring`; the response stays that failure's existing server
+error. Host structuring (`/structure/session`, batch submit, `/structure/commit`,
+and `/structure/failure`) does not call that provider and does not return these
+problems.
+
 ### Ingestion size limits
 
-Source ingestion (`POST /v2/ingestions`) enforces byte limits per declared source kind: recordings (`audio`) may reach the configured `CAPTURE_MAX_UPLOAD_BYTES` (default 50 MiB), while document sources (`pdf` and `image`) are capped at `min(CAPTURE_MAX_UPLOAD_BYTES, 50 MiB)`. A source declared `audio` and larger than 50 MiB must start with a recording signature: the chunk that shows otherwise is rejected with `chunk_rejected` and is not stored. Readiness (`GET /v2/health/ready`) reports the configured `CAPTURE_MAX_UPLOAD_BYTES` in `capabilities.maxUploadBytes`.
+Source ingestion (`POST /v2/ingestions`) enforces byte limits per declared source kind: recordings (`recording`) may reach the configured `CAPTURE_MAX_UPLOAD_BYTES` (default 50 MiB), while document sources (`pdf` and `image`) are capped at `min(CAPTURE_MAX_UPLOAD_BYTES, 50 MiB)`. A source declared `recording` and larger than 50 MiB must start with a recording signature: the chunk that shows otherwise is rejected with `chunk_rejected` and is not stored. Readiness (`GET /v2/health/ready`) reports the configured `CAPTURE_MAX_UPLOAD_BYTES` in `capabilities.maxUploadBytes`.
 
 The immutable contract catalog is authenticated separately at
 `GET /meta/v2/contracts`. The index points to a content-addressed bundle at
@@ -151,6 +184,14 @@ process's lock asynchronously, so a quick restart retries), startup leaves exist
 `capture-runtime: the app data directory is in use by another Capture Runtime.`
 to stderr (without the directory path), and exits with code `10`
 (`EXIT_APP_DATA_IN_USE`).
+
+The sidecar writes UTF-8 diagnostics to
+`<app_data_dir>/logs/runtime-diagnostics.log`. It rotates at 1 MiB and keeps up
+to three backups alongside the active file. Lines carry a UTC timestamp and
+allowlisted fields for runtime startup, terminal capture outcomes, and worker
+failures. Elapsed milliseconds are measured from capture creation to the
+failure or terminal transition. Tokens, IDs of individual captures and sources,
+file names, paths, URLs, and source content are excluded.
 
 ## Speaker diarization worker
 

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
+from time import monotonic
 from typing import Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureFailureV2,
+    OperationFailure,
+    RuntimeInstallation,
     RuntimeInstallationStatus,
-    RuntimeInstallationV2,
 )
 from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.provisioning.application.requirement_installer import (
@@ -46,8 +48,11 @@ def installation_failure_code(error: BaseException) -> str:
 
     if isinstance(error, WorkerExecutionError):
         return "engine_probe_failed"
-    if isinstance(error, (TimeoutError, OSError)):
-        return "installation_filesystem"
+    # TimeoutError is an OSError, so it is told apart first.
+    if isinstance(error, TimeoutError):
+        return "installation_timeout"
+    if isinstance(error, OSError):
+        return "installation_io_failed"
     if not isinstance(error, EngineInstallationError):
         return "installation_unexpected"
     message = str(error).casefold()
@@ -64,7 +69,7 @@ def installation_failure_code(error: BaseException) -> str:
     return "installation_failed"
 
 
-def _to_domain(job: RuntimeInstallationV2) -> InstallationJob:
+def _to_domain(job: RuntimeInstallation) -> InstallationJob:
     return InstallationJob(
         installation_id=job.installation_id,
         requirement_id=job.requirement_id,
@@ -81,16 +86,16 @@ def _to_domain(job: RuntimeInstallationV2) -> InstallationJob:
     )
 
 
-def _to_contract(job: InstallationJob) -> RuntimeInstallationV2:
+def _to_contract(job: InstallationJob) -> RuntimeInstallation:
     error = None
     if job.failure_code and job.failure_message:
-        error = CaptureFailureV2(
+        error = OperationFailure(
             code=job.failure_code,
             message=job.failure_message,
             stage="runtime",
             retryable=job.retryable,
         )
-    return RuntimeInstallationV2(
+    return RuntimeInstallation(
         installation_id=job.installation_id,
         requirement_id=job.requirement_id,
         status=RuntimeInstallationStatus(job.status.value),
@@ -129,10 +134,12 @@ class InstallationService:
         *,
         installer: RequirementInstaller,
         clock: Clock,
+        progress_clock: Callable[[], float] = monotonic,
     ) -> None:
         self.repository = repository
         self.installer = installer
         self._clock = clock
+        self._progress_clock = progress_clock
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
         # Runtime-owned dependencies are intentionally installed one at a time to
@@ -143,7 +150,7 @@ class InstallationService:
 
     def create(
         self, *, idempotency_key: str, request_fingerprint: str, requirement_id: str
-    ) -> RuntimeInstallationV2:
+    ) -> RuntimeInstallation:
         record, created = self.repository.create_or_get(
             idempotency_key=idempotency_key,
             request_fingerprint=request_fingerprint,
@@ -160,10 +167,10 @@ class InstallationService:
             task.add_done_callback(self._installation_done)
         return record.job
 
-    def get(self, installation_id: str) -> RuntimeInstallationV2:
+    def get(self, installation_id: str) -> RuntimeInstallation:
         return self.repository.get(installation_id).job
 
-    def list(self) -> list[RuntimeInstallationV2]:
+    def list(self) -> list[RuntimeInstallation]:
         return self.repository.list()
 
     async def uninstall(self, requirement_id: str, *, captures: CaptureGate) -> None:
@@ -195,7 +202,7 @@ class InstallationService:
             for job in self.repository.list()
         )
 
-    async def cancel(self, installation_id: str) -> RuntimeInstallationV2:
+    async def cancel(self, installation_id: str) -> RuntimeInstallation:
         job = self.get(installation_id)
         if job.status in TERMINAL_INSTALLATION_STATUSES:
             return job
@@ -232,19 +239,30 @@ class InstallationService:
             domain_job.mark_running(self._clock.now())
             self.repository.update_job(installation_id, _to_contract(domain_job))
 
+            last_persisted = self._progress_clock()
+
+            def update_progress(job: InstallationJob) -> None:
+                nonlocal last_persisted
+                now = self._progress_clock()
+                # One second matches Workbench polling without writing once per chunk.
+                persist = now - last_persisted >= 1.0
+                self.repository.update_job(installation_id, _to_contract(job), persist=persist)
+                if persist:
+                    last_persisted = now
+
             def progress(value: float) -> None:
                 job = _to_domain(self.get(installation_id))
                 if job.is_terminal:
                     return
                 job.update_progress(value, self._clock.now())
-                self.repository.update_job(installation_id, _to_contract(job))
+                update_progress(job)
 
             def downloaded(value: DownloadedBytes) -> None:
                 job = _to_domain(self.get(installation_id))
                 if job.is_terminal:
                     return
                 job.update_download(downloaded=value.done, total=value.total, now=self._clock.now())
-                self.repository.update_job(installation_id, _to_contract(job))
+                update_progress(job)
 
             async with self._install_lock:
                 await self.installer.install(
@@ -292,7 +310,7 @@ class InstallationService:
             self._fail(
                 installation_id,
                 status=RuntimeInstallationStatus.FAILED,
-                code="installation_filesystem",
+                code=installation_failure_code(error),
                 message=f"Runtime requirement installation failed{detail}.",
                 retryable=True,
             )
@@ -324,7 +342,7 @@ class InstallationService:
         )
         self.repository.update_job(installation_id, _to_contract(domain_job))
 
-    def _cancelled_job(self, job: RuntimeInstallationV2) -> RuntimeInstallationV2:
+    def _cancelled_job(self, job: RuntimeInstallation) -> RuntimeInstallation:
         domain_job = _to_domain(job)
         domain_job.mark_cancelled(self._clock.now())
         return _to_contract(domain_job)

@@ -27,7 +27,7 @@ RUNTIME_ROOT = Path(__file__).parents[2]
 PRODUCER_FILES = (
     RUNTIME_ROOT / "src/capture_runtime/workers/ocr_main.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/speech_recognition_main.py",
-    RUNTIME_ROOT / "src/capture_runtime/ocr/infrastructure/ocr_windowsml_adapter.py",
+    RUNTIME_ROOT / "src/capture_runtime/ocr/infrastructure/ocr_onnx_adapter.py",
     RUNTIME_ROOT / "src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/diarization_main.py",
     RUNTIME_ROOT / "src/capture_runtime/diarization/infrastructure/speaker_diarization.py",
@@ -287,4 +287,4 @@ def test_progressive_stage_drain_uses_the_shared_policy_without_leaking_markers(
         async def read(self, _size: int) -> bytes:
             return self._chunks.pop(0)
 
-    assert asyncio.run(_drain_stderr(Stderr())) == "speech-output-empty"
+    assert asyncio.run(_drain_stderr(Stderr())) == ("speech-output-empty",)

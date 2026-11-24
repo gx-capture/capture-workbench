@@ -39,8 +39,8 @@ export interface DesktopLibrarySummary {
   readonly captureId?: string;
   readonly errorCode?: string;
   readonly errorMessage?: string;
+  /** Stored only by earlier versions; read by `capture-operation-status.ts`. */
   readonly recoveryCode?: string;
-  readonly recoveryMessage?: string;
   readonly captureOptions?: DesktopCaptureOptions | null;
   /** True when the library has stored raw OCR or transcript text. */
   readonly hasRaw?: boolean;

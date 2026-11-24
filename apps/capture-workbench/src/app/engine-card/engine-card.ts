@@ -36,6 +36,8 @@ export class EngineCard {
   /** The start request for this requirement is in flight: progress shows with the click. */
   readonly starting = input(false);
   readonly optional = input(false);
+  /** Status requests for this installation are failing and being retried. */
+  readonly retrying = input(false);
 
   readonly install = output<CaptureRequirementId>();
   readonly cancelInstall = output<string>();

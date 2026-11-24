@@ -30,7 +30,7 @@ const EXTENSION_KINDS: Readonly<Record<string, CaptureSourceKind>> = {
   jpeg: 'image',
   webp: 'image',
   ...Object.fromEntries(
-    RECORDING_EXTENSIONS.map((extension) => [extension, 'audio' as const]),
+    RECORDING_EXTENSIONS.map((extension) => [extension, 'recording' as const]),
   ),
 };
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -67,7 +67,7 @@ export class CaptureHelpersService {
         'image/webp',
       );
     }
-    if (enabled.includes('audio')) {
+    if (enabled.includes('recording')) {
       values.push(
         ...RECORDING_EXTENSIONS.map((extension) => `.${extension}`),
         'audio/*',
@@ -159,7 +159,7 @@ export class CaptureHelpersService {
         `Capture runtime does not support schema ${CAPTURE_DOCUMENT_SCHEMA_VERSION}.`,
       );
     }
-    const structuringModes = ready.capabilities['structuringModes'];
+    const structuringModes: unknown = ready.capabilities.structuringModes;
     if (
       requiredStructuringMode &&
       (!Array.isArray(structuringModes) ||
@@ -453,6 +453,7 @@ function sameEngine(
     left.engine === right.engine &&
     left.model === right.model &&
     left.digest === right.digest &&
-    left.device === right.device
+    left.device === right.device &&
+    left.deviceName === right.deviceName
   );
 }

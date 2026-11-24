@@ -14,13 +14,20 @@ import httpx
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import sanitized_child_environment
-from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID, OLLAMA_RUNTIME_REQUIREMENT_ID
-from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
-from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
+from capture_runtime.constants import (
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
+)
+from capture_runtime.contracts import RuntimeRequirement, RuntimeRequirementStatus
+from capture_runtime.provisioning.application.requirement_installer import (
+    ManualActionRequiredError,
+    ModelOptionRejectedError,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import sha256_file
 from capture_runtime.structuring.infrastructure.model_catalog import (
     ActiveModelSelectionStore,
-    RuntimeModelOption,
+    StructuringModelOption,
+    legacy_profile_id,
     model_option,
 )
 from capture_runtime.structuring.infrastructure.ollama.installation_commands import (
@@ -55,13 +62,13 @@ class OllamaRequirementInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         def is_enabled(requirement_id: str) -> bool:
             return enabled_requirement_ids is None or requirement_id in enabled_requirement_ids
 
-        requirements: list[RuntimeRequirementV2] = []
-        ollama_runtime_enabled = is_enabled(OLLAMA_RUNTIME_REQUIREMENT_ID)
-        ollama_model_enabled = is_enabled(OLLAMA_MODEL_REQUIREMENT_ID)
+        requirements: list[RuntimeRequirement] = []
+        ollama_runtime_enabled = is_enabled(STRUCTURING_RUNTIME_REQUIREMENT_ID)
+        ollama_model_enabled = is_enabled(STRUCTURING_MODEL_REQUIREMENT_ID)
         ollama_available = (
             self._lifecycle.executable() is not None
             if ollama_runtime_enabled or ollama_model_enabled
@@ -69,9 +76,9 @@ class OllamaRequirementInstaller:
         )
         if ollama_runtime_enabled:
             requirements.append(
-                RuntimeRequirementV2(
-                    requirement_id=OLLAMA_RUNTIME_REQUIREMENT_ID,
-                    kind="runtime",
+                RuntimeRequirement(
+                    requirement_id=STRUCTURING_RUNTIME_REQUIREMENT_ID,
+                    kind=STRUCTURING_RUNTIME_REQUIREMENT_ID,
                     display_name="Ollama application",
                     status=(
                         RuntimeRequirementStatus.READY
@@ -92,9 +99,9 @@ class OllamaRequirementInstaller:
             # when it actually needs the process.
             model_ready = self._recorded_model_profile_matches()
             requirements.append(
-                RuntimeRequirementV2(
-                    requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
-                    kind="model",
+                RuntimeRequirement(
+                    requirement_id=STRUCTURING_MODEL_REQUIREMENT_ID,
+                    kind=STRUCTURING_MODEL_REQUIREMENT_ID,
                     display_name="Capture structuring model",
                     status=(
                         RuntimeRequirementStatus.READY
@@ -121,10 +128,10 @@ class OllamaRequirementInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:
+        if requirement_id == STRUCTURING_RUNTIME_REQUIREMENT_ID:
             await self._install_ollama(cancel_event, report_progress)
             return
-        if requirement_id == OLLAMA_MODEL_REQUIREMENT_ID:
+        if requirement_id == STRUCTURING_MODEL_REQUIREMENT_ID:
             raise ManualActionRequiredError(
                 "Select a model option through the model-installation API."
             )
@@ -137,12 +144,36 @@ class OllamaRequirementInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        option = model_option(option_id)
+        try:
+            option = model_option(option_id)
+        except KeyError as error:
+            raise ModelOptionRejectedError(
+                "The model option is not in the release catalog"
+            ) from error
+        async with self._lifecycle.lease(cancel_event):
+            await self._install_model_exclusive(option, cancel_event, report_progress)
+
+    async def _install_model_exclusive(
+        self,
+        option: StructuringModelOption,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
         executable = self._lifecycle.executable()
         if executable is None:
             raise ManualActionRequiredError("Install the Ollama application first")
-        self._lifecycle.start()
+        starting = asyncio.create_task(
+            asyncio.to_thread(self._lifecycle.start, cancel_event=cancel_event)
+        )
         try:
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                # Let the launch finish, then the cleanup below stops it. Setting
+                # cancel_event here would record a runtime shutdown as the
+                # user's cancel of this installation job.
+                await asyncio.gather(starting, return_exceptions=True)
+                raise
             await self._wait_for_ollama_server(cancel_event)
             report_progress(0.1)
             environment = self._lifecycle.process_environment()
@@ -164,7 +195,7 @@ class OllamaRequirementInstaller:
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
             modelfile_bytes = option.profile_spec_bytes
             if hashlib.sha256(modelfile_bytes).hexdigest() != option.profile_spec_sha256:
-                raise RuntimeError("Ollama profile specification digest is invalid")
+                raise ModelOptionRejectedError("Ollama profile specification digest is invalid")
             modelfile.write_bytes(modelfile_bytes)
             environment = self._lifecycle.process_environment()
             self._require_lease(f"http://{environment['OLLAMA_HOST']}")
@@ -185,7 +216,7 @@ class OllamaRequirementInstaller:
             if create.return_code != 0:
                 raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
             _atomic_json(
-                self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
+                self._marker(STRUCTURING_MODEL_REQUIREMENT_ID),
                 {
                     "profileId": option.profile_id,
                     "baseModel": option.model_reference,
@@ -234,7 +265,7 @@ class OllamaRequirementInstaller:
             raise RuntimeUnavailableError("isolated Ollama lease changed during installation")
 
     def _verify_pulled_model(
-        self, option: RuntimeModelOption, lease_url: str | None = None
+        self, option: StructuringModelOption, lease_url: str | None = None
     ) -> tuple[str, int]:
         if lease_url is None:
             lease_url = self._lifecycle.host_url
@@ -260,11 +291,17 @@ class OllamaRequirementInstaller:
             digest = str(model.get("digest") or "").removeprefix("sha256:")
             size = model.get("size")
             if not re.fullmatch(r"[0-9a-f]{64}", digest) or not isinstance(size, int) or size <= 0:
-                raise RuntimeError("Ollama model verification returned invalid digest or size")
+                raise ModelOptionRejectedError(
+                    "Ollama model verification returned invalid digest or size"
+                )
             if option.expected_digest is not None and digest != option.expected_digest:
-                raise RuntimeError("Ollama model digest does not match the release catalog")
-            if option.expected_bytes is not None and size != option.expected_bytes:
-                raise RuntimeError("Ollama model size does not match the release catalog")
+                raise ModelOptionRejectedError(
+                    "Ollama model digest does not match the release catalog"
+                )
+            if option.download_bytes is not None and size != option.download_bytes:
+                raise ModelOptionRejectedError(
+                    "Ollama model size does not match the release catalog"
+                )
             return digest, size
         raise RuntimeError("Ollama did not report the selected model after pull")
 
@@ -303,16 +340,21 @@ class OllamaRequirementInstaller:
             return False
         try:
             option = model_option(str(selection["optionId"]))
-            payload = json.loads(
-                self._marker(OLLAMA_MODEL_REQUIREMENT_ID).read_text(encoding="utf-8")
-            )
+            try:
+                source = self._marker(STRUCTURING_MODEL_REQUIREMENT_ID).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                source = (self._markers / "capture-ollama-model.ready.json").read_text(
+                    encoding="utf-8"
+                )
+            payload = json.loads(source)
             modelfile_digest = str(payload["modelfileSha256"])
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
+            selection_profile_id = selection["profileId"]
             return (
-                selection["profileId"] == option.profile_id
+                selection_profile_id in {option.profile_id, legacy_profile_id(option)}
                 and selection["modelReference"] == option.model_reference
                 and selection["profileSpecSha256"] == option.profile_spec_sha256
-                and payload["profileId"] == option.profile_id
+                and payload["profileId"] == selection_profile_id
                 and payload["baseModel"] == option.model_reference
                 and bool(re.fullmatch(r"[0-9a-f]{64}", modelfile_digest))
                 and modelfile_digest == option.profile_spec_sha256

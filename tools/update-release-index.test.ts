@@ -31,12 +31,14 @@ function releases(entries: ReleaseIndex['releases'] = {}): ReleaseIndex {
 test('promotion records an immutable release and stable pointer', () => {
   const result = updateReleaseIndex(stable(), releases(), {
     operation: 'promote',
+    manifestAssetName: 'capture-release-manifest-v2.json',
     tag: ("v" + RELEASE_VERSION),
     candidateId: firstCandidate,
     manifestSha256: firstManifest,
     updatedAt: '2026-08-06T00:00:00.000Z',
   });
   assert.equal(result.stable.releaseTag, ("v" + RELEASE_VERSION));
+  assert.equal(result.stable.manifestAssetName, 'capture-release-manifest-v2.json');
   assert.deepEqual(result.releases.releases[("v" + RELEASE_VERSION)], {
     status: 'released',
     manifestSha256: firstManifest,
@@ -61,6 +63,7 @@ test('supersession moves stable to the replacement and preserves defective histo
     }),
     {
       operation: 'supersede',
+      replacementManifestAssetName: 'capture-release-manifest-v2.json',
       defectiveTag: 'v0.3.10',
       replacementTag: ("v" + RELEASE_VERSION),
       defectiveManifestSha256: firstManifest,
@@ -70,6 +73,7 @@ test('supersession moves stable to the replacement and preserves defective histo
     },
   );
   assert.equal(result.stable.releaseTag, ("v" + RELEASE_VERSION));
+  assert.equal(result.stable.manifestAssetName, 'capture-release-manifest-v2.json');
   assert.deepEqual(result.releases.releases['v0.3.10'], {
     status: 'superseded',
     manifestSha256: firstManifest,
@@ -95,6 +99,7 @@ test('superseded history cannot be revived by a promotion retry', () => {
         }),
         {
           operation: 'promote',
+          manifestAssetName: 'capture-release-manifest-v2.json',
           tag: ("v" + RELEASE_VERSION),
           candidateId: secondCandidate,
           manifestSha256: secondManifest,

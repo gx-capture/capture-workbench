@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export interface InstalledCaptureFixtureExpectation {
-  readonly sourceKind: 'pdf' | 'image' | 'audio';
+  readonly sourceKind: 'pdf' | 'image' | 'recording';
   readonly fileName: string;
   readonly mimeType: string;
   readonly sha256?: string;
@@ -61,7 +61,7 @@ export function assertRawCaptureForFixture(
 
   assertEngine(
     capture['extractionEngine'],
-    fixture.sourceKind === 'audio' ? 'speech-recognition' : 'windowsml-ocr',
+    fixture.sourceKind === 'recording' ? 'speech-recognition' : 'text-recognition',
     'Extraction engine',
   );
 

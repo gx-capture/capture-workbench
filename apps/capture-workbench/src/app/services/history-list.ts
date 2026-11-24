@@ -1,6 +1,6 @@
 import type { DesktopLibrarySummary } from '../contracts';
 import { describeAsrDocument } from './asr-queue';
-import type { CaptureUserStatus } from './capture-user-status';
+import type { CaptureRowInput, CaptureUserStatus } from './capture-user-status';
 import { describeOcrDocument } from './ocr-queue';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { isRecordingMediaType } from './capture-media-types';
@@ -11,6 +11,8 @@ export interface HistoryRow {
   readonly kind: 'ocr' | 'asr';
   readonly userStatus: CaptureUserStatus;
   readonly statusText: string;
+  /** Why this run could not start or end the document's capture, as its queue row says. */
+  readonly failureReason: string | null;
   readonly extent: string;
   readonly updatedAtMs: number;
   readonly updatedAt: string;
@@ -34,21 +36,34 @@ export interface HistoryFilters {
   readonly search: string;
 }
 
-export function historyRow(document: DesktopLibrarySummary, busy: boolean, operation?: DesktopCaptureOperation, active = false): HistoryRow {
+/**
+ * A History row, with the status and filter of the queues' rows. `claimed`:
+ * this run is working on the document (a capture, a decision or a delete),
+ * so it offers no Delete; every other row can be deleted, a linked one too.
+ */
+export function historyRow(
+  document: DesktopLibrarySummary,
+  run: Omit<CaptureRowInput, 'document'> & {
+    readonly claimed: boolean;
+    readonly operation?: DesktopCaptureOperation;
+  },
+): HistoryRow {
   const kind = isRecordingMediaType(document.mediaType) ? 'asr' : 'ocr';
+  const input = { ...run, document, installPercent: null };
   const described = kind === 'asr'
-    ? describeAsrDocument({ document, operation, busy: busy || active, speechReady: true, installPercent: null })
-    : describeOcrDocument({ document, operation, busy: busy || active, ocrReady: true, installPercent: null });
+    ? describeAsrDocument({ ...input, speechReady: true })
+    : describeOcrDocument({ ...input, ocrReady: true });
   return {
     documentId: document.documentId,
     fileName: document.fileName,
     kind,
     userStatus: described.userStatus,
     statusText: described.statusText,
+    failureReason: described.failureReason,
     extent: 'durationLabel' in described ? described.durationLabel : described.pageLabel,
     updatedAtMs: document.updatedAtMs,
     updatedAt: formatHistoryDate(document.updatedAtMs),
-    canDelete: !busy && !active && !document.captureId,
+    canDelete: !run.owned && !run.claimed,
   };
 }
 

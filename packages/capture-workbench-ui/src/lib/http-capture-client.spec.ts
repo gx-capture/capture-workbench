@@ -38,7 +38,7 @@ describe('HttpCaptureClient', () => {
   it('lists runtime installations from the canonical collection endpoint', async () => {
     const installation = {
       installationId: 'install-1',
-      requirementId: 'ollama-runtime' as const,
+      requirementId: 'structuring-runtime' as const,
       status: 'completed' as const,
       progress: 1,
       createdAt: '2026-07-20T00:00:00Z',
@@ -80,6 +80,11 @@ describe('HttpCaptureClient', () => {
           supportsCancellation: true,
           supportsRawDiagnostics: true,
           maxUploadBytes: 1024,
+          maxChunkBytes: 1024 * 1024,
+          checkpointIntervalMs: 300_000,
+          heartbeatIntervalMs: 5_000,
+          stallTimeoutMs: 90_000,
+          supportsProgressiveRecording: true,
         },
       }),
     );
@@ -112,7 +117,7 @@ describe('HttpCaptureClient', () => {
     const client = configureClient(fetchMock);
 
     let error: unknown;
-    client.getStreamingResult('capture-1').subscribe({
+    client.getResult('capture-1').subscribe({
       error: (value) => (error = value),
     });
     await vi.waitFor(() =>
@@ -213,6 +218,7 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-1',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
@@ -231,11 +237,12 @@ describe('HttpCaptureClient', () => {
     let received: unknown;
 
     client
-      .startStreamingCapture({
+      .startCapture({
         clientRequestId: 'request-1',
         file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
         sourceKind: 'pdf',
         structuringMode: 'runtime',
+        pdfPageNumbers: [3, 7],
       })
       .subscribe({ next: (value) => (received = value) });
 
@@ -262,6 +269,43 @@ describe('HttpCaptureClient', () => {
       ),
     ).toBe('request-1');
     expect(String(fetchMock.mock.calls[3]?.[0])).not.toContain('secret-token');
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
+      pdfPageNumbers: [3, 7],
+    });
+  });
+
+  it('sends PDF page numbers only for a PDF source', async () => {
+    const image = {
+      kind: 'image',
+      fileName: 'photo.png',
+      mediaType: 'image/png',
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ...ingestion(0), ...image }, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...ingestion(3), ...image }))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...ingestion(3), ...image, status: 'finalized' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ ...captureOperation(), kind: 'image' }, 202),
+      );
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let received: unknown;
+
+    client
+      .startCapture({
+        clientRequestId: 'request-image',
+        file: new File(['abc'], 'photo.png', { type: 'image/png' }),
+        sourceKind: 'image',
+        structuringMode: 'runtime',
+        pdfPageNumbers: [3, 7],
+      })
+      .subscribe({ next: (value) => (received = value) });
+
+    await vi.waitFor(() => expect(received).toBeDefined());
+    const start = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    expect(start).not.toHaveProperty('pdfPageNumbers');
   });
 
   it('uses v2 operation, partial, result, control, and delete routes', async () => {
@@ -279,7 +323,7 @@ describe('HttpCaptureClient', () => {
       segments: [],
       sourceText: '',
       extractionEngine: {
-        engine: 'windowsml',
+        engine: 'text-recognition',
         model: 'test-ocr',
         digest: `sha256:${'b'.repeat(64)}`,
       },
@@ -313,7 +357,6 @@ describe('HttpCaptureClient', () => {
           captureId: 'capture-1',
           source,
           revision: 1,
-          coveredUntilMs: 0,
           updatedAt: '2026-08-11T00:00:00Z',
         }),
       )
@@ -327,20 +370,20 @@ describe('HttpCaptureClient', () => {
     const client = configureClient(fetchMock) as HttpCaptureClient;
     const signal = new AbortController().signal;
 
-    client.getStreamingCapture('capture-1', signal).subscribe();
-    client.cancelStreamingCapture('capture-1', signal).subscribe();
-    client.getStreamingPartial('capture-1', signal).subscribe();
-    client.getStreamingRaw('capture-1', signal).subscribe();
-    client.getStreamingResult('capture-1', signal).subscribe();
+    client.getCapture('capture-1', signal).subscribe();
+    client.cancelCapture('capture-1', signal).subscribe();
+    client.getPartial('capture-1', signal).subscribe();
+    client.getRaw('capture-1', signal).subscribe();
+    client.getResult('capture-1', signal).subscribe();
     client
-      .commitStreamingStructuredResult(
+      .commitStructure(
         'capture-1',
         { clientRequestId: 'commit-1', candidate },
         signal,
       )
       .subscribe();
     client
-      .reportStreamingStructuringFailure(
+      .reportStructuringFailure(
         'capture-1',
         {
           clientRequestId: 'failure-1',
@@ -350,7 +393,7 @@ describe('HttpCaptureClient', () => {
         signal,
       )
       .subscribe();
-    client.deleteStreamingCapture('capture-1', signal).subscribe();
+    client.deleteCapture('capture-1', signal).subscribe();
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
     expect(
@@ -472,7 +515,6 @@ const contractBundle = Uint8Array.from(
   ),
 );
 const contractIndex = {
-  catalogVersion: '2',
   runtimeVersion: RUNTIME_VERSION,
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
@@ -525,6 +567,11 @@ function discoveryResponse(path: string): Response | undefined {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 1024,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     });
   }
@@ -538,9 +585,6 @@ function discoveryResponse(path: string): Response | undefined {
       },
     });
   }
-  if (path === '/v2/streaming/health/ready') {
-    return jsonResponse(streamingCapabilities());
-  }
   return undefined;
 }
 
@@ -551,19 +595,10 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
-function streamingCapabilities() {
-  return {
-    protocolVersion: '2',
-    maxChunkBytes: 1024 * 1024,
-    checkpointIntervalMs: 250,
-    heartbeatIntervalMs: 1000,
-    stallTimeoutMs: 30000,
-  };
-}
-
 function ingestion(receivedBytes: number) {
   return {
     protocolVersion: '2',
+    kind: 'pdf',
     ingestionId: 'ingestion-1',
     status: 'open',
     fileName: 'scan.pdf',
@@ -582,6 +617,7 @@ function captureOperation() {
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
+    kind: 'pdf',
     status: 'extracting',
     partialRevision: 0,
     lastEventSequence: 0,
@@ -599,6 +635,7 @@ function captureEvent(
     eventId: `event-${sequence}`,
     sequence,
     captureId: 'capture-1',
+    kind: 'recording',
     eventType,
     stage: eventType === 'accepted' ? 'extracting' : eventType,
     createdAt: '2026-08-11T00:00:00Z',

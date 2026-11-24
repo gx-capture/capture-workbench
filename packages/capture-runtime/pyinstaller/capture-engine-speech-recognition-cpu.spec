@@ -91,7 +91,7 @@ exe = EXE(
     name="capture-engine-speech-recognition-cpu",
     debug=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=True,
 )
 coll = COLLECT(
@@ -99,6 +99,6 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     name="capture-engine-speech-recognition-cpu",
 )

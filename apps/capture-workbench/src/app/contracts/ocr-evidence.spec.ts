@@ -60,7 +60,7 @@ describe('buildOcrEvidence', () => {
     expect(evidence.provenance).toMatchObject({
       runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
-      engine: 'windowsml-ocr',
+      engine: 'text-recognition',
       model: 'ppocrv6-traditional-multilingual',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
@@ -82,7 +82,7 @@ describe('buildOcrEvidence', () => {
     ['captureId', { captureId: 'other-capture' }],
     ['sourceSha256', { sourceSha256: 'b'.repeat(64) }],
     ['runtimeVersion', { runtimeVersion: '0.4.1' }],
-    ['contractSha256', { contractSha256: 'b'.repeat(64) }],
+    ['contractSetSha256', { contractSetSha256: 'b'.repeat(64) }],
   ])('fails closed when expected %s identity does not match', async (_field, change) => {
     await expect(buildOcrEvidence({
       projection: projection(),
@@ -141,9 +141,9 @@ describe('buildOcrEvidence', () => {
       requestedPages: null,
     })).rejects.toThrow(/requested pages/u);
 
-    const countMismatch = { ...projection(), pageCount: 2 };
+    const countMismatch = { ...projection(), processedPageCount: 2 };
     await expect(buildOcrEvidence({ projection: countMismatch, expected: expectedIdentity() }))
-      .rejects.toThrow(/pages\/pageCount/u);
+      .rejects.toThrow(/pages\/processedPageCount/u);
   });
 
   it('preserves empty-page semantics without inventing text or confidence', async () => {
@@ -261,14 +261,33 @@ describe('buildOcrEvidence', () => {
     },
   );
 
-  it('produces the checked-in privacy-safe golden evidence through the real builder', async () => {
+  it('produces current evidence with the same privacy-safe shape as the historical golden', async () => {
     const evidence = await buildOcrEvidence({
       projection: goldenProjection(),
       expected: goldenExpectedIdentity(),
     });
-    expect(evidence).toEqual(goldenEvidence);
+    expect(evidence).toEqual({
+      ...goldenEvidence,
+      provenance: { ...goldenEvidence.provenance, engine: 'text-recognition' },
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(evidence.digest).not.toBe(goldenEvidence.digest);
     const serialized = JSON.stringify(evidence);
     expect(serialized).not.toMatch(/raw|polygon|box-secret|Bearer|token|[A-Z]:\\/iu);
+  });
+
+  it.each([
+    { engine: 'windowsml-ocr' },
+    { device: 'windowsml-dml' },
+    { model: 'pp-ocrv6-medium-windowsml' },
+    { model: 'deterministic-windowsml-v1' },
+  ])('rejects retired provenance in a fresh projection (%j)', async (identity) => {
+    const base = projection();
+    const provenance = { ...resolvedProvenance(), ...identity } as OcrProvenance;
+    await expect(buildOcrEvidence({
+      projection: { ...base, provenance, pages: base.pages.map((page) => ({ ...page, provenance })) },
+      expected: expectedIdentity(),
+    })).rejects.toThrow(/OCR provenance/u);
   });
 
   it('rounds numeric confidence statistics to four decimals and aggregates by score count', async () => {
@@ -310,7 +329,7 @@ describe('buildOcrEvidence', () => {
       ...projection(),
       status: 'failed',
       source: null,
-      pageCount: 0,
+      processedPageCount: 0,
       pages: [],
       provenance: unavailableProvenance(),
       failure: {
@@ -380,7 +399,7 @@ describe('buildOcrEvidence', () => {
       status: 'resolved',
       runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
-      engine: 'windowsml-ocr',
+      engine: 'text-recognition',
       model: 'ppocrv6-traditional-multilingual',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
@@ -453,7 +472,7 @@ function expectedIdentity(terminalStatus: 'completed' | 'failed' = 'completed') 
     captureId: 'capture-1',
     sourceSha256: 'a'.repeat(64),
     runtimeVersion: RUNTIME_VERSION,
-    contractSha256: 'c'.repeat(64),
+    contractSetSha256: 'c'.repeat(64),
     terminalStatus,
     workerSha256: 'f'.repeat(64),
   };
@@ -483,7 +502,7 @@ function projection(): CaptureOcrProjection {
       mediaType: 'image/jpeg',
       bytes: 45_494,
     },
-    pageCount: 1,
+    processedPageCount: 1,
     pages: [
       {
         page: 1,
@@ -507,7 +526,7 @@ function projection(): CaptureOcrProjection {
       },
     ],
     runtimeVersion: RUNTIME_VERSION,
-    contractSha256: 'c'.repeat(64),
+    contractSetSha256: 'c'.repeat(64),
     provenance: resolvedProvenance(),
     createdAt: '2026-08-29T00:00:00Z',
   };
@@ -528,7 +547,7 @@ function projectionWithPages(
   const base = projection();
   return {
     ...base,
-    pageCount: 2,
+    processedPageCount: 2,
     pages: [
       { ...base.pages[0], page: 1, ...firstOverrides },
       { ...base.pages[0], page: 2, ...secondOverrides },
@@ -554,7 +573,7 @@ function goldenProjection(): CaptureOcrProjection {
       { ...base.pages[0], page: 3, text: '丙', boxes: [box(0.9)], confidence: 0.9, provenance },
       { ...base.pages[0], page: 4, text: '丁', boxes: [box(0.0001)], confidence: 0.0001, provenance },
     ],
-    pageCount: 4,
+    processedPageCount: 4,
     provenance,
   };
 }
@@ -627,7 +646,7 @@ function box(confidence: number | null): OcrBox {
 function resolvedProvenance() {
   return {
     status: 'resolved' as const,
-    engine: 'windowsml-ocr' as const,
+    engine: 'text-recognition' as const,
     model: 'ppocrv6-traditional-multilingual',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'NVIDIA GeForce RTX 4060 Laptop GPU',

@@ -93,7 +93,7 @@ def complete_catalog(
     requirements = []
     for requirement_id, worker_name, entry_point in (
         (
-            "windowsml-ocr",
+            "text-recognition",
             "capture-engine-ocr.zip",
             "capture-engine-ocr.exe",
         ),

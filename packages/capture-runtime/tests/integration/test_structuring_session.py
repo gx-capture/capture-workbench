@@ -14,13 +14,14 @@ from capture_runtime.clock import SystemClock
 from capture_runtime.contract_set import SCHEMA_DIALECT, canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureEngine,
-    OpenIngestionV2,
-    OpenStructuringSessionV2,
+    OpenIngestion,
+    OpenStructuringSession,
+    PageLocator,
     RawCapture,
     RawCaptureSegment,
-    StartCaptureV2,
+    StartCapture,
     StructuringMode,
-    StructuringProviderCapabilityV2,
+    StructuringProviderCapability,
     TimeLocator,
 )
 from capture_runtime.structuring.infrastructure.structuring_session_repository import (
@@ -30,15 +31,18 @@ from capture_runtime.structuring.infrastructure.structuring_session_repository i
 from tests.conftest import TOKEN
 
 
-def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
+def _seed_host_capture(
+    client: TestClient, *, segment_count: int = 2, pdf: bool = False, text_chars: int = 0
+) -> str:
     repository = client.app.state.streaming_repository
     source = b"session-source"
     source_sha256 = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id=f"session-ingestion-{uuid4()}",
-            file_name="sample.mp3",
-            media_type="audio/mpeg",
+            kind="pdf" if pdf else "recording",
+            file_name="sample.pdf" if pdf else "sample.mp3",
+            media_type="application/pdf" if pdf else "audio/mpeg",
             total_bytes=len(source),
             source_sha256=source_sha256,
         )
@@ -58,7 +62,7 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
         sha256=source_sha256,
     )
     operation = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id=f"session-capture-{uuid4()}",
             ingestion_id=ingestion.ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -70,8 +74,12 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
         RawCaptureSegment(
             segment_id=f"segment-{index}",
             order=index,
-            locator=TimeLocator(start_ms=index * 1_000, end_ms=(index + 1) * 1_000),
-            text=f"source words {index}",
+            locator=(
+                PageLocator(page=index + 1)
+                if pdf
+                else TimeLocator(start_ms=index * 1_000, end_ms=(index + 1) * 1_000)
+            ),
+            text=f"source words {index}" + "x" * (text_chars * (index + 1)),
         )
         for index in range(segment_count)
     ]
@@ -80,10 +88,10 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
         segments=segments,
         source_text="\n".join(segment.text for segment in segments),
         extraction_engine=CaptureEngine(
-            engine="speech-recognition",
-            model="test-model",
+            engine="text-recognition" if pdf else "speech-recognition",
+            model="deterministic-ocr-v1" if pdf else "test-model",
             digest=f"sha256:{'a' * 64}",
-            device="cpu",
+            device="fake" if pdf else "cpu",
         ),
         created_at=created_at,
     )
@@ -92,21 +100,24 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
     return operation.capture_id
 
 
-def _open_request(capture_id: str, *, client_request_id: str = "session-request-1") -> dict:
+def _open_request(profile_id: str = "qwen3.5-0.8b-structure-v1") -> dict:
+    """An open-session body: the route names the capture, the header the request.
+
+    The provider's model is its own name, unlike any profile id, so a planner
+    that selected by the model would plan other batches.
+    """
     return {
-        "captureId": capture_id,
         "targetLanguage": "fr",
+        "profileId": profile_id,
         "providerCapability": {
             "provider": {
                 "engine": "ollama",
-                "model": "capture-workbench-qwen3.5-0.8b-structure-v1",
+                "model": "host-provider-model",
                 "digest": f"sha256:{'b' * 64}",
             },
-            "capability": "capture-structuring",
             "schemaDialect": SCHEMA_DIALECT,
         },
         "schemaDialect": SCHEMA_DIALECT,
-        "clientRequestId": client_request_id,
     }
 
 
@@ -128,18 +139,32 @@ def test_pull_session_plans_tiny_profile_batches_and_reconstructs_result(
     client: TestClient,
 ) -> None:
     capture_id = _seed_host_capture(client, segment_count=2)
-    request = _open_request(capture_id)
+    request = _open_request()
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json=request,
-        headers={"X-Idempotency-Key": request["clientRequestId"]},
+        headers={"X-Idempotency-Key": "session-request-1"},
     )
     assert opened.status_code == 201, opened.text
     session = opened.json()
+    assert "capability" not in session["providerCapability"]
+    stored = json.loads(
+        (
+            client.app.state.structuring_session_service.repository.root
+            / session["sessionId"]
+            / "metadata.json"
+        ).read_bytes()
+    )
+    # The transport ids are kept beside the request, not in it.
+    assert (stored["captureId"], stored["clientRequestId"]) == (capture_id, "session-request-1")
+    assert "captureId" not in stored["request"]
+    assert "clientRequestId" not in stored["request"]
+    assert stored["request"]["profileId"] == request["profileId"]
     assert session["batchCount"] == 2
     assert session["nextBatchIndex"] == 0
     assert session["status"] == "open"
-    assert session["rawSourceSha256"]
+    assert session["sourceSha256"]
+    assert "rawSourceSha256" not in session
     assert session["contractSetSha256"]
 
     first_batch_response = client.get(f"/v2/captures/{capture_id}/structure/session/batches/0")
@@ -207,15 +232,86 @@ def test_pull_session_plans_tiny_profile_batches_and_reconstructs_result(
     ]
 
 
+def test_completed_structuring_session_reads_historical_ocr_document(client: TestClient) -> None:
+    capture_id = _seed_host_capture(client, segment_count=1, pdf=True)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    opened = client.post(
+        route,
+        json=_open_request(),
+        headers={"X-Idempotency-Key": "session-request-1"},
+    )
+    assert opened.status_code == 201, opened.text
+    session_id = opened.json()["sessionId"]
+    batch_route = f"{route}/batches/0"
+    batch = client.get(batch_route).json()
+    submission = _submit_payload(batch, "legacy")
+    submission["blocks"][0]["type"] = "paragraph"
+    headers = {"X-Idempotency-Key": "legacy-batch"}
+    completed = client.put(batch_route, json=submission, headers=headers)
+    assert completed.status_code == 200, completed.text
+
+    repository = client.app.state.structuring_session_service.repository
+    path = repository.root / session_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    historical["completedDocument"]["extractionEngine"].update(
+        engine="windowsml-ocr", model="deterministic-windowsml-v1"
+    )
+    del historical["completedDocument"]["suggestedRequirementIds"]
+    historical["completedDocument"]["suggestedUnits"] = ["windowsml-ocr", "capture-ollama-model"]
+    path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    assert client.get(route).json() == completed.json()
+    assert client.put(batch_route, json=submission, headers=headers).json() == completed.json()
+    document = repository.completed_document(session_id)
+    assert document is not None
+    assert document.extraction_engine.engine == "text-recognition"
+    assert document.extraction_engine.model == "deterministic-ocr-v1"
+    assert document.suggested_requirement_ids == ["text-recognition", "structuring-model"]
+    assert path.read_bytes() == before
+
+
 def test_pull_session_rejects_provenance_fields_and_digest_conflicts(client: TestClient) -> None:
     capture_id = _seed_host_capture(client, segment_count=1)
-    request = _open_request(capture_id, client_request_id="strict-session")
+    request = _open_request()
+    for removed in (
+        {"captureId": capture_id},
+        {"clientRequestId": "strict-session"},
+        {
+            "providerCapability": {
+                **request["providerCapability"],
+                "capability": "capture-structuring",
+            }
+        },
+    ):
+        rejected = client.post(
+            f"/v2/captures/{capture_id}/structure/session",
+            json={**request, **removed},
+            headers={"X-Idempotency-Key": "strict-session"},
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert rejected.json()["error"]["code"] == "validation_error"
+    missing_profile = {key: value for key, value in request.items() if key != "profileId"}
+    rejected = client.post(
+        f"/v2/captures/{capture_id}/structure/session",
+        json=missing_profile,
+        headers={"X-Idempotency-Key": "strict-session"},
+    )
+    assert rejected.status_code == 422, rejected.text
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json=request,
         headers={"X-Idempotency-Key": "strict-session"},
     )
     assert opened.status_code == 201
+    other_profile = client.post(
+        f"/v2/captures/{capture_id}/structure/session",
+        json={**request, "profileId": "qwen3.5-4b-structure-v1"},
+        headers={"X-Idempotency-Key": "strict-session"},
+    )
+    assert other_profile.status_code == 409
+    assert other_profile.json()["error"]["code"] == "idempotency_conflict"
     batch = client.get(f"/v2/captures/{capture_id}/structure/session/batches/0").json()
     body = _submit_payload(batch, "strict")
     body["blocks"][0]["sourceText"] = "must-not-be-accepted"
@@ -252,7 +348,7 @@ def test_pull_session_open_replays_after_runtime_restart(settings_factory) -> No
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as first_client:
         capture_id = _seed_host_capture(first_client, segment_count=1)
-        request = _open_request(capture_id, client_request_id="restart-session")
+        request = _open_request()
         opened = first_client.post(
             f"/v2/captures/{capture_id}/structure/session",
             json=request,
@@ -285,6 +381,32 @@ def test_pull_session_open_replays_after_runtime_restart(settings_factory) -> No
         assert accepted.status_code == 200
 
 
+def test_pull_session_open_rejects_a_blank_idempotency_key(settings_factory) -> None:
+    settings = settings_factory()
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as first_client:
+        capture_id = _seed_host_capture(first_client, segment_count=1)
+        route = f"/v2/captures/{capture_id}/structure/session"
+        blank = first_client.post(route, json=_open_request(), headers={"X-Idempotency-Key": "   "})
+        assert blank.status_code == 422, blank.text
+        assert blank.json()["error"]["code"] == "validation_error"
+        assert first_client.get(route).status_code == 404
+
+    # Nothing was stored, so the runtime restarts and the capture can still open.
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as restarted_client:
+        opened = restarted_client.post(
+            route, json=_open_request(), headers={"X-Idempotency-Key": "after-blank"}
+        )
+        assert opened.status_code == 201, opened.text
+
+
 def test_pull_session_repository_fails_closed_on_malformed_record(tmp_path: Path) -> None:
     root = tmp_path / "structuring-sessions"
     root.mkdir()
@@ -301,7 +423,7 @@ def test_pull_session_repository_rejects_tampered_request_fingerprint(
     client: TestClient,
 ) -> None:
     capture_id = _seed_host_capture(client, segment_count=1)
-    request = _open_request(capture_id, client_request_id="tampered-fingerprint")
+    request = _open_request()
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json=request,
@@ -324,27 +446,282 @@ def test_pull_session_repository_rejects_tampered_request_fingerprint(
         repository.initialize()
 
 
+def _as_0_10_session(session_payload: dict, capability: dict) -> dict:
+    """A session checkpoint the way 0.10.x stored it, with its digest in that form."""
+    historical = dict(session_payload)
+    historical["rawSourceSha256"] = historical.pop("sourceSha256")
+    historical["providerCapability"] = capability
+    digest_input = {key: value for key, value in historical.items() if key != "sessionDigest"}
+    historical["sessionDigest"] = hashlib.sha256(canonical_json_bytes(digest_input)).hexdigest()
+    return historical
+
+
+def _rewrite_as_0_10_record(
+    path: Path,
+    capture_id: str,
+    client_request_id: str,
+    *,
+    provider_model: str | None = None,
+) -> dict:
+    """Rewrite a stored session the way a 0.10.x runtime wrote it, with its digests.
+
+    0.10.x had no profile id: it planned for the profile its provider's model
+    named, which carried the consumer prefix.
+    """
+    record = json.loads(path.read_bytes())
+    assert (record.pop("captureId"), record.pop("clientRequestId")) == (
+        capture_id,
+        client_request_id,
+    )
+    body = record["request"]
+    provider = dict(body["providerCapability"]["provider"])
+    if provider_model is not None:
+        provider["model"] = provider_model
+    capability = {
+        **body["providerCapability"],
+        "provider": provider,
+        "capability": "capture-structuring",
+    }
+    record["request"] = {
+        "protocolVersion": body["protocolVersion"],
+        "captureId": capture_id,
+        "targetLanguage": body["targetLanguage"],
+        "providerCapability": capability,
+        "schemaDialect": body["schemaDialect"],
+        "clientRequestId": client_request_id,
+    }
+    source_sha256 = record["session"]["sourceSha256"]
+    record["session"] = _as_0_10_session(record["session"], capability)
+    for entry in record["batches"]:
+        if entry["response"] is not None:
+            entry["response"] = _as_0_10_session(entry["response"], capability)
+    record["requestFingerprint"] = hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "request": record["request"],
+                "rawSourceSha256": source_sha256,
+                "contractSetSha256": record["session"]["contractSetSha256"],
+                "batches": [
+                    {
+                        key: value
+                        for key, value in batch.items()
+                        if key not in {"sessionId", "batchDigest", "status"}
+                    }
+                    for batch in (entry["batch"] for entry in record["batches"])
+                ],
+            }
+        )
+    ).hexdigest()
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return record
+
+
+_OLD_PROFILE_ID = "capture-workbench-qwen3.5-0.8b-structure-v1"
+
+
+def _seed_0_10_session(
+    client: TestClient, *, segment_count: int, accepted: int = 0
+) -> tuple[str, Path, dict, list[dict]]:
+    """Store a session the way 0.10.x wrote it, with `accepted` batches already accepted.
+
+    The batches are planned and accepted by this runtime, then the record is
+    rewritten in the 0.10.x form; a fresh request cannot name the old profile id.
+    """
+    capture_id = _seed_host_capture(client, segment_count=segment_count)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    opened = client.post(
+        route, json=_open_request(), headers={"X-Idempotency-Key": "legacy-open-1"}
+    )
+    assert opened.status_code == 201, opened.text
+    submissions = []
+    for index in range(accepted):
+        batch = client.get(f"{route}/batches/{index}").json()
+        submission = _submit_payload(batch, f"historical {index}")
+        response = client.put(
+            f"{route}/batches/{index}",
+            json=submission,
+            headers={"X-Idempotency-Key": f"legacy-batch-{index}"},
+        )
+        assert response.status_code == 200, response.text
+        submissions.append(submission)
+    repository = client.app.state.structuring_session_service.repository
+    path = repository.root / opened.json()["sessionId"] / "metadata.json"
+    historical = _rewrite_as_0_10_record(
+        path, capture_id, "legacy-open-1", provider_model=_OLD_PROFILE_ID
+    )
+    repository.initialize()
+    return capture_id, path, historical, submissions
+
+
+def test_fresh_pull_session_rejects_the_retired_profile_id(client: TestClient) -> None:
+    capture_id = _seed_host_capture(client, segment_count=2)
+    rejected = client.post(
+        f"/v2/captures/{capture_id}/structure/session",
+        json=_open_request(_OLD_PROFILE_ID),
+        headers={"X-Idempotency-Key": "fresh-old-profile"},
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert rejected.json()["error"]["code"] == "validation_error"
+    assert client.get(f"/v2/captures/{capture_id}/structure/session").status_code == 404
+
+
+def test_historical_pull_session_metadata_stays_readable_and_preserves_bytes(
+    client: TestClient,
+) -> None:
+    capture_id, path, historical, _submissions = _seed_0_10_session(client, segment_count=2)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    repository = client.app.state.structuring_session_service.repository
+    # A current client repeats the open with the header and the profile the record
+    # names: 0.10.x named it through the provider's model.
+    request = _open_request(_OLD_PROFILE_ID)
+    request["providerCapability"]["provider"]["model"] = _OLD_PROFILE_ID
+    session_payload = historical["session"]
+    before = path.read_bytes()
+
+    repository.initialize()
+    read_response = client.get(route)
+    assert read_response.status_code == 200, read_response.text
+    view = read_response.json()
+    assert view["sourceSha256"] == session_payload["rawSourceSha256"]
+    assert "rawSourceSha256" not in view
+    assert "capability" not in view["providerCapability"]
+    assert view["providerCapability"]["provider"]["model"] == _OLD_PROFILE_ID
+    assert view["sessionDigest"] == session_payload["sessionDigest"]
+    assert view["batchCount"] == 2
+    assert path.read_bytes() == before
+
+    replay_response = client.post(
+        route, json=request, headers={"X-Idempotency-Key": "legacy-open-1"}
+    )
+    assert replay_response.status_code == 201, replay_response.text
+    assert replay_response.json() == view
+    other_profile = client.post(
+        route,
+        json={**request, "profileId": "qwen3.5-4b-structure-v1"},
+        headers={"X-Idempotency-Key": "legacy-open-1"},
+    )
+    assert other_profile.status_code == 409
+    assert other_profile.json()["error"]["code"] == "idempotency_conflict"
+    assert path.read_bytes() == before
+
+    # A tampered or mixed record fails closed and is not rewritten.
+    for tamper in ("capability", "mixed-key"):
+        corrupt = json.loads(before)
+        if tamper == "capability":
+            corrupt["request"]["providerCapability"]["capability"] = "other-capability"
+        else:
+            corrupt["session"]["sourceSha256"] = session_payload["rawSourceSha256"]
+        path.write_text(json.dumps(corrupt, indent=2), encoding="utf-8")
+        tampered = path.read_bytes()
+        with pytest.raises(StructuringSessionRecordCorruptError):
+            repository.initialize()
+        assert path.read_bytes() == tampered
+    path.write_bytes(before)
+    repository.initialize()
+
+    # Accepting a batch keeps the record in its form: the request and its
+    # fingerprint as written, the new checkpoint digested like the others.
+    batch = client.get(f"{route}/batches/0").json()
+    accepted = client.put(
+        f"{route}/batches/0",
+        json=_submit_payload(batch, "historical"),
+        headers={"X-Idempotency-Key": "legacy-batch-0"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    rewritten = json.loads(path.read_bytes())
+    assert rewritten["request"] == historical["request"]
+    assert rewritten["requestFingerprint"] == historical["requestFingerprint"]
+    assert "captureId" not in rewritten
+    assert "rawSourceSha256" in rewritten["batches"][0]["response"]
+    assert rewritten["session"]["providerCapability"]["capability"] == "capture-structuring"
+    repository.initialize()
+    assert client.get(route).json() == accepted.json()
+
+
+def test_historical_replay_digest_survives_advancing_and_reopening(
+    client: TestClient,
+) -> None:
+    capture_id, path, historical, submissions = _seed_0_10_session(
+        client, segment_count=3, accepted=1
+    )
+    route = f"/v2/captures/{capture_id}/structure/session"
+    repository = client.app.state.structuring_session_service.repository
+    stored_response = historical["batches"][0]["response"]
+
+    def replay_first_batch() -> dict:
+        replayed = client.put(
+            f"{route}/batches/0",
+            json=submissions[0],
+            headers={"X-Idempotency-Key": "legacy-batch-0"},
+        )
+        assert replayed.status_code == 200, replayed.text
+        return replayed.json()
+
+    # 0.10.x returned this digest when it accepted the batch.
+    before = replay_first_batch()
+    assert before["sessionDigest"] == stored_response["sessionDigest"]
+    assert before["sourceSha256"] == stored_response["rawSourceSha256"]
+
+    batch = client.get(f"{route}/batches/1").json()
+    advanced = client.put(
+        f"{route}/batches/1",
+        json=_submit_payload(batch, "after upgrade"),
+        headers={"X-Idempotency-Key": "current-batch-1"},
+    )
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["nextBatchIndex"] == 2
+    assert replay_first_batch() == before
+    rewritten = json.loads(path.read_bytes())
+    assert rewritten["batches"][0]["response"] == stored_response
+    assert rewritten["request"] == historical["request"]
+    assert rewritten["requestFingerprint"] == historical["requestFingerprint"]
+
+    repository.initialize()
+    assert replay_first_batch() == before
+    assert client.get(route).json() == advanced.json()
+    assert json.loads(path.read_bytes()) == rewritten
+
+
 def test_pull_session_contract_models_are_strict_and_camel_case() -> None:
-    capability = StructuringProviderCapabilityV2(
+    capability = StructuringProviderCapability(
         provider=CaptureEngine(
             engine="ollama",
             model="test-model",
             digest=f"sha256:{'a' * 64}",
         ),
-        capability="capture-structuring",
         schema_dialect=SCHEMA_DIALECT,
     )
-    request = OpenStructuringSessionV2(
-        capture_id="capture-1",
+    request = OpenStructuringSession(
         target_language="fr",
+        profile_id="qwen3.5-0.8b-structure-v1",
         provider_capability=capability,
         schema_dialect=SCHEMA_DIALECT,
-        client_request_id="request-1",
     )
     assert (
         request.model_dump(by_alias=True)["providerCapability"]["schemaDialect"] == SCHEMA_DIALECT
     )
     with pytest.raises(ValueError):
-        OpenStructuringSessionV2.model_validate(
+        OpenStructuringSession.model_validate(
             {**request.model_dump(by_alias=True), "unexpected": True}
         )
+    with pytest.raises(ValueError):
+        OpenStructuringSession.model_validate(
+            {**request.model_dump(by_alias=True), "rawSourceSha256": "a" * 64}
+        )
+
+
+def test_pdf_session_uses_one_context_length_with_adaptive_output(client: TestClient) -> None:
+    capture_id = _seed_host_capture(client, segment_count=3, pdf=True, text_chars=500)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    response = client.post(
+        route, json=_open_request(), headers={"X-Idempotency-Key": "pdf-context"}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["batchCount"] == 3
+    batches = []
+    for index in range(3):
+        batch = client.get(f"{route}/batches/{index}")
+        assert batch.status_code == 200, batch.text
+        batches.append(batch.json())
+    assert {batch["numCtx"] for batch in batches} == {8_192}
+    assert len({batch["numPredict"] for batch in batches}) > 1

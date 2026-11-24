@@ -21,7 +21,7 @@ class SourceSizePolicy:
     max_upload_bytes: int
 
     def limit_for(self, kind: CaptureSourceKind) -> int:
-        if kind is CaptureSourceKind.AUDIO:
+        if kind is CaptureSourceKind.RECORDING:
             return self.max_upload_bytes
         return min(self.max_upload_bytes, DOCUMENT_MAX_UPLOAD_BYTES)
 
@@ -31,7 +31,9 @@ class SourceSizePolicy:
         return declared_total_bytes <= self.limit_for(kind)
 
     def needs_recording_signature(self, kind: CaptureSourceKind, declared_total_bytes: int) -> bool:
-        return kind is CaptureSourceKind.AUDIO and declared_total_bytes > DOCUMENT_MAX_UPLOAD_BYTES
+        return (
+            kind is CaptureSourceKind.RECORDING and declared_total_bytes > DOCUMENT_MAX_UPLOAD_BYTES
+        )
 
 
 __all__ = [

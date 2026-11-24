@@ -1,8 +1,8 @@
 import type {
-  CaptureFailure,
   CaptureOcrProjection,
   OcrPageProjection,
   OcrProvenance,
+  OperationFailure,
 } from '@gx-capture/capture-runtime-client';
 import { defer, from, map, throwError, type Observable } from 'rxjs';
 
@@ -18,7 +18,7 @@ export interface OcrEvidenceExpectedIdentity {
   readonly captureId: string;
   readonly sourceSha256: string;
   readonly runtimeVersion: string;
-  readonly contractSha256: string;
+  readonly contractSetSha256: string;
   readonly terminalStatus: CaptureOcrProjection['status'];
   readonly workerSha256: string;
 }
@@ -59,6 +59,7 @@ export interface OcrEvidencePageV1 {
   readonly failure?: OcrEvidenceFailureV1;
 }
 
+/** Persisted provenance retains the identity strings recorded by its writer. */
 export interface OcrEvidenceProvenanceV1 {
   readonly status: 'resolved' | 'unavailable';
   readonly runtimeVersion: string;
@@ -114,7 +115,7 @@ export function buildOcrEvidence(input: OcrEvidenceInput): Observable<OcrEvidenc
       captureId: projection.captureId,
       sourceSha256: expected.sourceSha256,
       status: projection.status,
-      pageCount: projection.pageCount,
+      pageCount: projection.processedPageCount,
       pages,
       summary: summarizePages(internalPages),
       provenance,
@@ -132,14 +133,14 @@ function validateExpectedIdentity(value: unknown): OcrEvidenceExpectedIdentity {
     'captureId',
     'sourceSha256',
     'runtimeVersion',
-    'contractSha256',
+    'contractSetSha256',
     'terminalStatus',
     'workerSha256',
   ], 'expected identity');
   nonEmpty(expected['captureId'], 'expected captureId');
   sha(expected['sourceSha256'], 'expected sourceSha256');
   nonEmpty(expected['runtimeVersion'], 'expected runtimeVersion');
-  sha(expected['contractSha256'], 'expected contractSha256');
+  sha(expected['contractSetSha256'], 'expected contractSetSha256');
   if (expected['terminalStatus'] !== 'completed' && expected['terminalStatus'] !== 'failed') {
     invalid('expected terminalStatus');
   }
@@ -170,7 +171,7 @@ function validateProjection(
   const projection = record(value, 'projection');
   requireExactKeys(
     projection,
-    ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'pageCount', 'runtimeVersion', 'contractSha256', 'provenance', 'createdAt'],
+    ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'processedPageCount', 'runtimeVersion', 'contractSetSha256', 'provenance', 'createdAt'],
     'projection',
     ['source', 'warnings', 'failure'],
   );
@@ -183,8 +184,8 @@ function validateProjection(
   if (projection['status'] !== expected['terminalStatus']) invalid('terminal status does not match expected identity');
   nonEmpty(projection['runtimeVersion'], 'projection runtimeVersion');
   if (projection['runtimeVersion'] !== expected['runtimeVersion']) invalid('runtimeVersion does not match expected identity');
-  sha(projection['contractSha256'], 'projection contractSha256');
-  if (projection['contractSha256'] !== expected['contractSha256']) invalid('contractSha256 does not match expected identity');
+  sha(projection['contractSetSha256'], 'projection contractSetSha256');
+  if (projection['contractSetSha256'] !== expected['contractSetSha256']) invalid('contractSetSha256 does not match expected identity');
   isoTimestamp(projection['createdAt'], 'projection createdAt');
 
   const sourceValue = projection['source'];
@@ -200,11 +201,11 @@ function validateProjection(
     safeInteger(source['bytes'], 'projection source bytes', 1);
   }
 
-  if (!Number.isSafeInteger(projection['pageCount']) || (projection['pageCount'] as number) < 0 || (projection['pageCount'] as number) > MAX_PAGES) {
-    invalid('projection pageCount');
+  if (!Number.isSafeInteger(projection['processedPageCount']) || (projection['processedPageCount'] as number) < 0 || (projection['processedPageCount'] as number) > MAX_PAGES) {
+    invalid('projection processedPageCount');
   }
-  if (!Array.isArray(projection['pages']) || projection['pages'].length !== (projection['pageCount'] as number)) {
-    invalid('projection pages/pageCount');
+  if (!Array.isArray(projection['pages']) || projection['pages'].length !== (projection['processedPageCount'] as number)) {
+    invalid('projection pages/processedPageCount');
   }
   const documentProvenance = validateProvenance(projection['provenance']);
   const pages = projection['pages'] as readonly unknown[];
@@ -307,7 +308,13 @@ function validateProvenance(value: unknown): OcrProvenance {
   const provenance = record(value, 'OCR provenance');
   if (provenance['status'] === 'resolved') {
     requireExactKeys(provenance, ['status', 'engine', 'model', 'modelDigest', 'device', 'profileId', 'profileSpecSha256'], 'resolved OCR provenance');
-    if (provenance['engine'] !== 'windowsml-ocr') invalid('OCR provenance engine');
+    if (provenance['engine'] !== 'text-recognition') invalid('OCR provenance engine');
+    // Model names of the engine's earlier naming all carry this word; no
+    // current model does.
+    if (typeof provenance['model'] === 'string' && provenance['model'].includes('windowsml')) {
+      invalid('OCR provenance model');
+    }
+    if (provenance['device'] === 'windowsml-dml') invalid('OCR provenance device');
     nonEmpty(provenance['model'], 'OCR provenance model');
     if (typeof provenance['modelDigest'] !== 'string' || !MODEL_DIGEST.test(provenance['modelDigest'])) invalid('OCR provenance modelDigest');
     if (provenance['modelDigest'] === `sha256:${'0'.repeat(64)}`) invalid('OCR provenance modelDigest');
@@ -359,7 +366,7 @@ function toInternalEvidencePage(pageValue: OcrPageProjection): InternalEvidenceP
     confidenceSummary,
   };
   return {
-    evidence: status === 'failed' ? { ...output, failure: toEvidenceFailure(page['failure'] as CaptureFailure) } : output,
+    evidence: status === 'failed' ? { ...output, failure: toEvidenceFailure(page['failure'] as OperationFailure) } : output,
     numericScores: numeric,
   };
 }
@@ -370,7 +377,7 @@ function toEvidenceProvenance(projection: CaptureOcrProjection, workerSha256: st
     return {
       status: 'resolved',
       runtimeVersion: projection['runtimeVersion'],
-      contractSha256: projection['contractSha256'],
+      contractSha256: projection['contractSetSha256'],
       engine: provenance.engine,
       model: provenance.model,
       modelDigest: provenance.modelDigest,
@@ -383,7 +390,7 @@ function toEvidenceProvenance(projection: CaptureOcrProjection, workerSha256: st
   return {
     status: 'unavailable',
     runtimeVersion: projection['runtimeVersion'],
-    contractSha256: projection['contractSha256'],
+    contractSha256: projection['contractSetSha256'],
     engine: null,
     model: null,
     modelDigest: null,
@@ -394,7 +401,7 @@ function toEvidenceProvenance(projection: CaptureOcrProjection, workerSha256: st
   };
 }
 
-function toEvidenceFailure(value: CaptureFailure): OcrEvidenceFailureV1 {
+function toEvidenceFailure(value: OperationFailure): OcrEvidenceFailureV1 {
   const failure = value as unknown as Record<string, unknown>;
   const output: OcrEvidenceFailureV1 = {
     code: failure['code'] as string,

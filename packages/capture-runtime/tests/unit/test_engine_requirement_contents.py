@@ -331,8 +331,8 @@ def test_a_derived_input_may_come_from_another_requirements_content() -> None:
         ],
     }
     ocr = {
-        "requirementId": "windowsml-ocr",
-        "artifacts": [_worker("windowsml-ocr", file_name="ocr.zip", size=80)],
+        "requirementId": "text-recognition",
+        "artifacts": [_worker("text-recognition", file_name="ocr.zip", size=80)],
         "modelFiles": _delivery(
             "engine-1",
             [
@@ -361,7 +361,7 @@ def test_a_derived_input_in_the_same_requirements_other_content_is_not_locked() 
             files.append(_model_file("model/reader.bin", b"reader", kind="source"))
         return {
             "id": content_id,
-            "artifacts": [_worker("windowsml-ocr", file_name=f"ocr-{content_id}.zip", size=80)],
+            "artifacts": [_worker("text-recognition", file_name=f"ocr-{content_id}.zip", size=80)],
             "modelFiles": _delivery("engine-1", files),
             "unavailableReason": None,
         }
@@ -371,7 +371,7 @@ def test_a_derived_input_in_the_same_requirements_other_content_is_not_locked() 
             _catalog(
                 [
                     {
-                        "requirementId": "windowsml-ocr",
+                        "requirementId": "text-recognition",
                         "contents": [
                             content("cuda", own_reader=False),
                             content("cpu", own_reader=True),

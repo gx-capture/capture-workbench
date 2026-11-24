@@ -77,20 +77,17 @@ type RuntimeIngestion = {
   readonly nextChunkIndex: number;
 };
 
-type StreamingCapabilities = {
-  readonly maxChunkBytes: number;
-};
-
 type RuntimeReady = {
   readonly ready: boolean;
   readonly apiVersion?: unknown;
   readonly runtimeVersion?: unknown;
+  readonly capabilities: { readonly maxChunkBytes: number };
 };
 
 type OcrProjectionIdentity = {
   readonly apiVersion?: unknown;
   readonly schemaVersion?: unknown;
-  readonly contractSha256?: unknown;
+  readonly contractSetSha256?: unknown;
 };
 
 type ContractIndexIdentity = {
@@ -134,7 +131,7 @@ export type PdfOcrE2eEvidence = {
   readonly sampledPageCount: number;
   readonly matchedExpectedCharacterCount: number;
   readonly matchMode: 'nfkc-whitespace-insensitive-exact-substring';
-  readonly extractionEngine: 'windowsml-ocr';
+  readonly extractionEngine: 'text-recognition';
   readonly model: string;
   readonly engineDigest: string;
   readonly device: string;
@@ -227,8 +224,8 @@ export function assertPdfOcrRawCapture(
 > {
   assert.equal(
     raw.extractionEngine.engine,
-    'windowsml-ocr',
-    'Real PDF OCR E2E requires windowsml-ocr provenance.',
+    'text-recognition',
+    'Real PDF OCR E2E requires text-recognition provenance.',
   );
   assert.match(raw.extractionEngine.model, /^pp-ocrv\d+/u);
   assert.match(raw.extractionEngine.digest, /^sha256:[a-f0-9]{64}$/u);
@@ -290,7 +287,7 @@ export function assertPdfOcrRawCapture(
       0,
     ),
     matchMode: 'nfkc-whitespace-insensitive-exact-substring',
-    extractionEngine: 'windowsml-ocr',
+    extractionEngine: 'text-recognition',
     model: raw.extractionEngine.model,
     engineDigest: raw.extractionEngine.digest,
     device: raw.extractionEngine.device,
@@ -460,13 +457,13 @@ async function installOcr(port: number, token: string): Promise<void> {
     readonly items: readonly RuntimeRequirement[];
   }>(port, token, '/v2/runtime/requirements');
   const ocr = requirements.items.find(
-    (item) => item.requirementId === 'windowsml-ocr',
+    (item) => item.requirementId === 'text-recognition',
   );
-  if (!ocr) throw new Error('Runtime did not expose windowsml-ocr.');
+  if (!ocr) throw new Error('Runtime did not expose text-recognition.');
   if (ocr.status === 'ready') return;
   if (ocr.status !== 'installable') {
     throw new Error(
-      `Runtime cannot install windowsml-ocr: ${ocr.status}${ocr.detail ? ` (${ocr.detail})` : ''}.`,
+      `Runtime cannot install text-recognition: ${ocr.status}${ocr.detail ? ` (${ocr.detail})` : ''}.`,
     );
   }
   const installation = await request<RuntimeInstallation>(
@@ -479,7 +476,7 @@ async function installOcr(port: number, token: string): Promise<void> {
         'content-type': 'application/json',
         'x-idempotency-key': randomUUID(),
       },
-      body: JSON.stringify({ requirementId: 'windowsml-ocr', consent: true }),
+      body: JSON.stringify({ requirementId: 'text-recognition', consent: true }),
     },
   );
   const deadline = Date.now() + installationTimeoutMs;
@@ -492,12 +489,12 @@ async function installOcr(port: number, token: string): Promise<void> {
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {
       throw new Error(
-        `windowsml-ocr installation ended as ${current.status}: ${current.error?.message ?? 'no detail'}.`,
+        `text-recognition installation ended as ${current.status}: ${current.error?.message ?? 'no detail'}.`,
       );
     }
     await delay(1_000);
   }
-  throw new Error('windowsml-ocr installation timed out.');
+  throw new Error('text-recognition installation timed out.');
 }
 
 async function startPdfCapture(
@@ -507,10 +504,10 @@ async function startPdfCapture(
 ): Promise<CaptureJob> {
   const clientRequestId = randomUUID();
   const sourceDigest = sha256(pdfBytes);
-  const capabilities = await request<StreamingCapabilities>(
+  const { capabilities } = await request<RuntimeReady>(
     port,
     token,
-    '/v2/streaming/health/ready',
+    '/v2/health/ready',
   );
   const chunkBytes = Math.max(
     1,
@@ -762,7 +759,7 @@ export async function runPdfOcrE2e(
     options.packageKind === 'local-package'
       ? resolve(
           process.env.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT?.trim() ||
-            join(releaseRoot, '..', '..', 'model-sources', 'commit-a'),
+            join(releaseRoot, '..', '..', 'model-sources', 'text-recognition'),
         )
       : undefined;
   const token = randomBytes(32).toString('hex');
@@ -789,7 +786,7 @@ export async function runPdfOcrE2e(
         ? { ocrWorkerSha256: sha256(workerArchiveBytes) }
         : {}),
     };
-    const expectedContractSha256 = (
+    const expectedContractSetSha256 = (
       await readFile(
         join(
           workspaceRoot,
@@ -858,7 +855,7 @@ export async function runPdfOcrE2e(
       token,
       '/meta/v2/contracts',
     );
-    if (contractIndex.sha256 !== ocrProjection.contractSha256) {
+    if (contractIndex.sha256 !== ocrProjection.contractSetSha256) {
       throw new Error(
         'Runtime contract index and OCR projection hashes differ.',
       );
@@ -869,12 +866,12 @@ export async function runPdfOcrE2e(
         packageRoot: releaseRoot,
         runtimeExecutablePath: executable,
         ocrWorkerArchivePath: workerArchivePath,
-        expectedContractSha256,
+        expectedContractSetSha256,
         probe,
         observed: {
           apiVersion: ocrProjection.apiVersion ?? readiness.apiVersion,
           ocrSchemaVersion: ocrProjection.schemaVersion,
-          contractSha256: ocrProjection.contractSha256,
+          contractSetSha256: ocrProjection.contractSetSha256,
           loadedRuntimeSha256: sha256(executableBytes),
           loadedOcrWorkerSha256:
             workerMirror?.observations.successfulDownloads === 1 &&

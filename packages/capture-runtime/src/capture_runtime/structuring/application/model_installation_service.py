@@ -9,11 +9,14 @@ from typing import Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureFailureV2,
+    OperationFailure,
     RuntimeInstallationStatus,
-    RuntimeModelInstallationV2,
+    StructuringModelInstallation,
 )
-from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
+from capture_runtime.provisioning.application.requirement_installer import (
+    ManualActionRequiredError,
+    ModelOptionRejectedError,
+)
 from capture_runtime.structuring.application.use_cases import (
     CancelModelInstallation,
     GetModelInstallation,
@@ -41,7 +44,7 @@ class ModelOptionInstaller(Protocol):
 TERMINAL_MODEL_INSTALLATION_STATUSES = TERMINAL_STATUSES
 
 
-def _domain(job: RuntimeModelInstallationV2) -> ModelInstallation:
+def _domain(job: StructuringModelInstallation) -> ModelInstallation:
     return ModelInstallation(
         installation_id=job.installation_id,
         option_id=job.option_id,
@@ -56,8 +59,8 @@ def _domain(job: RuntimeModelInstallationV2) -> ModelInstallation:
     )
 
 
-def _contract(job: ModelInstallation) -> RuntimeModelInstallationV2:
-    return RuntimeModelInstallationV2(
+def _contract(job: ModelInstallation) -> StructuringModelInstallation:
+    return StructuringModelInstallation(
         installation_id=job.installation_id,
         option_id=job.option_id,
         status=job.status,
@@ -65,7 +68,7 @@ def _contract(job: ModelInstallation) -> RuntimeModelInstallationV2:
         created_at=job.created_at,
         updated_at=job.updated_at,
         completed_at=job.completed_at,
-        error=CaptureFailureV2(
+        error=OperationFailure(
             code=job.failure_code,
             message=job.failure_message,
             stage="runtime",
@@ -106,10 +109,10 @@ class ModelInstallationService:
         self._tasks[installation_id] = task
         task.add_done_callback(self._installation_done)
 
-    def get(self, installation_id: str) -> RuntimeModelInstallationV2:
+    def get(self, installation_id: str) -> StructuringModelInstallation:
         return self.repository.get(installation_id).job
 
-    def list(self) -> list[RuntimeModelInstallationV2]:
+    def list(self) -> list[StructuringModelInstallation]:
         return self.repository.list()
 
     async def stop(self, installation_id: str) -> None:
@@ -170,7 +173,16 @@ class ModelInstallationService:
                 "Select a model option after the Ollama runtime is ready.",
                 False,
             )
+        except ModelOptionRejectedError:
+            self._fail(
+                installation_id,
+                RuntimeInstallationStatus.FAILED,
+                "installation_failed",
+                "The model option does not verify against the release catalog.",
+                False,
+            )
         except Exception:
+            # A download, process or connection failure can pass on another try.
             self._fail(
                 installation_id,
                 RuntimeInstallationStatus.FAILED,
@@ -197,7 +209,7 @@ class ModelInstallationService:
         )
         self.repository.update_job(installation_id, _contract(job))
 
-    def _cancelled_job(self, job: RuntimeModelInstallationV2) -> RuntimeModelInstallationV2:
+    def _cancelled_job(self, job: StructuringModelInstallation) -> StructuringModelInstallation:
         domain = _domain(job)
         domain.mark_cancelled(self._clock.now())
         return _contract(domain)

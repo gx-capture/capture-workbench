@@ -7,6 +7,12 @@ export function errorMessage(error: unknown): string {
   return redactSensitiveMessage(message);
 }
 
+/** True when the runtime answered that the requested resource does not exist (HTTP 404). */
+export function isRuntimeNotFound(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('HTTP 404');
+}
+
 /**
  * Maps an uninstall rejection to settings copy.
  * The desktop bridge keeps only the HTTP status, so every 422 shares one message.
@@ -16,14 +22,20 @@ export function uninstallFailureMessage(error: unknown): string {
   const messages = desktopMessages();
   if (message.includes('HTTP 409')) return messages.removeRequirementInUse;
   if (message.includes('HTTP 422')) return messages.removeRequirementNotUninstallable;
-  if (message.includes('HTTP 404')) return messages.removeRequirementNotFound;
+  if (isRuntimeNotFound(error)) return messages.removeRequirementNotFound;
   return errorMessage(error);
 }
 
-/** Removes bearer and token-shaped values from user-visible diagnostics. */
-export function redactSensitiveMessage(message: string): string {
+/**
+ * Removes bearer and token-shaped values from user-visible diagnostics. A
+ * missing message stays missing; the host stores an absent error as `null`,
+ * which also comes back as `undefined`.
+ */
+export function redactSensitiveMessage(message: string): string;
+export function redactSensitiveMessage(message: string | undefined): string | undefined;
+export function redactSensitiveMessage(message: string | undefined): string | undefined {
   return message
-    .replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
+    ?.replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
     .replace(
       /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
       (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,

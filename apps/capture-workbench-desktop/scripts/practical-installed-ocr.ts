@@ -60,28 +60,30 @@ import {
 import {
   assertDiagnosticsMatchesDurableOcr,
   assertDurableOcrCheckpoint,
-  closePackagedBrowser,
-  connectToPackagedPage,
   exactOcrQueueRow,
   extractDurableOcrSegments,
-  invokeTauriCommand,
-  isLoopbackPortOpen,
   parseAuthenticatedOcrPreflight,
-  pinViewportToWindow,
   queryPackagedUiState,
   readAndAssertVisibleOcrPages,
-  readDurableLibraryDetail,
   readImportedSourceSha256,
   readOcrComputeModeFromSettings,
-  reattachToPackagedPage,
-  requestDesktopTeardown,
-  reservePort,
   runOcrFirstRunSetup,
   waitForDesktopOcrCompletion,
   waitForImportedDocumentId,
   waitForPackagedRuntimeReadySignal,
-  waitUntil,
 } from './real-desktop-ocr-smoke.ts';
+import {
+  closePackagedBrowser,
+  connectToPackagedPage,
+  invokeTauriCommand,
+  isLoopbackPortOpen,
+  pinViewportToWindow,
+  readDurableLibraryDetail,
+  reattachToPackagedPage,
+  requestDesktopTeardown,
+  reservePort,
+  waitUntil,
+} from './packaged-workbench-session.ts';
 import { nativeClickWebViewElement, nativeOpenDialogUiAutomation } from './installed-native-dialog.ts';
 import { appRoot } from './stage-runtime.ts';
 
@@ -258,7 +260,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
   }
 
   let workerMirror: { server: Server; origin: string } | undefined;
-  const ocrWorker = installerProvenance.runtime.workers.find((worker) => worker.requirementId === 'windowsml-ocr');
+  const ocrWorker = installerProvenance.runtime.workers.find((worker) => worker.requirementId === 'text-recognition');
   if (!ocrWorker) throw new Error('Installer provenance omits the OCR worker identity.');
   if (args.runtimeRelease) {
     const release = verifyRuntimeReleaseDirectory(
@@ -476,7 +478,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     const importedSourceSha256 = readImportedSourceSha256(detail);
     assertDurableOcrCheckpoint(detail, { sourceKind, sourceSha256: args.inputSha256, rawSegments: segments });
     const durable = await assertDiagnosticsMatchesDurableOcr(page, detail, documentId);
-    if ((durable.device === 'windowsml-dml') !== (preflight.mode === 'gpu-dml')) {
+    if ((durable.device === 'directml') !== (preflight.mode === 'gpu')) {
       throw new Error('Durable OCR device differs from the authenticated compute preflight.');
     }
     journey = {
@@ -496,7 +498,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
       fixture: { kind: sourceKind, sha256: args.inputSha256, bytes: sourceBytes.length },
       importedSourceSha256,
       runtime: {
-        contractSetSha256: preflight.contractSha256,
+        contractSetSha256: preflight.contractSetSha256,
         workerExecutableSha256: preflight.workerSha256,
         computeMode: preflight.mode,
       },

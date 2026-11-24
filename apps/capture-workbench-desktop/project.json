@@ -316,6 +316,19 @@
         "parallel": false
       }
     },
+    "check-real-engine-devices": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Manual Windows check at the runtime API of the locally built release runtime (packages/capture-runtime/dist/release, from capture-runtime:build-release-artifacts) with real engines: OCR, speech recognition and speaker identification scenarios, each comparing the designed device with the reported one (provenance, ocrCompute) and the one observed in GPU engine and CPU samples. Pass --pdf, --image and --audio; --list shows the scenarios. Not a release gate; excluded from CI."
+      },
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-engine-device-check"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/real-engine-device-check.ts"
+      }
+    },
     "smoke-real-desktop-ocr": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -347,7 +360,7 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build",
-          "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts --expected-ocr-device windowsml-dml"
+          "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts --expected-ocr-device directml"
         ],
         "parallel": false
       }
@@ -388,6 +401,34 @@
           "node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts --recorded"
         ],
         "parallel": false
+      }
+    },
+    "review-packaged-real-screenshots": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck-scripts"],
+      "metadata": {
+        "description": "Manual baseline review, never release evidence and no release requires it: the real-engine OCR and ASR journeys on the packaged Desktop App (the non-installed build-acceptance binary) with a local release runtime and no runtime candidate. It stages and serves workers from the same release directory, builds build-acceptance, opens the app's window, drives the native picker and installs real engines. Failed comparisons and missing baselines yield approval images. Pass --journey ocr or --journey asr to run one journey. Excluded from CI."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/playwright/capture-workbench-review"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/packaged-real-journeys.ts --mode baseline-review"
+      }
+    },
+    "acceptance-packaged-real-asr": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck-scripts"],
+      "metadata": {
+        "description": "Manual release acceptance (#163): the real-engine ASR journey on the packaged Desktop App (the non-installed build-acceptance binary, built with the runtime candidate's runtime staged) bound to a runtime candidate: speech installed through the loopback worker mirror, a recording done and shown with its provenance, Cancel and Start again, removal on Settings › Engines, deletion in History and cleanup proof, with compared screenshots. It opens the app's window and drives the native picker. Excluded from CI."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/playwright/capture-workbench"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/packaged-real-journeys.ts --mode acceptance --journey asr"
       }
     },
     "build-practical-installer": {
@@ -446,6 +487,20 @@
       ],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts"
+      }
+    },
+    "diagnostic-installed-deterministic-capture-lifecycle": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Diagnostic only, not a release gate. Explicit Windows-only check of the capture lifecycle on the installed QA build (fixture runtime): reload keys and closing the app during a capture, and native drop on the OCR, ASR and History pages. It opens windows and sends keys and mouse drags to them, and installs and uninstalls the QA build in an isolated scope; intentionally excluded from ordinary verify and CI."
+      },
+      "dependsOn": ["build-nsis-deterministic"],
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/installed-capture-lifecycle"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/installed-capture-lifecycle-cli.ts"
       }
     },
     "measure-installed-core-size": {

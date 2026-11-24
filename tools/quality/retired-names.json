@@ -1,5 +1,11 @@
 [
   {
+    "name": "CAPTURE_REAL_ENGINES_REUSE_INSTALLED",
+    "match": "word",
+    "replacement": "smoke-real-engines-installation and smoke-real-engines-execution",
+    "allowed": []
+  },
+  {
     "name": "_publish-pypi.yml",
     "match": "substring",
     "replacement": "_verify-pypi-publication.yml",
@@ -409,7 +415,7 @@
   {
     "name": "speakerUnitNeeded",
     "match": "word",
-    "replacement": "speakerRequirementNeeded",
+    "replacement": "asrInstallSpeakers (the recording page offers the speaker identification install)",
     "allowed": []
   },
   {
@@ -584,6 +590,1721 @@
     "name": "structuring.infrastructure.ollama.installer",
     "match": "substring",
     "replacement": "structuring.infrastructure.ollama.requirement_installation and provisioning.application.requirement_installer",
+    "allowed": []
+  },
+  {
+    "name": "OwnedRuntimeSession",
+    "match": "word",
+    "replacement": "OwnedSidecarSession",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeTerminationProof",
+    "match": "word",
+    "replacement": "SidecarTerminationProof",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeCleanupError",
+    "match": "word",
+    "replacement": "SidecarCleanupError",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeCleanupErrorKind",
+    "match": "word",
+    "replacement": "SidecarCleanupErrorKind",
+    "allowed": []
+  },
+  {
+    "name": "reserve_loopback_port",
+    "match": "word",
+    "replacement": "pick_free_loopback_port",
+    "allowed": []
+  },
+  {
+    "name": "reserve_distinct_loopback_port",
+    "match": "word",
+    "replacement": "pick_distinct_free_loopback_port",
+    "allowed": []
+  },
+  {
+    "name": "runtimeAssets",
+    "match": "word",
+    "replacement": "releaseAssets",
+    "allowed": [
+      {
+        "glob": "tools/release/full-release-manifest.ts",
+        "reason": "Reads immutable full release manifest v1."
+      },
+      {
+        "glob": "tools/resolve-capture-release.test.ts",
+        "reason": "Fixtures for immutable full release manifest v1."
+      },
+      {
+        "glob": "CHANGELOG.md",
+        "reason": "Historical release notes."
+      },
+      {
+        "glob": ".agents/PLANS/speech-recognition-s7.md",
+        "reason": "Records the historical v1 release layout."
+      },
+      {
+        "glob": ".agents/SPECS/capture-runtime-installer-size-reduction.md",
+        "reason": "Describes historical release assets."
+      }
+    ]
+  },
+  {
+    "name": "release-ledger.json",
+    "match": "word",
+    "replacement": "candidate-verification-summary.json",
+    "allowed": [
+      {
+        "glob": "tools/release/candidate-verification-summary.ts",
+        "reason": "Reads immutable pre-cutover candidate evidence."
+      },
+      {
+        "glob": "tools/consumer-gate.test.ts",
+        "reason": "Fixture for immutable pre-cutover candidate evidence."
+      },
+      {
+        "glob": "CHANGELOG.md",
+        "reason": "Historical release notes."
+      },
+      {
+        "glob": ".github/workflows/_publish-github-release.yml",
+        "reason": "GitHub release publication ledger is a different artifact."
+      },
+      {
+        "glob": ".github/workflows/_publish-runtime-github-release.yml",
+        "reason": "Runtime GitHub release publication ledger is a different artifact."
+      },
+      {
+        "glob": ".github/workflows/_publish-promotion-ledger.yml",
+        "reason": "Consumes the separate GitHub release publication ledger."
+      }
+    ]
+  },
+  {
+    "name": "windowsml-ocr",
+    "match": "word",
+    "replacement": "text-recognition",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session fixture."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+        "reason": "Rejects the historical ID with migration guidance."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/system_requirement_installer.py",
+        "reason": "Rejects the historical ID in enabled requirements."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/installation_repository.py",
+        "reason": "Reads historical installation jobs and preserves the stored ID during recovery."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_residue.py",
+        "reason": "Exact managed directory name for upgrade cleanup."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_api.py",
+        "reason": "Historical-ID rejection fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Historical installation metadata fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_app_data_lock.py",
+        "reason": "Historical installed directory and link fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs",
+        "reason": "Rejects the historical requirement ID (test)."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.spec.ts",
+        "reason": "Shows historical OCR evidence as recorded."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+        "reason": "Generated from the runtime contract, which rejects the historical ID."
+      },
+      {
+        "glob": "test-fixtures/ocr-evidence-v1-golden.json",
+        "reason": "Frozen golden of the version 1 OCR evidence format."
+      }
+    ]
+  },
+  {
+    "name": "windowsml-dml",
+    "match": "word",
+    "replacement": "directml",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.spec.ts",
+        "reason": "Shows historical OCR evidence as recorded."
+      }
+    ]
+  },
+  {
+    "name": "pp-ocrv6-medium-windowsml",
+    "match": "word",
+    "replacement": "pp-ocrv6-medium",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.spec.ts",
+        "reason": "Shows historical OCR evidence as recorded."
+      }
+    ]
+  },
+  {
+    "name": "WindowsML OCR",
+    "match": "substring",
+    "replacement": "Text recognition",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      }
+    ]
+  },
+  {
+    "name": "deterministic-windowsml-v1",
+    "match": "word",
+    "replacement": "deterministic-ocr-v1",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session fixture."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      }
+    ]
+  },
+  {
+    "name": "gpu-dml",
+    "match": "word",
+    "replacement": "gpu",
+    "allowed": [
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/tests/test_client_sdk.py",
+        "reason": "Rejects historical compute values (test)."
+      }
+    ]
+  },
+  {
+    "name": "dml_provider_unavailable",
+    "match": "word",
+    "replacement": "gpu_provider_unavailable",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/tests/test_client_sdk.py",
+        "reason": "Rejects historical compute values (test)."
+      }
+    ]
+  },
+  {
+    "name": "CAPTURE_WINDOWSML_MODEL_DIR",
+    "match": "word",
+    "replacement": "remove the setting",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/config.py",
+        "reason": "Rejects the removed environment variable at startup."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_engine_adapters.py",
+        "reason": "Retired environment-variable rejection fixture."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_ocr_vertical_routing.py",
+        "reason": "Verifies the removed parent setting does not reach the worker."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_recovery_release_and_ollama.py",
+        "reason": "Verifies the removed parent setting does not reach the worker."
+      }
+    ]
+  },
+  {
+    "name": "WindowsMLOcrAdapter",
+    "match": "word",
+    "replacement": "OnnxOcrAdapter",
+    "allowed": []
+  },
+  {
+    "name": "ocr_windowsml_adapter",
+    "match": "substring",
+    "replacement": "ocr_onnx_adapter",
+    "allowed": []
+  },
+  {
+    "name": "commit-a",
+    "match": "substring",
+    "replacement": "text-recognition source",
+    "allowed": []
+  },
+  {
+    "name": "ollama-runtime",
+    "match": "word",
+    "replacement": "structuring-runtime",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/constants/requirements.py",
+        "reason": "Historical requirement IDs used by repository readers and migration errors."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_api.py",
+        "reason": "Verifies retired requirement IDs fail request and startup validation."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Historical installation records and fingerprint replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records containing retired recommendation IDs."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs",
+        "reason": "Verifies the desktop host rejects retired requirement IDs."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library fixture kept unchanged after reopen and export."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+        "reason": "Names the replacement when a request sends a retired requirement ID."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+        "reason": "Generated from the runtime contracts module, which rejects retired requirement IDs."
+      }
+    ]
+  },
+  {
+    "name": "capture-ollama-model",
+    "match": "word",
+    "replacement": "structuring-model",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/constants/requirements.py",
+        "reason": "Historical requirement IDs used by repository readers and migration errors."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_api.py",
+        "reason": "Verifies retired requirement IDs fail request and startup validation."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Historical installation records and fingerprint replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records containing retired recommendation IDs."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/model_catalog.py",
+        "reason": "Read-only active selection marker fallback."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+        "reason": "Reads the historical readiness marker."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/requirement_installation.py",
+        "reason": "Validates the historical readiness marker."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_ollama_restart_readiness.py",
+        "reason": "Historical model marker fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session documents."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_structuring_domain.py",
+        "reason": "Historical model-installation metadata fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs",
+        "reason": "Verifies the desktop host rejects retired requirement IDs."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library fixture kept unchanged after reopen and export."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.store.spec.ts",
+        "reason": "Verifies diagnostics download keeps historical host JSON unchanged."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/support/ollama_legacy.py",
+        "reason": "Writes the readiness marker of a 0.10.x model install."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+        "reason": "Names the replacement when a request sends a retired requirement ID."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+        "reason": "Generated from the runtime contracts module, which rejects retired requirement IDs."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_model_selection.py",
+        "reason": "Writes a 0.10 model selection marker at its original file name to prove it stays readable."
+      }
+    ]
+  },
+  {
+    "name": "suggestedUnits",
+    "match": "word",
+    "replacement": "suggestedRequirementIds",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+        "reason": "Verifies historic host-commit fingerprints before replay."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical stored capture documents."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical raw capture and result fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session document fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library fixture kept unchanged after reopen and export."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.store.spec.ts",
+        "reason": "Verifies diagnostics download keeps historical host JSON unchanged."
+      }
+    ]
+  },
+  {
+    "name": "suggested_units",
+    "match": "word",
+    "replacement": "suggested_requirement_ids",
+    "allowed": []
+  },
+  {
+    "name": "OLLAMA_RUNTIME_REQUIREMENT_ID",
+    "match": "word",
+    "replacement": "STRUCTURING_RUNTIME_REQUIREMENT_ID",
+    "allowed": []
+  },
+  {
+    "name": "OLLAMA_MODEL_REQUIREMENT_ID",
+    "match": "word",
+    "replacement": "STRUCTURING_MODEL_REQUIREMENT_ID",
+    "allowed": []
+  },
+  {
+    "name": "capture-media-time-for-audio",
+    "match": "word",
+    "replacement": "capture-media-time-for-recording",
+    "allowed": []
+  },
+  {
+    "name": "audioCaptureOperation",
+    "match": "word",
+    "replacement": "recordingCaptureOperation",
+    "allowed": []
+  },
+  {
+    "name": "StreamingCaptureStatus",
+    "match": "word",
+    "replacement": "CaptureStatus",
+    "allowed": []
+  },
+  {
+    "name": "StreamingIngestionStatus",
+    "match": "word",
+    "replacement": "IngestionStatus",
+    "allowed": []
+  },
+  {
+    "name": "StreamingIngestionMode",
+    "match": "word",
+    "replacement": "IngestionMode",
+    "allowed": []
+  },
+  {
+    "name": "StreamingEventType",
+    "match": "word",
+    "replacement": "CaptureEventType",
+    "allowed": []
+  },
+  {
+    "name": "CaptureStreamingResult",
+    "match": "word",
+    "replacement": "CaptureResult",
+    "allowed": []
+  },
+  {
+    "name": "CaptureFailure",
+    "match": "word",
+    "replacement": "OperationFailure",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime-client/src/client.spec.ts",
+        "reason": "Asserts the SDK no longer exports the retired name."
+      }
+    ]
+  },
+  {
+    "name": "CaptureFailureV2",
+    "match": "word",
+    "replacement": "OperationFailure",
+    "allowed": []
+  },
+  {
+    "name": "ErrorDetailsV2",
+    "match": "word",
+    "replacement": "ErrorDetails",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeModelOption",
+    "match": "word",
+    "replacement": "StructuringModelOption",
+    "allowed": []
+  },
+  {
+    "name": "/v2/runtime/model-options",
+    "match": "substring",
+    "replacement": "/v2/runtime/structuring-model-options",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_model_selection.py",
+        "reason": "Asserts the retired model route is not registered."
+      }
+    ]
+  },
+  {
+    "name": "/v2/runtime/model-installations",
+    "match": "substring",
+    "replacement": "/v2/runtime/structuring-model-installations",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_model_selection.py",
+        "reason": "Asserts the retired model route is not registered."
+      }
+    ]
+  },
+  {
+    "name": "rawSourceSha256",
+    "match": "word",
+    "replacement": "sourceSha256",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+        "reason": "Reads historical pull-session metadata without rewriting it."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical pull-session bytes and fresh-request rejection."
+      }
+    ]
+  },
+  {
+    "name": "CAPTURE_OLLAMA_PROFILE_ID",
+    "match": "word",
+    "replacement": "remove the setting",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/config.py",
+        "reason": "Rejects the removed environment variable at startup."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_engine_adapters.py",
+        "reason": "Retired environment-variable rejection fixture."
+      }
+    ]
+  },
+  {
+    "name": "capture-workbench-ocr-",
+    "match": "substring",
+    "replacement": "ocr-",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_profile.py",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/assets/ocr-profile.json",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/model-sources/release-model-source-lock.json",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/model-sources/text-recognition/provenance/text-recognition.json",
+        "reason": "Packaged OCR fixture algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/model-sources/text-recognition/model/pipeline.json",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
+        "reason": "Writes the packaged OCR profile algorithm id."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_text_recognition_sources.py",
+        "reason": "Asserts the packaged OCR profile algorithm id."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/fixtures/vertical-ocr/reading-order-bunka-composite.json",
+        "reason": "Vertical OCR gold embeds the packaged profile algorithm id."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical OCR projection bytes keep the prefixed profile id."
+      },
+      {
+        "glob": ".agents/GUIDES/release-runbook.md",
+        "reason": "Records profile ids published before the prefix was dropped."
+      },
+      {
+        "glob": ".agents/SPECS/vertical-japanese-ocr.md",
+        "reason": "Names the packaged OCR profile algorithm id."
+      },
+      {
+        "glob": ".agents/DECISIONS/vertical-japanese-ocr.md",
+        "reason": "Names the packaged OCR profile algorithm id."
+      }
+    ]
+  },
+  {
+    "name": "capture-workbench-qwen",
+    "match": "substring",
+    "replacement": "qwen",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical pull-session metadata keeps the prefixed structuring profile id; the test proves it stays readable."
+      }
+    ]
+  },
+  {
+    "name": "capture-event-v2.schema.json",
+    "match": "substring",
+    "replacement": "capture-event.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-failure-v2.schema.json",
+    "match": "substring",
+    "replacement": "operation-failure.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-ocr-projection-v3.schema.json",
+    "match": "substring",
+    "replacement": "capture-ocr-projection.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-operation-v2.schema.json",
+    "match": "substring",
+    "replacement": "capture-operation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-streaming-result.schema.json",
+    "match": "substring",
+    "replacement": "capture-result.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "error-body-v2.schema.json",
+    "match": "substring",
+    "replacement": "error-body.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "error-envelope-v2.schema.json",
+    "match": "substring",
+    "replacement": "error-envelope.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "finalize-ingestion-v2.schema.json",
+    "match": "substring",
+    "replacement": "finalize-ingestion.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ingestion-v2.schema.json",
+    "match": "substring",
+    "replacement": "ingestion.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-box-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-box.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-compute-preflight-v2.schema.json",
+    "match": "substring",
+    "replacement": "ocr-compute-preflight.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-page-projection-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-page-projection.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-page-scope-v2.schema.json",
+    "match": "substring",
+    "replacement": "ocr-page-scope.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-point-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-point.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-provenance-resolved-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-provenance-resolved.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-provenance-unavailable-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-provenance-unavailable.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-provenance-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-provenance.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-raster-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-raster.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "open-ingestion-v2.schema.json",
+    "match": "substring",
+    "replacement": "open-ingestion.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "open-structuring-session-v2.schema.json",
+    "match": "substring",
+    "replacement": "open-structuring-session.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "partial-capture-v2.schema.json",
+    "match": "substring",
+    "replacement": "partial-capture.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "report-structuring-failure-v2.schema.json",
+    "match": "substring",
+    "replacement": "report-structuring-failure.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-artifact-descriptor-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-artifact-descriptor.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-installations-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-installations.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-installations-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-installations.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-option-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-option.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-options-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-options.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-requirement-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-requirement.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-requirements-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-requirements.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-streaming-capabilities-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-capabilities.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "start-capture-v2.schema.json",
+    "match": "substring",
+    "replacement": "start-capture.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "start-runtime-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "start-runtime-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "start-runtime-model-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "start-structuring-model-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-batch-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-batch.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-provider-capability-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-provider-capability.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-semantic-block-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-semantic-block.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-session-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-session.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "submit-structuring-batch-v2.schema.json",
+    "match": "substring",
+    "replacement": "submit-structuring-batch.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "streaming/health/ready",
+    "match": "substring",
+    "replacement": "/v2/health/ready",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Asserts that the retired readiness route answers 404."
+      }
+    ]
+  },
+  {
+    "name": "v2.streaming.health.ready",
+    "match": "substring",
+    "replacement": "v2.health.ready",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeStreamingCapabilities",
+    "match": "word",
+    "replacement": "RuntimeCapabilities",
+    "allowed": []
+  },
+  {
+    "name": "runtime-streaming-capabilities.schema.json",
+    "match": "substring",
+    "replacement": "runtime-capabilities.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "supportsProgressiveAudio",
+    "match": "word",
+    "replacement": "supportsProgressiveRecording",
+    "allowed": []
+  },
+  {
+    "name": "supports_progressive_audio",
+    "match": "word",
+    "replacement": "supports_progressive_recording",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingCapabilities",
+    "match": "word",
+    "replacement": "getReady",
+    "allowed": []
+  },
+  {
+    "name": "get_streaming_capabilities",
+    "match": "word",
+    "replacement": "handshake",
+    "allowed": []
+  },
+  {
+    "name": "startStreamingCapture",
+    "match": "word",
+    "replacement": "startCapture",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingCapture",
+    "match": "word",
+    "replacement": "getCapture",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingPartial",
+    "match": "word",
+    "replacement": "getPartial",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingRaw",
+    "match": "word",
+    "replacement": "getRaw",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingResult",
+    "match": "word",
+    "replacement": "getResult",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingEvents",
+    "match": "word",
+    "replacement": "getCaptureEvents",
+    "allowed": []
+  },
+  {
+    "name": "cancelStreamingCapture",
+    "match": "word",
+    "replacement": "cancelCapture",
+    "allowed": []
+  },
+  {
+    "name": "deleteStreamingCapture",
+    "match": "word",
+    "replacement": "deleteCapture",
+    "allowed": []
+  },
+  {
+    "name": "structureStreamingCapture",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "commitStreamingStructuredResult",
+    "match": "word",
+    "replacement": "commitStructure",
+    "allowed": []
+  },
+  {
+    "name": "reportStreamingStructuringFailure",
+    "match": "word",
+    "replacement": "reportStructuringFailure",
+    "allowed": []
+  },
+  {
+    "name": "getModelInstallationStatus",
+    "match": "word",
+    "replacement": "getModelInstallation",
+    "allowed": []
+  },
+  {
+    "name": "pullStructuringBatch",
+    "match": "word",
+    "replacement": "getStructuringBatch",
+    "allowed": []
+  },
+  {
+    "name": "start_streaming_capture",
+    "match": "word",
+    "replacement": "start_capture",
+    "allowed": []
+  },
+  {
+    "name": "get_streaming_capture",
+    "match": "word",
+    "replacement": "get_capture",
+    "allowed": []
+  },
+  {
+    "name": "get_streaming_result",
+    "match": "word",
+    "replacement": "get_result",
+    "allowed": []
+  },
+  {
+    "name": "cancel_streaming_capture",
+    "match": "word",
+    "replacement": "cancel_capture",
+    "allowed": []
+  },
+  {
+    "name": "commit_streaming_structure",
+    "match": "word",
+    "replacement": "commit_structure",
+    "allowed": []
+  },
+  {
+    "name": "report_streaming_failure",
+    "match": "word",
+    "replacement": "report_structuring_failure",
+    "allowed": []
+  },
+  {
+    "name": "delete_streaming_capture",
+    "match": "word",
+    "replacement": "delete_capture",
+    "allowed": []
+  },
+  {
+    "name": "delete_streaming_ingestion",
+    "match": "word",
+    "replacement": "delete_ingestion",
+    "allowed": []
+  },
+  {
+    "name": "get_model_installation_status",
+    "match": "word",
+    "replacement": "get_model_installation",
+    "allowed": []
+  },
+  {
+    "name": "pull_structuring_batch",
+    "match": "word",
+    "replacement": "get_structuring_batch",
+    "allowed": []
+  },
+  {
+    "name": "decode_streaming_result",
+    "match": "word",
+    "replacement": "decode_capture_result",
+    "allowed": []
+  },
+  {
+    "name": "StartStreamingCaptureRequest",
+    "match": "word",
+    "replacement": "StartCaptureRequest",
+    "allowed": []
+  },
+  {
+    "name": "CommitStreamingStructuredResultRequest",
+    "match": "word",
+    "replacement": "CommitStructuredResultRequest",
+    "allowed": []
+  },
+  {
+    "name": "ReportStreamingStructuringFailureRequest",
+    "match": "word",
+    "replacement": "ReportStructuringFailureRequest",
+    "allowed": []
+  },
+  {
+    "name": "CreateCaptureRequest",
+    "match": "word",
+    "replacement": "StartCaptureRequest",
+    "allowed": []
+  },
+  {
+    "name": "streaming_client_unavailable",
+    "match": "word",
+    "replacement": "capture_client_unavailable",
+    "allowed": []
+  },
+  {
+    "name": "asStreamingClient",
+    "match": "word",
+    "replacement": "asCompleteCaptureClient",
+    "allowed": []
+  },
+  {
+    "name": "runtime_start_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_start_recording_capture",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_get_capture",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_events",
+    "match": "word",
+    "replacement": "runtime_get_capture_events",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_partial",
+    "match": "word",
+    "replacement": "runtime_get_partial",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_result",
+    "match": "word",
+    "replacement": "runtime_get_result",
+    "allowed": []
+  },
+  {
+    "name": "runtime_structure_streaming_capture",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "runtime_cancel_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_delete_capture (Cancel is a runtime delete)",
+    "allowed": []
+  },
+  {
+    "name": "runtime_delete_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_delete_capture",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeStreamingCaptureInput",
+    "match": "word",
+    "replacement": "RuntimeRecordingCaptureInput",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeStreamingEventsInput",
+    "match": "word",
+    "replacement": "RuntimeCaptureEventsInput",
+    "allowed": []
+  },
+  {
+    "name": "progressive_failed",
+    "match": "word",
+    "replacement": "extraction_failed",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_streaming_repository.py",
+        "reason": "Fixture of a capture failure stored by 0.10.x."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Fixtures of failures stored by 0.10.x, and a host-reported code that equals a retired one."
+      }
+    ]
+  },
+  {
+    "name": "progressive_interrupted",
+    "match": "word",
+    "replacement": "capture_interrupted",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      }
+    ]
+  },
+  {
+    "name": "progressive_output_invalid",
+    "match": "word",
+    "replacement": "extraction_output_invalid",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      }
+    ]
+  },
+  {
+    "name": "progressive_no_text_at_sample",
+    "match": "word",
+    "replacement": "extraction_no_text",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
+        "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
+      }
+    ]
+  },
+  {
+    "name": "streaming_source_unavailable",
+    "match": "word",
+    "replacement": "ingestion_source_unavailable",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
+        "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Fixtures of failures stored by 0.10.x."
+      }
+    ]
+  },
+  {
+    "name": "installation_filesystem",
+    "match": "word",
+    "replacement": "installation_timeout or installation_io_failed",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
+        "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Fixture of an installation failure stored by 0.10.x."
+      }
+    ]
+  },
+  {
+    "name": "structureCapture",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "runtime_structure_capture",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "hasActiveCapture",
+    "match": "word",
+    "replacement": "isDocumentClaimed",
+    "allowed": []
+  },
+  {
+    "name": "reattach$",
+    "match": "word",
+    "replacement": "no replacement: a capture belongs to the app run that started it; a stored link is never followed",
+    "allowed": []
+  },
+  {
+    "name": "restartLost$",
+    "match": "word",
+    "replacement": "startAgain$",
+    "allowed": []
+  },
+  {
+    "name": "recoverCapture$",
+    "match": "word",
+    "replacement": "no replacement: nothing follows a capture another app run started",
+    "allowed": []
+  },
+  {
+    "name": "cancelDocument$",
+    "match": "word",
+    "replacement": "cancel$",
+    "allowed": []
+  },
+  {
+    "name": "retryRuntimeCleanup$",
+    "match": "word",
+    "replacement": "no replacement: the runtime delete after the terminal write is not tracked",
+    "allowed": []
+  },
+  {
+    "name": "cleanupAfterCommit$",
+    "match": "word",
+    "replacement": "no replacement: the runtime delete after the terminal write is not tracked",
+    "allowed": []
+  },
+  {
+    "name": "persistLifecycleFailure$",
+    "match": "word",
+    "replacement": "no replacement: one terminal write per attempt",
+    "allowed": []
+  },
+  {
+    "name": "unrecordedFailures$",
+    "match": "word",
+    "replacement": "hasUnstoredOutcome",
+    "allowed": []
+  },
+  {
+    "name": "unappliedCancels",
+    "match": "word",
+    "replacement": "no replacement: a cancel lives only as long as the decision or attempt it was given to",
+    "allowed": []
+  },
+  {
+    "name": "forgetDeletedDocument",
+    "match": "word",
+    "replacement": "no replacement: a cancel is not kept beyond its decision or attempt",
+    "allowed": []
+  },
+  {
+    "name": "FAILED_DECISION_PAUSE_MS",
+    "match": "word",
+    "replacement": "no replacement: a failure ends the attempt and nothing is tried again by itself",
+    "allowed": []
+  },
+  {
+    "name": "isDecisionPaused",
+    "match": "word",
+    "replacement": "hasUnstoredOutcome",
+    "allowed": []
+  },
+  {
+    "name": "failedDecisions",
+    "match": "word",
+    "replacement": "no replacement: nothing is tried again by itself",
+    "allowed": []
+  },
+  {
+    "name": "holdsTerminalData",
+    "match": "word",
+    "replacement": "committedTerminalStatus (earlier versions’ rows only)",
+    "allowed": []
+  },
+  {
+    "name": "isCaptureLost",
+    "match": "word",
+    "replacement": "isInterrupted",
+    "allowed": []
+  },
+  {
+    "name": "canCaptureAgain",
+    "match": "word",
+    "replacement": "canStartAgain",
+    "allowed": []
+  },
+  {
+    "name": "reattachRunning",
+    "match": "word",
+    "replacement": "no replacement: the queues start only waiting rows without a link",
+    "allowed": []
+  },
+  {
+    "name": "attemptedReattachments",
+    "match": "word",
+    "replacement": "no replacement: the queues start only waiting rows without a link",
+    "allowed": []
+  },
+  {
+    "name": "reloadDocumentState",
+    "match": "word",
+    "replacement": "applyDocumentState",
+    "allowed": []
+  },
+  {
+    "name": "retry$",
+    "match": "word",
+    "replacement": "startAgain$ (Start again stores the row waiting; the admission starts it)",
+    "allowed": []
+  },
+  {
+    "name": "terminalStage",
+    "match": "word",
+    "replacement": "no replacement: a terminal write names its own stage",
+    "allowed": []
+  },
+  {
+    "name": "startDocument$",
+    "match": "word",
+    "replacement": "admitWaiting$ (the one admission of the capture service)",
+    "allowed": []
+  },
+  {
+    "name": "startWaiting",
+    "match": "word",
+    "replacement": "admitWaiting$ (the queue stores no longer start captures)",
+    "allowed": []
+  },
+  {
+    "name": "startingIds",
+    "match": "word",
+    "replacement": "no replacement: only the admission starts a capture",
+    "allowed": []
+  },
+  {
+    "name": "pendingStart",
+    "match": "word",
+    "replacement": "no replacement: only the admission starts a capture",
+    "allowed": []
+  },
+  {
+    "name": "awaitingTurn",
+    "match": "word",
+    "replacement": "no replacement: a dropped batch stores waiting rows; the admission gives the turns",
+    "allowed": []
+  },
+  {
+    "name": "batchClaims",
+    "match": "word",
+    "replacement": "no replacement: a dropped batch stores waiting rows; the admission gives the turns",
+    "allowed": []
+  },
+  {
+    "name": "continueImported$",
+    "match": "word",
+    "replacement": "addSelections$ (imports waiting rows) and admitWaiting$",
+    "allowed": []
+  },
+  {
+    "name": "recordingInProgress",
+    "match": "word",
+    "replacement": "no replacement: one capture at a time for recordings and documents together",
+    "allowed": []
+  },
+  {
+    "name": "hasUnstoredOutcome",
+    "match": "word",
+    "replacement": "unstoredOutcomes (a readonly signal)",
+    "allowed": []
+  },
+  {
+    "name": "captureRetry",
+    "match": "word",
+    "replacement": "captureRestart (one Start again for every row that can be captured again)",
+    "allowed": []
+  },
+  {
+    "name": "captureRetryNamed",
+    "match": "word",
+    "replacement": "captureRestartNamed",
+    "allowed": []
+  },
+  {
+    "name": "asr-row-retry",
+    "match": "substring",
+    "replacement": "asr-row-restart (one Start again)",
+    "allowed": []
+  },
+  {
+    "name": "ocr-row-retry",
+    "match": "substring",
+    "replacement": "ocr-row-restart (one Start again)",
+    "allowed": []
+  },
+  {
+    "name": "ocrInterruptedHint",
+    "match": "word",
+    "replacement": "no replacement: an interrupted row has one cause-free text (captureInterrupted)",
+    "allowed": []
+  },
+  {
+    "name": "asrStatusText",
+    "match": "word",
+    "replacement": "captureRowState (the same row state in both queues, History and the result view)",
+    "allowed": []
+  },
+  {
+    "name": "ocrStatusText",
+    "match": "word",
+    "replacement": "captureRowState (the same row state in both queues, History and the result view)",
+    "allowed": []
+  },
+  {
+    "name": "isDocumentBeingDeleted",
+    "match": "word",
+    "replacement": "isDocumentClaimed (History offers Delete for every row this run is not working on)",
+    "allowed": []
+  },
+  {
+    "name": "runtime_cancel_capture",
+    "match": "word",
+    "replacement": "runtime_delete_capture (Cancel is a runtime delete)",
+    "allowed": []
+  },
+  {
+    "name": "recordingNotFound",
+    "match": "word",
+    "replacement": "captureNotFound (the simulated runtime's not-found answer for recordings and documents)",
+    "allowed": []
+  },
+  {
+    "name": "CAPTURE_DEV_HOST_TEMP_ROOT",
+    "match": "word",
+    "replacement": "tools/test-temp-root.ts, which capture-workbench-e2e:e2e-dev-host preloads",
+    "allowed": []
+  },
+  {
+    "name": "speakerRequirementNeeded",
+    "match": "word",
+    "replacement": "asrInstallSpeakers (the recording page offers the speaker identification install)",
+    "allowed": []
+  },
+  {
+    "name": "cancelBeforeDelete",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "waitBeforeDelete",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "asrPanelHint",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "asrSpeakersOptionalTitle",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "resultStatusText",
+    "match": "word",
+    "replacement": "resultRowState (the result view takes its status and its reason from one row state)",
+    "allowed": []
+  },
+  {
+    "name": "workerStoppedMsAfterDelete",
+    "match": "word",
+    "replacement": "workerSeenGoneMsAfterDeleteAnswer",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceScreenshot",
+    "match": "word",
+    "replacement": "checkpointScreenshot (the journeys take checkpoint screenshots in acceptance and in baseline review)",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceScreenshots",
+    "match": "word",
+    "replacement": "checkpointScreenshots",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceScreenshotMasks",
+    "match": "word",
+    "replacement": "checkpointScreenshotMasks",
+    "allowed": []
+  },
+  {
+    "name": "injectAcceptancePrivacyStyle",
+    "match": "word",
+    "replacement": "injectCheckpointPrivacyStyle",
+    "allowed": []
+  },
+  {
+    "name": "DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS",
+    "match": "word",
+    "replacement": "DESKTOP_OCR_CHECKPOINTS (each checkpoint says whether it is compared)",
+    "allowed": []
+  },
+  {
+    "name": "DesktopOcrAcceptanceCheckpointName",
+    "match": "word",
+    "replacement": "DesktopOcrCheckpointName",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceResponsiveLayout",
+    "match": "word",
+    "replacement": "assertViewportDoesNotOverflow",
+    "allowed": []
+  },
+  {
+    "name": "assertConfiguredHostAppData",
+    "match": "word",
+    "replacement": "assertHostOwnedAppData (local smoke only; acceptance and review use the run data root)",
+    "allowed": []
+  },
+  {
+    "name": "readLatestOcrInstallation",
+    "match": "word",
+    "replacement": "readLatestInstallation(page, 'text-recognition')",
+    "allowed": []
+  },
+  {
+    "name": "01-runtime-ready-ocr-only",
+    "match": "substring",
+    "replacement": "01-runtime-ready (one baseline name per checkpoint)",
+    "allowed": []
+  },
+  {
+    "name": "04-review-complete-ocr-only",
+    "match": "substring",
+    "replacement": "04-review-complete (one baseline name per checkpoint)",
+    "allowed": []
+  },
+  {
+    "name": "E2E_ACCEPTANCE_UPDATE_SNAPSHOTS",
+    "match": "word",
+    "replacement": "Copy the exact owner-approved images by hand (apps/capture-workbench-desktop/README.md#approving-images)",
+    "allowed": []
+  },
+  {
+    "name": "E2E_ACCEPTANCE_BASELINE_REVIEWED",
+    "match": "word",
+    "replacement": "Copy the exact owner-approved images by hand (apps/capture-workbench-desktop/README.md#approving-images)",
     "allowed": []
   }
 ]

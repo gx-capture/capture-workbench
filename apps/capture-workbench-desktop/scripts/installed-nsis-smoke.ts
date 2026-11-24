@@ -7,9 +7,7 @@ import {
   open,
   readFile,
   readdir,
-  rename,
   rm,
-  stat,
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -39,12 +37,12 @@ import { assertRealAppDataUnchanged, installedAppDataUse, realProductAppDataDire
 import type { AppDataSnapshot } from './installed-app-data-guard.ts';
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import {
-  CHILD_ENVIRONMENT_ALLOWLIST,
   INSTALLED_EXECUTABLE_NAME,
   PRODUCT_REGISTRY_KEY,
   REGISTRY_VIEWS,
   UNINSTALLER_NAME,
   UNINSTALL_REGISTRY_KEY,
+  registryKeysForProduct,
 } from './constants/installed.ts';
 import { appRoot } from './stage-runtime.ts';
 import {
@@ -54,6 +52,7 @@ import {
   assertStrictDescendant,
   assertTaskkillResult,
   buildInstalledAppEnvironment,
+  installedChildEnvironment,
   installerArguments,
   uninstallerArguments,
 } from './contracts/installed.ts';
@@ -70,7 +69,14 @@ import {
   createTrackedProcessTreeTerminator,
 } from './installed-process-cleanup.ts';
 import { createInstalledRegistry } from './installed-registry.ts';
-import { createInstalledSmokeLifecycle } from './installed-smoke-lifecycle.ts';
+import { acquireInstalledProductLock } from './installed-product-lock.ts';
+import {
+  assertInstalledIntoOwnedDirectory,
+  createInstalledSmokeLifecycle,
+  pathExists,
+  uninstallOwnedInstallation,
+  writeOwnedEvidence,
+} from './installed-smoke-lifecycle.ts';
 
 export {
   assertInstalledSmokeEvidence,
@@ -130,64 +136,19 @@ const uninstallerName = UNINSTALLER_NAME;
 const productRegistryKey = PRODUCT_REGISTRY_KEY;
 const uninstallRegistryKey = UNINSTALL_REGISTRY_KEY;
 const registryViews = REGISTRY_VIEWS;
-const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 // Model-enabled Windows installers unpack large engine payloads on hosted
 // runners. Keep this budget explicit while process cleanup remains fail-closed.
 export const installedSmokeExecutableTimeoutMs = 600_000;
 
 function baseChildEnvironment(source: NodeJS.ProcessEnv, isolatedTemp: string, ownedRoot = runRoot) {
-  const environment: Record<string, string> = {};
-  for (const allowedName of childEnvironmentAllowlist) {
-    const sourceEntry = Object.entries(source).find(
-      ([name, value]) =>
-        name.toUpperCase() === allowedName &&
-        typeof value === 'string' &&
-        value.length > 0,
-    );
-    if (sourceEntry) environment[allowedName] = sourceEntry[1];
-  }
-  const safeTemp = assertStrictDescendant(
-    ownedRoot,
-    isolatedTemp,
-    'Temporary directory',
-  );
-  environment.TEMP = safeTemp;
-  environment.TMP = safeTemp;
-  return environment;
-}
-
-function pathExists(path) {
-  return defer(() => from(stat(path))).pipe(
-    map(() => true),
-    catchError((error) =>
-      error?.code === 'ENOENT' ? of(false) : throwError(() => error),
-    ),
-  );
+  return installedChildEnvironment(source, isolatedTemp, ownedRoot);
 }
 
 function writeEvidence(report, destination = evidencePath) {
-  const safePath = assertStrictDescendant(
-    smokeRoot,
-    destination,
-    'Evidence path',
-  );
-  const temporary = `${safePath}.tmp`;
-  return defer(() => from(rm(temporary, { force: true }))).pipe(
-    concatMap(() =>
-      from(
-        writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, {
-          encoding: 'utf8',
-          flag: 'wx',
-        }),
-      ),
-    ),
-    concatMap(() => from(rm(safePath, { force: true }))),
-    concatMap(() => from(rename(temporary, safePath))),
-    map(() => undefined),
-  );
+  return writeOwnedEvidence(smokeRoot, destination, report);
 }
 
-function acquireLock(root, candidate) {
+export function acquireExclusiveSmokeLock(root, candidate) {
   const safePath = assertStrictDescendant(
     root,
     candidate,
@@ -248,7 +209,14 @@ function assertSmokeLockOwnership(serialized, expectedToken) {
   }
 }
 
-function releaseLock(lock) {
+/** Releases the smoke root's lock, then the product lock when the run held one. */
+export function releaseExclusiveSmokeLock(lock) {
+  return releaseRootLock(lock).pipe(
+    concatMap(() => (lock.productLock ? lock.productLock.release() : of(undefined))),
+  );
+}
+
+function releaseRootLock(lock) {
   return defer(() => from(readFile(lock.path, 'utf8'))).pipe(
     map((serialized) => {
       assertSmokeLockOwnership(serialized, lock.token);
@@ -320,7 +288,7 @@ function runInstalledSizeMeasurement() {
   return defer(async () => {
     await firstValueFrom(lifecycle.prepareSmokeDirectories());
     const smokeLock = await firstValueFrom(
-      acquireLock(smokeRoot, smokeLockPath),
+      acquireExclusiveSmokeLock(smokeRoot, smokeLockPath),
     );
     try {
       let installer;
@@ -365,16 +333,7 @@ function runInstalledSizeMeasurement() {
           ),
         );
         await firstValueFrom(
-          lifecycle.assertOwnedRegularFile(
-            installDirectory,
-            join(installDirectory, installedExecutableName),
-            'Installed Tauri executable',
-          ),
-        );
-        await firstValueFrom(
-          registry.assertInstalledRegistryPointsToOwnedDirectory(
-            installDirectory,
-          ),
+          assertInstalledIntoOwnedDirectory(lifecycle, registry, installDirectory),
         );
         installedBytes = await firstValueFrom(directoryBytes(installDirectory));
         if (!Number.isSafeInteger(installedBytes) || installedBytes < 1) {
@@ -495,7 +454,7 @@ function runInstalledSizeMeasurement() {
       await firstValueFrom(writeEvidence(report, installedSizeEvidencePath));
       return { report, reportPath: installedSizeEvidencePath };
     } finally {
-      await firstValueFrom(releaseLock(smokeLock));
+      await firstValueFrom(releaseExclusiveSmokeLock(smokeLock));
     }
   });
 }
@@ -525,8 +484,10 @@ export function runInstalledNsisSmoke(
 
   const qa = expectedSource === 'deterministic';
   const smokeProductName = qa ? deterministicQaProductName : 'Capture Workbench';
-  const smokeProductRegistryKey = qa ? productRegistryKey.replace('Capture Workbench', smokeProductName) : productRegistryKey;
-  const smokeUninstallRegistryKey = qa ? uninstallRegistryKey.replace('Capture Workbench', smokeProductName) : uninstallRegistryKey;
+  const {
+    productRegistryKey: smokeProductRegistryKey,
+    uninstallRegistryKey: smokeUninstallRegistryKey,
+  } = registryKeysForProduct(smokeProductName);
   const processCleanup = createProcessCleanup({
     smokeRoot,
     workspaceRoot,
@@ -574,8 +535,20 @@ export function runInstalledNsisSmoke(
         .pipe(map(() => manifest.runtimeVersion)),
     ),
     concatMap((runtimeVersion) =>
-      acquireLock(smokeRoot, smokeLockPath).pipe(
-        map((smokeLock) => ({ runtimeVersion, smokeLock })),
+      // The QA build's lock is shared with every installed QA check in any
+      // worktree and held through cleanup; the release path is unchanged.
+      (qa
+        ? acquireInstalledProductLock(smokeProductName, 'smoke-installed-deterministic')
+        : of(undefined)
+      ).pipe(
+        concatMap((productLock) =>
+          acquireExclusiveSmokeLock(smokeRoot, smokeLockPath).pipe(
+            map((smokeLock) => ({ runtimeVersion, smokeLock: { ...smokeLock, productLock } })),
+            catchError((error) => (productLock ? productLock.release() : of(undefined)).pipe(
+              concatMap(() => throwError(() => error)),
+            )),
+          ),
+        ),
       ),
     ),
     catchError((error) => {
@@ -656,6 +629,8 @@ export function runInstalledNsisSmoke(
         concatMap(() => lifecycle.findExpectedInstaller(runtimeVersion)),
         tap((installer) => (state.installer = installer)),
         concatMap(() => registry.assertNoPreExistingInstallation()),
+        // The QA installer would install a missing WebView2 Runtime and leave it behind.
+        concatMap(() => (qa ? registry.requireWebViewRuntime() : of(undefined))),
         concatMap(() =>
           processCleanup.stopAndProveResidualProcessRoots([
             installDirectory,
@@ -702,16 +677,7 @@ export function runInstalledNsisSmoke(
           )),
         ),
         concatMap(() =>
-          lifecycle.assertOwnedRegularFile(
-            installDirectory,
-            join(installDirectory, installedExecutableName),
-            'Installed Tauri executable',
-          ),
-        ),
-        concatMap(() =>
-          registry.assertInstalledRegistryPointsToOwnedDirectory(
-            installDirectory,
-          ),
+          assertInstalledIntoOwnedDirectory(lifecycle, registry, installDirectory),
         ),
         concatMap(() =>
           reserveLoopbackPort().pipe(
@@ -871,62 +837,15 @@ export function runInstalledNsisSmoke(
               }),
             );
           }
-          const uninstallerPath = join(installDirectory, uninstallerName);
           return attempt(
-            pathExists(uninstallerPath).pipe(
-              switchMap((exists) => {
-                if (!exists) {
-                  return pathExists(
-                    join(installDirectory, installedExecutableName),
-                  ).pipe(
-                    concatMap((executableExists) =>
-                      executableExists
-                        ? throwError(
-                            () =>
-                              new Error(
-                                'Installed uninstaller is missing from the owned install directory.',
-                              ),
-                          )
-                        : registry.waitForInstalledDirectoryRemoval(
-                            installDirectory,
-                          ),
-                    ),
-                  );
-                }
-                return lifecycle
-                  .assertOwnedRegularFile(
-                    installDirectory,
-                    uninstallerPath,
-                    'Installed uninstaller',
-                  )
-                  .pipe(
-                    concatMap((uninstaller) =>
-                      registry
-                        .assertInstalledRegistryPointsToOwnedDirectory(
-                          installDirectory,
-                        )
-                        .pipe(
-                          concatMap(() =>
-                            lifecycle.runCheckedExecutable(
-                              uninstaller,
-                              uninstallerArguments(smokeRoot, installDirectory),
-                              'Installed NSIS uninstaller',
-                              baseChildEnvironment(
-                                process.env,
-                                temporaryDirectory,
-                              ),
-                              installedSmokeExecutableTimeoutMs,
-                            ),
-                          ),
-                        ),
-                    ),
-                    concatMap(() =>
-                      registry.waitForInstalledDirectoryRemoval(
-                        installDirectory,
-                      ),
-                    ),
-                  );
-              }),
+            uninstallOwnedInstallation({
+              lifecycle,
+              registry,
+              smokeRoot,
+              installDirectory,
+              environment: baseChildEnvironment(process.env, temporaryDirectory),
+              timeoutMs: installedSmokeExecutableTimeoutMs,
+            }).pipe(
               tap((nativeRegistryState) => {
                 state.cleanup.uninstallerCompleted = true;
                 state.cleanup.installDirectoryRemoved = true;
@@ -1040,24 +959,16 @@ export function runInstalledNsisSmoke(
           persistFailure(error).pipe(
             catchError((reportError) => throwError(() => new AggregateError([error, reportError], 'Installed smoke failed and its failure report could not be written.'))),
             concatMap(() => throwError(() => error)),
-            catchError((failure) => releaseLock(smokeLock).pipe(concatMap(() => throwError(() => failure)))),
+            catchError((failure) => releaseExclusiveSmokeLock(smokeLock).pipe(concatMap(() => throwError(() => failure)))),
           ),
         ),
-        concatMap((result) => releaseLock(smokeLock).pipe(
+        concatMap((result) => releaseExclusiveSmokeLock(smokeLock).pipe(
           catchError((error) => persistFailure(error).pipe(concatMap(() => throwError(() => error)))),
           map(() => result),
         )),
       );
     }),
   );
-}
-
-export function acquireExclusiveSmokeLock(root, candidate) {
-  return acquireLock(root, candidate);
-}
-
-export function releaseExclusiveSmokeLock(lock) {
-  return releaseLock(lock);
 }
 
 export function exerciseInstalledPageForSource(

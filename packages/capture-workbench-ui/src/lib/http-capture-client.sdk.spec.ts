@@ -40,12 +40,16 @@ describe('HttpCaptureClient SDK delegation', () => {
               supportsCancellation: true,
               supportsRawDiagnostics: true,
               maxUploadBytes: 1024,
+              maxChunkBytes: 1024 * 1024,
+              checkpointIntervalMs: 300_000,
+              heartbeatIntervalMs: 5_000,
+              stallTimeoutMs: 90_000,
+              supportsProgressiveRecording: true,
             },
           });
         }
         if (request.path === '/meta/v2/contracts') {
           return jsonResponse({
-            catalogVersion: '2',
             runtimeVersion: RUNTIME_VERSION,
             contractSetVersion: '2',
             surfaces: [{ id: 'v2' }],
@@ -65,15 +69,6 @@ describe('HttpCaptureClient SDK delegation', () => {
             },
           });
         }
-        if (request.path === '/v2/streaming/health/ready') {
-          return jsonResponse({
-            protocolVersion: '2',
-            maxChunkBytes: 1024,
-            checkpointIntervalMs: 250,
-            heartbeatIntervalMs: 1000,
-            stallTimeoutMs: 30000,
-          });
-        }
         return jsonResponse(
           { error: { code: 'not_found', message: 'Not found.' } },
           404,
@@ -90,7 +85,6 @@ describe('HttpCaptureClient SDK delegation', () => {
       '/v2/health/ready',
       '/meta/v2/contracts',
       `/meta/v2/contracts/sha256/${CAPTURE_CONTRACT_SET_SHA256}`,
-      '/v2/streaming/health/ready',
     ]);
   });
 });

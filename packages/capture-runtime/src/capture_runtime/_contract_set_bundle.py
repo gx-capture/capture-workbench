@@ -32,6 +32,7 @@ def validate_bundle_entries(
     schemas = bundle["schemas"]
     operations = bundle["operations"]
     problems = bundle["problems"]
+    failure_codes = bundle["failureCodes"]
     surface_ids = [surface.get("id") for surface in surfaces if isinstance(surface, Mapping)]
     schema_names = [schema.get("name") for schema in schemas if isinstance(schema, Mapping)]
     operation_ids = [
@@ -43,13 +44,19 @@ def validate_bundle_entries(
         if isinstance(operation, Mapping)
     ]
     problem_codes = [problem.get("code") for problem in problems if isinstance(problem, Mapping)]
+    failure_code_names = [
+        failure.get("code") for failure in failure_codes if isinstance(failure, Mapping)
+    ]
     checks = (
         ("surface", surface_ids),
         ("schema", schema_names),
         ("operation", operation_ids),
         ("operation route", operation_routes),
         ("problem", problem_codes),
+        ("failure code", failure_code_names),
     )
+    if len(failure_code_names) != len(failure_codes):
+        raise error_type("contract bundle failure code entries must be objects with identity")
     for label, values in checks:
         if any(value is None for value in values):
             raise error_type(f"contract bundle {label} entries must be objects with identity")

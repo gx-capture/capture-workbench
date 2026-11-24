@@ -28,6 +28,8 @@ from uuid import uuid4
 
 from capture_runtime.file_lock import lock_descriptor, replace_with_retry
 
+from ._install_stop import InstallStop
+
 CACHE_DIR_ENV = "CAPTURE_ENGINE_CACHE_DIR"
 # An entry an install still links to costs no space and is kept. One that no
 # install links to holds bytes of its own (a worker archive, deleted once
@@ -255,16 +257,19 @@ class CachingDownloader[Descriptor: _VerifiedDescriptor]:
             )
             await asyncio.to_thread(self._cache.store, descriptor.sha256, destination)
             return
-        async with self._entry_lock(descriptor.sha256, cancel_event):
+        # The holder polls this, not the job's cancel event: a shutdown stops it
+        # without recording a user cancellation.
+        stop = InstallStop(cancel_event)
+        async with self._entry_lock(descriptor.sha256, stop):
             # Cooperatively cancel and drain the holder: cancelling its task would
             # abandon to_thread work while the entry lock is being released.
             task = asyncio.create_task(
-                self._download_locked(descriptor, destination, entry, cancel_event, progress)
+                self._download_locked(descriptor, destination, entry, stop, progress)
             )
             try:
                 await asyncio.shield(task)
             except asyncio.CancelledError:
-                cancel_event.set()
+                stop.set()
                 while not task.done():
                     with contextlib.suppress(asyncio.CancelledError, Exception):
                         await asyncio.shield(task)

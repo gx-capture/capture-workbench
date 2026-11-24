@@ -8,6 +8,8 @@
 
 用語與公開領域類別見 [glossary](../../.agents/PLANS/ddd-refactor/glossary.md)。概念 ID 與合約值映射以 `capture-vocabulary-v1.json` 為準。
 
+文字辨識的需求 ID 與出處 `engine` 都是 `text-recognition`。模型是 `pp-ocrv6-medium`，裝置為 `directml` 或 `cpu`。運算計畫透過 `gpu` 或 `cpu-fallback` 回報所選模式。
+
 ## 用例
 
 | 操作 | 程式名稱 | 說明 |
@@ -36,7 +38,7 @@ sequenceDiagram
   participant Preflight as 硬體預檢
   participant Select as SelectComputePlan
   participant Extract as ExtractPageText
-  participant Adapter as WindowsML adapter
+  participant Adapter as ONNX OCR adapter
   participant Order as OrderPageRegions
   participant Verify as VerifyExecutionEvidence
   participant Projection as OCR 投影

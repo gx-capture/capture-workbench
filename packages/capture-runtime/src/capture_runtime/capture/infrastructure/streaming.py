@@ -14,9 +14,9 @@ from typing import Protocol
 from uuid import uuid4
 
 from capture_runtime.contracts import (
-    IngestionV2,
-    OpenIngestionV2,
-    StreamingIngestionStatus,
+    Ingestion,
+    IngestionStatus,
+    OpenIngestion,
 )
 
 DEFAULT_STREAM_CHUNK_BYTES = 1024 * 1024
@@ -33,7 +33,7 @@ class StreamingIngestionError(ValueError):
 
 
 class StreamingIngestionPort(Protocol):
-    async def open(self, request: OpenIngestionV2) -> IngestionV2: ...
+    async def open(self, request: OpenIngestion) -> Ingestion: ...
 
     async def append(
         self,
@@ -43,7 +43,7 @@ class StreamingIngestionPort(Protocol):
         byte_offset: int,
         data: bytes,
         sha256: str,
-    ) -> IngestionV2: ...
+    ) -> Ingestion: ...
 
     async def finalize(
         self,
@@ -51,20 +51,20 @@ class StreamingIngestionPort(Protocol):
         *,
         total_bytes: int,
         sha256: str,
-    ) -> IngestionV2: ...
+    ) -> Ingestion: ...
 
-    async def cancel(self, ingestion_id: str) -> IngestionV2: ...
+    async def cancel(self, ingestion_id: str) -> Ingestion: ...
 
 
 @dataclass(slots=True)
 class _MemoryIngestion:
-    request: OpenIngestionV2
+    request: OpenIngestion
     ingestion_id: str
     expires_at: datetime
     data: bytearray = field(default_factory=bytearray)
     next_chunk_index: int = 0
     accepted_chunks: dict[int, tuple[int, int, str]] = field(default_factory=dict)
-    status: StreamingIngestionStatus = StreamingIngestionStatus.OPEN
+    status: IngestionStatus = IngestionStatus.OPEN
     finalized_sha256: str | None = None
 
 
@@ -84,9 +84,9 @@ class InMemoryStreamingIngestionAdapter:
         self._ttl = ttl
         self._max_chunk_bytes = max_chunk_bytes
         self._records: dict[str, _MemoryIngestion] = {}
-        self._idempotency: dict[str, tuple[str, OpenIngestionV2]] = {}
+        self._idempotency: dict[str, tuple[str, OpenIngestion]] = {}
 
-    async def open(self, request: OpenIngestionV2) -> IngestionV2:
+    async def open(self, request: OpenIngestion) -> Ingestion:
         existing = self._idempotency.get(request.client_request_id)
         if existing is not None:
             ingestion_id, original = existing
@@ -115,9 +115,9 @@ class InMemoryStreamingIngestionAdapter:
         byte_offset: int,
         data: bytes,
         sha256: str,
-    ) -> IngestionV2:
+    ) -> Ingestion:
         record = self._record(ingestion_id)
-        if record.status is not StreamingIngestionStatus.OPEN:
+        if record.status is not IngestionStatus.OPEN:
             raise StreamingIngestionError("ingestion_closed", "Ingestion is no longer open.")
         if not 0 <= chunk_index:
             raise StreamingIngestionError("invalid_chunk", "Chunk index must not be negative.")
@@ -156,15 +156,15 @@ class InMemoryStreamingIngestionAdapter:
         *,
         total_bytes: int,
         sha256: str,
-    ) -> IngestionV2:
+    ) -> Ingestion:
         record = self._record(ingestion_id)
-        if record.status is StreamingIngestionStatus.READY:
+        if record.status is IngestionStatus.READY:
             if record.finalized_sha256 == sha256 and total_bytes == len(record.data):
                 return self._snapshot(record)
             raise StreamingIngestionError(
                 "finalize_conflict", "Ingestion was finalized with different source metadata."
             )
-        if record.status is not StreamingIngestionStatus.OPEN:
+        if record.status is not IngestionStatus.OPEN:
             raise StreamingIngestionError("ingestion_closed", "Ingestion is no longer open.")
         actual_sha256 = hashlib.sha256(record.data).hexdigest()
         if total_bytes != len(record.data) or total_bytes != record.request.total_bytes:
@@ -177,22 +177,19 @@ class InMemoryStreamingIngestionAdapter:
             raise StreamingIngestionError(
                 "source_checksum_mismatch", "Final source checksum does not match the upload."
             )
-        record.status = StreamingIngestionStatus.READY
+        record.status = IngestionStatus.READY
         record.finalized_sha256 = sha256
         return self._snapshot(record)
 
-    async def cancel(self, ingestion_id: str) -> IngestionV2:
+    async def cancel(self, ingestion_id: str) -> Ingestion:
         record = self._record(ingestion_id)
-        if record.status in {
-            StreamingIngestionStatus.CANCELLED,
-            StreamingIngestionStatus.EXPIRED,
-        }:
+        if record.status is IngestionStatus.CANCELLED:
             return self._snapshot(record)
-        if record.status is StreamingIngestionStatus.READY:
+        if record.status is IngestionStatus.READY:
             raise StreamingIngestionError(
                 "ingestion_closed", "Ready ingestion cannot be cancelled."
             )
-        record.status = StreamingIngestionStatus.CANCELLED
+        record.status = IngestionStatus.CANCELLED
         return self._snapshot(record)
 
     def _record(self, ingestion_id: str) -> _MemoryIngestion:
@@ -204,9 +201,10 @@ class InMemoryStreamingIngestionAdapter:
             ) from error
 
     @staticmethod
-    def _snapshot(record: _MemoryIngestion) -> IngestionV2:
-        return IngestionV2(
+    def _snapshot(record: _MemoryIngestion) -> Ingestion:
+        return Ingestion(
             ingestion_id=record.ingestion_id,
+            kind=record.request.kind,
             status=record.status,
             file_name=record.request.file_name,
             media_type=record.request.media_type,

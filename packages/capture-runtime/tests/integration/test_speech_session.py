@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from capture_runtime.contracts import StreamingEventType
+from capture_runtime.contracts import CaptureEventType
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
@@ -37,7 +37,7 @@ class FakeBackend:
         return []
 
     def finish(self) -> list[ProgressiveSessionEvent]:
-        return [ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")]
+        return [ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")]
 
     def cancel(self) -> None:
         self.cancelled = True

@@ -69,8 +69,8 @@ async function candidateDirectory(cli: string): Promise<string> {
     await writeFile(join(dir, 'desktop', 'setup.exe'), 'installer');
     for (const name of [
       'capture-contract-snapshot.json',
-      'capture-release-manifest-v1.json',
-      'capture-release-manifest-v1.json.sha256',
+      'capture-release-manifest-v2.json',
+      'capture-release-manifest-v2.json.sha256',
     ])
       await writeFile(join(dir, name), name);
   }

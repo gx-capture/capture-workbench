@@ -70,7 +70,7 @@ pub(crate) fn read_process_identity_for_job_member(
             }
         }
         return Err(format!(
-            "The owned runtime process could not be opened for identity capture: {}",
+            "The owned sidecar process could not be opened for identity capture: {}",
             io::Error::last_os_error()
         ));
     }
@@ -86,7 +86,7 @@ pub(crate) fn open_process_for_termination(pid: u32) -> Result<ScopedWindowsHand
     let handle = unsafe { OpenProcess(desired_access, 0, pid) };
     if handle.is_null() {
         return Err(format!(
-            "The owned runtime process could not be opened for termination: {}",
+            "The owned sidecar process could not be opened for termination: {}",
             io::Error::last_os_error()
         ));
     }
@@ -113,7 +113,7 @@ pub(crate) fn process_identity_from_handle(
     } == 0
     {
         return Err(format!(
-            "The owned runtime process creation identity could not be read: {}",
+            "The owned sidecar process creation identity could not be read: {}",
             io::Error::last_os_error()
         ));
     }
@@ -160,7 +160,7 @@ pub(crate) fn terminate_process_with_proof_with_timeout(
         let error = unsafe { GetLastError() };
         if error != ERROR_ACCESS_DENIED {
             return Err(format!(
-                "The owned runtime process {} could not be terminated: Windows error {error}.",
+                "The owned sidecar process {} could not be terminated: Windows error {error}.",
                 expected.pid,
             ));
         }
@@ -196,16 +196,16 @@ pub(crate) fn classify_terminated_process_with_timeout(
         let mut exit_code = 0_u32;
         if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
             return Err(format!(
-                "The owned runtime process exit code could not be queried: {}",
+                "The owned sidecar process exit code could not be queried: {}",
                 io::Error::last_os_error()
             ));
         }
         Ok(exit_code)
     } else {
         Err(match wait_state {
-            WAIT_TIMEOUT => "The owned runtime process did not exit after termination.",
-            WAIT_FAILED => "The owned runtime process wait failed.",
-            _ => "The owned runtime process returned an unknown wait state.",
+            WAIT_TIMEOUT => "The owned sidecar process did not exit after termination.",
+            WAIT_FAILED => "The owned sidecar process wait failed.",
+            _ => "The owned sidecar process returned an unknown wait state.",
         }
         .to_string())
     }?;
@@ -222,21 +222,21 @@ pub(crate) fn classify_terminated_observation(
 ) -> Result<(), String> {
     if !same_process_identity(expected, observed) {
         return Err(format!(
-            "The owned runtime process {} creation identity changed before termination.",
+            "The owned sidecar process {} creation identity changed before termination.",
             expected.pid
         ));
     }
     if wait_state != 0 {
         return Err(match wait_state {
-            0x0000_0102 => "The owned runtime process did not exit after termination.",
-            0xffff_ffff => "The owned runtime process wait failed.",
-            _ => "The owned runtime process returned an unknown wait state.",
+            0x0000_0102 => "The owned sidecar process did not exit after termination.",
+            0xffff_ffff => "The owned sidecar process wait failed.",
+            _ => "The owned sidecar process returned an unknown wait state.",
         }
         .into());
     }
     let exit_code = exit_code?;
     if exit_code == 259 {
-        return Err("The owned runtime process exit code is still active.".into());
+        return Err("The owned sidecar process exit code is still active.".into());
     }
     Ok(())
 }
@@ -252,11 +252,11 @@ pub(crate) fn next_process_list_capacity(
         return Ok(None);
     }
     if assigned > max_capacity || capacity >= max_capacity {
-        return Err("The owned runtime Job process list counts exceeded the safe enumeration limit or remained inconsistent at that limit.".into());
+        return Err("The owned sidecar Job process list counts exceeded the safe enumeration limit or remained inconsistent at that limit.".into());
     }
     let next_capacity = assigned.max(capacity.saturating_mul(2)).min(max_capacity);
     if next_capacity <= capacity {
-        return Err("The owned runtime Job process list capacity could not make progress.".into());
+        return Err("The owned sidecar Job process list capacity could not make progress.".into());
     }
     Ok(Some(next_capacity))
 }

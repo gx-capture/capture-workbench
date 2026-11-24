@@ -53,11 +53,7 @@ export async function requestWithRetry(
 }
 
 function requiresDiscovery(path: string): boolean {
-  return (
-    path.startsWith('/v2/') &&
-    path !== '/v2/health/ready' &&
-    path !== '/v2/streaming/health/ready'
-  );
+  return path.startsWith('/v2/') && path !== '/v2/health/ready';
 }
 
 async function sleep(milliseconds: number): Promise<void> {

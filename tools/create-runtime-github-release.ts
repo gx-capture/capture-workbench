@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   try {
     const runtimeNames = await readdir(join(candidate, 'runtime'));
     for (const name of runtimeNames) assertPublishableRuntimeReleaseFile(name);
-    const runtimeAssets = runtimeNames.map((name) =>
+    const runtimeReleaseAssets = runtimeNames.map((name) =>
       join(candidate, 'runtime', name),
     );
     const runtimeManifest = join(
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
       'capture-runtime-candidate-manifest.json',
     );
     await copyFile(manifestPath, runtimeManifest);
-    const assets = [...runtimeAssets, runtimeManifest];
+    const assets = [...runtimeReleaseAssets, runtimeManifest];
     const remote = run(
       'gh',
       ['release', 'view', tag, '--json', 'isDraft,assets'],

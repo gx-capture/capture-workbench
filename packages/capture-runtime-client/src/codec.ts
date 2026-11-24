@@ -7,48 +7,58 @@ import {
 } from './errors.js';
 import type {
   CaptureOcrProjection,
+  CaptureRequirementId,
   ErrorEnvelope,
   RuntimeTransport,
   SubmitStructuringBatch,
 } from './contracts.js';
 
+const REQUIREMENT_IDS: ReadonlySet<unknown> = new Set<CaptureRequirementId>([
+  'text-recognition',
+  'speech-recognition',
+  'speaker-diarization',
+  'vertical-japanese-reader',
+  'structuring-runtime',
+  'structuring-model',
+]);
+
 /** Generated wire models whose top-level fields are checked before casting. */
 export type RuntimeResponseModel =
   | 'RuntimeReady'
-  | 'RuntimeStreamingCapabilities'
   | 'RuntimeRequirement'
   | 'RuntimeRequirements'
   | 'RuntimeInstallation'
   | 'RuntimeInstallations'
-  | 'RuntimeModelInstallation'
-  | 'RuntimeModelOptions'
+  | 'StructuringModelInstallation'
+  | 'StructuringModelOptions'
+  | 'StructuringModelOption'
   | 'RawCapture'
   | 'CaptureOcrProjection'
   | 'CaptureDocument'
   | 'CaptureOperation'
   | 'Ingestion'
   | 'PartialCapture'
-  | 'StreamingResult'
+  | 'CaptureResult'
   | 'StructuringSession'
   | 'StructuringBatch';
 
 const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly string[]; readonly optional: readonly string[] }> = {
-  RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'schemaSha256', 'contractSetVersion', 'ocrCompute'] },
-  RuntimeStreamingCapabilities: { required: ['protocolVersion', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs'], optional: ['captureKinds', 'supportsProgressiveAudio'] },
+  RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'contractSetVersion', 'ocrCompute'] },
   RuntimeRequirement: { required: ['requirementId', 'kind', 'displayName', 'status', 'requiredFor', 'installStrategy'], optional: ['optional', 'detail', 'artifact', 'downloadBytes'] },
   RuntimeRequirements: { required: ['items'], optional: [] },
   RuntimeInstallation: { required: ['installationId', 'requirementId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt', 'downloadBytes', 'downloadedBytes'] },
   RuntimeInstallations: { required: ['items'], optional: [] },
-  RuntimeModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
-  RuntimeModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
-  RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedUnits', 'warnings', 'ocrPageScope'] },
-  CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'pageCount', 'runtimeVersion', 'contractSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
-  CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedUnits', 'warnings'] },
-  CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['kind', 'progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
-  Ingestion: { required: ['protocolVersion', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['kind', 'sourceSha256', 'finalizedSha256'] },
-  PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'coveredUntilMs', 'updatedAt'], optional: ['segments', 'sourceText', 'extractionEngine'] },
-  StreamingResult: { required: ['operation', 'raw', 'result'], optional: [] },
-  StructuringSession: { required: ['protocolVersion', 'sessionId', 'captureId', 'rawSourceSha256', 'contractSetSha256', 'providerCapability', 'schemaDialect', 'batchCount', 'nextBatchIndex', 'sessionDigest', 'status', 'createdAt', 'updatedAt'], optional: ['targetLanguage', 'completedAt'] },
+  StructuringModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
+  StructuringModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
+  StructuringModelOption: { required: ['optionId', 'displayName', 'modelReference', 'profileId', 'profileSpecSha256', 'status'], optional: ['expectedDigest', 'downloadBytes'] },
+  RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings', 'ocrPageScope'] },
+  CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'processedPageCount', 'runtimeVersion', 'contractSetSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
+  CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings'] },
+  CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'kind', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
+  Ingestion: { required: ['protocolVersion', 'kind', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['sourceSha256', 'finalizedSha256'] },
+  PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'updatedAt'], optional: ['coveredUntilMs', 'segments', 'sourceText', 'extractionEngine'] },
+  CaptureResult: { required: ['operation', 'raw', 'result'], optional: [] },
+  StructuringSession: { required: ['protocolVersion', 'sessionId', 'captureId', 'sourceSha256', 'contractSetSha256', 'providerCapability', 'schemaDialect', 'batchCount', 'nextBatchIndex', 'sessionDigest', 'status', 'createdAt', 'updatedAt'], optional: ['targetLanguage', 'completedAt'] },
   StructuringBatch: { required: ['protocolVersion', 'sessionId', 'captureId', 'batchIndex', 'batchCount', 'sourceSegmentIds', 'providerPrompt', 'providerSchema', 'numCtx', 'numPredict', 'batchDigest', 'status'], optional: [] },
 };
 
@@ -88,9 +98,52 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
     throw new CaptureRuntimeProtocolError(`Capture Runtime returned ${model} without required field: ${missing}.`);
   }
   if (model === 'CaptureOcrProjection') validateCaptureOcrProjection(record);
-  if (model === 'RuntimeReady') validateRuntimeReady(record);
-  if (model === 'RuntimeInstallation') validateRuntimeInstallationDownload(record);
+  if (model === 'RuntimeReady') {
+    validateRuntimeReady(record);
+    validateRuntimeCapabilities(asRecord(record['capabilities'], 'RuntimeReady capabilities'));
+  }
+  if (model === 'RuntimeInstallation') {
+    if (!REQUIREMENT_IDS.has(record['requirementId'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeInstallation requirement identifier.');
+    }
+    validateRuntimeInstallationDownload(record);
+  }
+  if (model === 'RuntimeInstallations') {
+    if (!Array.isArray(record['items'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeInstallations items.');
+    }
+    for (const item of record['items']) validateModelShape(item, 'RuntimeInstallation');
+  }
+  if (model === 'StructuringModelOptions') {
+    if (!Array.isArray(record['items'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringModelOptions items.');
+    }
+    for (const item of record['items']) validateModelShape(item, 'StructuringModelOption');
+  }
   if (model === 'CaptureOperation') assertCaptureProgress(record, 'CaptureOperation');
+  if (model === 'Ingestion') assertCaptureKind(record['kind'], model);
+  if (model === 'RuntimeRequirement' &&
+      (!REQUIREMENT_IDS.has(record['requirementId']) || record['kind'] !== record['requirementId'])) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeRequirement identity.');
+  }
+  if (model === 'RuntimeRequirements') {
+    if (!Array.isArray(record['items'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeRequirements items.');
+    }
+    for (const item of record['items']) validateModelShape(item, 'RuntimeRequirement');
+  }
+  if (model === 'RawCapture' || model === 'CaptureDocument') {
+    const suggested = record['suggestedRequirementIds'];
+    if (suggested !== undefined &&
+        (!Array.isArray(suggested) || suggested.some((id) => !REQUIREMENT_IDS.has(id)))) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${model} recommendations.`);
+    }
+  }
+  if (model === 'CaptureResult') {
+    validateModelShape(record['operation'], 'CaptureOperation');
+    validateModelShape(record['raw'], 'RawCapture');
+    validateModelShape(record['result'], 'CaptureDocument');
+  }
   if (model === 'StructuringSession') validateStructuringSession(record);
   if (model === 'StructuringBatch') validateStructuringBatch(record);
 }
@@ -108,7 +161,7 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
       'service',
       'runtimeVersion',
       'contractSetVersion',
-      'contractSha256',
+      'contractSetSha256',
       'mode',
       'adapterClass',
       'userNoticeRequired',
@@ -122,8 +175,8 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
     compute['service'] !== 'capture-runtime' ||
     compute['runtimeVersion'] !== RUNTIME_VERSION ||
     compute['contractSetVersion'] !== '2' ||
-    typeof compute['contractSha256'] !== 'string' ||
-    !/^[0-9a-f]{64}$/u.test(compute['contractSha256']) ||
+    typeof compute['contractSetSha256'] !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(compute['contractSetSha256']) ||
     (compute['workerSha256'] !== undefined &&
       compute['workerSha256'] !== null &&
       (typeof compute['workerSha256'] !== 'string' ||
@@ -160,10 +213,10 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
 
   const hasFallbackReason = reasonCode !== undefined && reasonCode !== null;
   const hasNotice = noticeCode !== undefined && noticeCode !== null;
-  if (compute['mode'] === 'gpu-dml') {
+  if (compute['mode'] === 'gpu') {
     if (hasFallbackReason || compute['userNoticeRequired'] || hasNotice) {
       throw new CaptureRuntimeProtocolError(
-        'GPU-DML OCR compute preflight cannot carry a fallback reason or notice.',
+        'GPU OCR compute preflight cannot carry a fallback reason or notice.',
       );
     }
     return;
@@ -202,12 +255,12 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
     );
   }
   if (
-    !isSafeIntegerAtLeast(record['pageCount'], 0) ||
-    (record['pageCount'] as number) > 500 ||
-    record['pageCount'] !== (Array.isArray(record['pages']) ? record['pages'].length : -1)
+    !isSafeIntegerAtLeast(record['processedPageCount'], 0) ||
+    (record['processedPageCount'] as number) > 500 ||
+    record['processedPageCount'] !== (Array.isArray(record['pages']) ? record['pages'].length : -1)
   ) {
     throw new CaptureRuntimeProtocolError(
-      'Capture Runtime returned an OCR projection with an invalid pageCount.',
+      'Capture Runtime returned an OCR projection with an invalid processedPageCount.',
     );
   }
   if (record['runtimeVersion'] !== RUNTIME_VERSION) {
@@ -216,11 +269,11 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
     );
   }
   if (
-    typeof record['contractSha256'] !== 'string' ||
-    !/^[0-9a-f]{64}$/u.test(record['contractSha256'])
+    typeof record['contractSetSha256'] !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(record['contractSetSha256'])
   ) {
     throw new CaptureRuntimeProtocolError(
-      'Capture Runtime returned an OCR projection with an invalid contractSha256.',
+      'Capture Runtime returned an OCR projection with an invalid contractSetSha256.',
     );
   }
 
@@ -235,7 +288,7 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
   }
   const failure = record['failure'];
   if (failure !== undefined && failure !== null)
-    validateCaptureFailure(failure, 'OCR projection failure');
+    validateOperationFailure(failure, 'OCR projection failure');
   const warnings = record['warnings'];
   if (warnings !== undefined) {
     if (!Array.isArray(warnings) || warnings.length > 1_000) {
@@ -370,7 +423,7 @@ function validateOcrPage(
   }
   const failure = page['failure'];
   if (failure !== undefined && failure !== null)
-    validateCaptureFailure(failure, 'OCR page failure');
+    validateOperationFailure(failure, 'OCR page failure');
 
   const textValue = typeof text === 'string' ? text : '';
   const boxValues = Array.isArray(boxes) ? boxes : [];
@@ -490,7 +543,7 @@ function validateCaptureSource(value: unknown): void {
   }
 }
 
-function validateCaptureFailure(value: unknown, label: string): void {
+function validateOperationFailure(value: unknown, label: string): void {
   const failure = asRecord(value, label);
   assertExactFields(failure, ['code', 'message'], label, ['stage', 'retryable']);
   if (
@@ -541,14 +594,14 @@ function isOcrAdapterClass(
   return value === 'dedicated' || value === 'integrated' || value === 'unknown';
 }
 
-function isOcrComputeMode(value: unknown): value is 'gpu-dml' | 'cpu-fallback' {
-  return value === 'gpu-dml' || value === 'cpu-fallback';
+function isOcrComputeMode(value: unknown): value is 'gpu' | 'cpu-fallback' {
+  return value === 'gpu' || value === 'cpu-fallback';
 }
 
 function isOcrComputeReasonCode(
   value: unknown,
-): value is 'no_compatible_gpu' | 'dml_provider_unavailable' {
-  return value === 'no_compatible_gpu' || value === 'dml_provider_unavailable';
+): value is 'no_compatible_gpu' | 'gpu_provider_unavailable' {
+  return value === 'no_compatible_gpu' || value === 'gpu_provider_unavailable';
 }
 
 function validateOcrProvenance(value: unknown, label: string): void {
@@ -561,7 +614,7 @@ function validateOcrProvenance(value: unknown, label: string): void {
       label,
     );
     if (
-      provenance['engine'] !== 'windowsml-ocr' ||
+      provenance['engine'] !== 'text-recognition' ||
       typeof provenance['model'] !== 'string' ||
       !provenance['model'].trim() ||
       typeof provenance['modelDigest'] !== 'string' ||
@@ -618,11 +671,12 @@ function sameOcrProvenance(left: unknown, right: unknown): boolean {
 
 /**
  * Page counts come as a pair for a document capture, and the count never passes
- * the total; media times belong to an audio capture. Used for operations and
+ * the total; media times belong to a recording. Used for operations and
  * for SSE capture events, which carry the same progress fields.
  */
 export function assertCaptureProgress(record: Record<string, unknown>, label: string): void {
-  const kind = record['kind'] ?? 'audio';
+  const kind = record['kind'];
+  assertCaptureKind(kind, label);
   const done = record['pagesDone'] ?? null;
   const total = record['pagesTotal'] ?? null;
   if (done !== null || total !== null) {
@@ -640,8 +694,63 @@ export function assertCaptureProgress(record: Record<string, unknown>, label: st
   for (const field of mediaFields) {
     const value = record[field] ?? null;
     if (value === null) continue;
-    if (kind !== 'audio' || !isSafeIntegerAtLeast(value, 0)) {
+    if (kind !== 'recording' || !isSafeIntegerAtLeast(value, 0)) {
       throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} ${field}.`);
+    }
+  }
+}
+
+function assertCaptureKind(kind: unknown, label: string): void {
+  if (kind !== 'pdf' && kind !== 'image' && kind !== 'recording') {
+    throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} kind.`);
+  }
+}
+
+/** The readiness capabilities: what the runtime accepts and its upload and event limits. */
+const MAX_READINESS_CHUNK_BYTES = 4 * 1024 * 1024;
+
+function validateRuntimeCapabilities(record: Record<string, unknown>): void {
+  assertExactFields(
+    record,
+    [
+      'captureKinds',
+      'structuringModes',
+      'supportsCancellation',
+      'supportsRawDiagnostics',
+      'maxUploadBytes',
+      'maxChunkBytes',
+      'checkpointIntervalMs',
+      'heartbeatIntervalMs',
+      'stallTimeoutMs',
+      'supportsProgressiveRecording',
+    ],
+    'RuntimeReady capabilities',
+  );
+  const kinds = record['captureKinds'];
+  if (!Array.isArray(kinds) || kinds.length < 1) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness capture kinds.');
+  }
+  for (const kind of kinds) assertCaptureKind(kind, 'readiness capability');
+  const modes = record['structuringModes'];
+  if (
+    !Array.isArray(modes) ||
+    modes.length < 1 ||
+    modes.some((mode) => mode !== 'runtime' && mode !== 'host')
+  ) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness structuring modes.');
+  }
+  for (const field of ['maxUploadBytes', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs']) {
+    if (!isSafeIntegerAtLeast(record[field], 1)) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid readiness ${field}.`);
+    }
+  }
+  // The runtime schema bounds a chunk at 4 MiB.
+  if ((record['maxChunkBytes'] as number) > MAX_READINESS_CHUNK_BYTES) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness maxChunkBytes.');
+  }
+  for (const field of ['supportsCancellation', 'supportsRawDiagnostics', 'supportsProgressiveRecording']) {
+    if (typeof record[field] !== 'boolean') {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid readiness ${field}.`);
     }
   }
 }
@@ -663,7 +772,7 @@ function validateStructuringSession(record: Record<string, unknown>): void {
   if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
     throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringSession provider capability.');
   }
-  assertExactFields(provider as Record<string, unknown>, ['provider', 'capability', 'schemaDialect'], 'StructuringSession provider capability');
+  assertExactFields(provider as Record<string, unknown>, ['provider', 'schemaDialect'], 'StructuringSession provider capability');
   const engine = (provider as Record<string, unknown>)['provider'];
   if (!engine || typeof engine !== 'object' || Array.isArray(engine)) {
     throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringSession provider.');
@@ -672,17 +781,19 @@ function validateStructuringSession(record: Record<string, unknown>): void {
     engine as Record<string, unknown>,
     ['engine', 'model', 'digest'],
     'StructuringSession provider',
-    ['device', 'elapsedMs', 'stageMs'],
+    ['device', 'deviceName', 'elapsedMs', 'stageMs'],
   );
-  const device = (engine as Record<string, unknown>)['device'];
-  if (
-    device !== undefined &&
-    device !== null &&
-    (typeof device !== 'string' || device.length < 1)
-  ) {
-    throw new CaptureRuntimeProtocolError(
-      'Capture Runtime returned invalid StructuringSession provider device.',
-    );
+  for (const field of ['device', 'deviceName']) {
+    const value = (engine as Record<string, unknown>)[field];
+    if (
+      value !== undefined &&
+      value !== null &&
+      (typeof value !== 'string' || value.length < 1)
+    ) {
+      throw new CaptureRuntimeProtocolError(
+        `Capture Runtime returned invalid StructuringSession provider ${field}.`,
+      );
+    }
   }
   const elapsedMs = (engine as Record<string, unknown>)['elapsedMs'];
   const stageMs = (engine as Record<string, unknown>)['stageMs'];
@@ -790,10 +901,25 @@ export async function decodeError(response: Response): Promise<CaptureRuntimeErr
   const status = response.status;
   const code = error?.code ?? `http_${status}`;
   const message = error?.message ?? `Capture Runtime request failed (${status}).`;
-  if (status === 401 || status === 403 || code === 'unauthorized' || code === 'authentication_failed') {
+  // A 403 (origin_not_allowed) is an authorization refusal, not a bad token,
+  // whatever code or category its body names.
+  if (status === 403) {
+    return new CaptureRemoteError(status, code, message, details, {
+      category: 'authorization',
+      retryable,
+      issues,
+      requestId,
+    });
+  }
+  if (status === 401 || code === 'unauthorized') {
     return new CaptureAuthenticationError(message, status, details, requestId);
   }
-  return new CaptureRemoteError(status, code, message, details, { category, retryable, issues, requestId });
+  return new CaptureRemoteError(status, code, message, details, {
+    category,
+    retryable,
+    issues,
+    requestId,
+  });
 }
 
 export interface SseFrame {

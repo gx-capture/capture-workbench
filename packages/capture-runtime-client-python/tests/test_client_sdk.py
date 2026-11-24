@@ -48,7 +48,7 @@ def _shared_page_selection() -> dict[str, object]:
     fixture = json.loads(SHARED_PAGE_SELECTION_FIXTURE.read_text(encoding="utf-8"))
     assert isinstance(fixture, dict)
     projection = fixture["projection"]
-    projection["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    projection["contractSetSha256"] = CAPTURE_CONTRACT_SET_SHA256
     projection["runtimeVersion"] = CAPTURE_RUNTIME_VERSION
     return fixture
 
@@ -56,7 +56,7 @@ def _shared_page_selection() -> dict[str, object]:
 def _shared_perspective_payload() -> dict[str, object]:
     payload = json.loads(SHARED_PERSPECTIVE_FIXTURE.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
-    payload["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    payload["contractSetSha256"] = CAPTURE_CONTRACT_SET_SHA256
     payload["runtimeVersion"] = CAPTURE_RUNTIME_VERSION
     return payload
 
@@ -130,6 +130,11 @@ def _ready(**overrides: object) -> dict[str, object]:
             "supportsCancellation": True,
             "supportsRawDiagnostics": True,
             "maxUploadBytes": 100,
+            "maxChunkBytes": 1_048_576,
+            "checkpointIntervalMs": 500,
+            "heartbeatIntervalMs": 1_000,
+            "stallTimeoutMs": 5_000,
+            "supportsProgressiveRecording": True,
         },
     }
     payload.update(overrides)
@@ -142,7 +147,6 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
     digest = hashlib.sha256(bundle).hexdigest()
     href = f"/meta/v2/contracts/sha256/{digest}"
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -160,19 +164,6 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
             200,
             content=bundle,
             headers={"X-Contract-SHA256": digest, "ETag": f'"{digest}"'},
-            request=request,
-        ),
-        ("GET", "/v2/streaming/health/ready"): lambda request: httpx.Response(
-            200,
-            json={
-                "protocolVersion": "2",
-                "captureKinds": ["pdf", "image", "audio"],
-                "supportsProgressiveAudio": True,
-                "maxChunkBytes": 1_048_576,
-                "checkpointIntervalMs": 500,
-                "heartbeatIntervalMs": 1_000,
-                "stallTimeoutMs": 5_000,
-            },
             request=request,
         ),
     }
@@ -306,6 +297,93 @@ def test_start_capture_sends_a_non_contiguous_pdf_page_selection() -> None:
     assert operation.capture_id == "capture-1"
 
 
+def test_upload_path_forwards_the_structuring_mode_and_readiness_chunk_size(
+    tmp_path: Path,
+) -> None:
+    content = b"0123456789abcdefghijklmnopqrstuvwxy"
+    digest = hashlib.sha256(content).hexdigest()
+    ranges: list[str] = []
+    started: list[dict[str, object]] = []
+
+    def ingestion(request: httpx.Request, *, received: int, status: str = "open") -> httpx.Response:
+        return httpx.Response(
+            201 if received == 0 else 200,
+            json={
+                "protocolVersion": "2",
+                "kind": "pdf",
+                "ingestionId": "ingestion-1",
+                "status": status,
+                "fileName": "scan.pdf",
+                "mediaType": "application/pdf",
+                "totalBytes": len(content),
+                "receivedBytes": received,
+                "contiguousBytes": received,
+                "nextChunkIndex": len(ranges),
+                "nextOffset": received,
+                "sourceSha256": digest,
+                "finalizedSha256": digest if status == "ready" else None,
+                "expiresAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
+
+    def chunk(request: httpx.Request) -> httpx.Response:
+        content_range = request.headers["content-range"]
+        ranges.append(content_range)
+        return ingestion(request, received=int(content_range.split("-")[1].split("/")[0]) + 1)
+
+    def start(request: httpx.Request) -> httpx.Response:
+        started.append(json.loads(request.content))
+        return httpx.Response(
+            202,
+            json={
+                "protocolVersion": "2",
+                "captureId": "capture-1",
+                "ingestionId": "ingestion-1",
+                "kind": "pdf",
+                "status": "extracting",
+                "partialRevision": 0,
+                "lastEventSequence": 0,
+                "createdAt": "2026-01-01T00:00:00+00:00",
+                "updatedAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
+
+    small_chunks = _ready()
+    capabilities = small_chunks["capabilities"]
+    assert isinstance(capabilities, dict)
+    small_chunks["capabilities"] = {**capabilities, "maxChunkBytes": 16}
+    transport = _transport(
+        {
+            ("GET", "/v2/health/ready"): lambda request: httpx.Response(
+                200, json=small_chunks, request=request
+            ),
+            ("POST", "/v2/ingestions"): lambda request: ingestion(request, received=0),
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/0"): chunk,
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/1"): chunk,
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/2"): chunk,
+            ("POST", "/v2/ingestions/ingestion-1/finalize"): lambda request: ingestion(
+                request, received=len(content), status="ready"
+            ),
+            ("POST", "/v2/captures"): start,
+        }
+    )
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(content)
+
+    CaptureRuntimeClient(transport=transport).upload_path(
+        source,
+        source_kind="pdf",
+        client_request_id="request-host",
+        media_type="application/pdf",
+        structuring_mode="host",
+    )
+
+    assert ranges == ["bytes 0-15/35", "bytes 16-31/35", "bytes 32-34/35"]
+    assert started[0]["structuringMode"] == "host"
+
+
 @pytest.mark.parametrize("spoken_language", [None, "ja"])
 def test_start_capture_names_the_spoken_language_only_when_given(
     spoken_language: str | None,
@@ -319,7 +397,7 @@ def test_start_capture_names_the_spoken_language_only_when_given(
             201 if received == 0 else 200,
             json={
                 "protocolVersion": "2",
-                "kind": "audio",
+                "kind": "recording",
                 "ingestionId": "ingestion-1",
                 "status": status,
                 "fileName": "listening.mp3",
@@ -344,7 +422,7 @@ def test_start_capture_names_the_spoken_language_only_when_given(
                 "protocolVersion": "2",
                 "captureId": "capture-1",
                 "ingestionId": "ingestion-1",
-                "kind": "audio",
+                "kind": "recording",
                 "status": "extracting",
                 "progress": 0.0,
                 "partialRevision": 0,
@@ -375,7 +453,7 @@ def test_start_capture_names_the_spoken_language_only_when_given(
         CaptureUpload(
             "listening.mp3",
             content,
-            "audio",
+            "recording",
             media_type="audio/mpeg",
             spoken_language=spoken_language,
         ),
@@ -389,11 +467,11 @@ def test_start_capture_names_the_spoken_language_only_when_given(
 def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
     engine = {
         "status": "resolved",
-        "engine": "windowsml-ocr",
-        "model": "pp-ocrv6-medium-windowsml",
+        "engine": "text-recognition",
+        "model": "pp-ocrv6-medium",
         "modelDigest": f"sha256:{'a' * 64}",
-        "device": "windowsml-dml",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "device": "directml",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
     }
     source = {
@@ -409,9 +487,9 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
             "captureId": "cap",
             "status": "failed",
             "pages": [],
-            "pageCount": 0,
+            "processedPageCount": 0,
             "runtimeVersion": CAPTURE_RUNTIME_VERSION,
-            "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+            "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
             "source": None,
             "provenance": engine,
             "warnings": [],
@@ -429,9 +507,9 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
         "captureId": "cap",
         "status": "completed",
         "source": source,
-        "pageCount": 1,
+        "processedPageCount": 1,
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
-        "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
         "pages": [
             {
                 "page": 1,
@@ -495,7 +573,6 @@ def test_loopback_transport_and_handshake() -> None:
                 requiredHeaders=["X-Idempotency-Key"],
                 idempotency={"mode": "required", "header": "X-Idempotency-Key"},
             ),
-            operation("/v2/streaming/health/ready"),
             operation("/v2/runtime/requirements"),
             operation(
                 "/v2/runtime/installations",
@@ -503,9 +580,9 @@ def test_loopback_transport_and_handshake() -> None:
                 requiredHeaders=["X-Idempotency-Key"],
                 idempotency={"mode": "required", "header": "X-Idempotency-Key"},
             ),
-            operation("/v2/runtime/model-options"),
+            operation("/v2/runtime/structuring-model-options"),
             operation(
-                "/v2/runtime/model-installations",
+                "/v2/runtime/structuring-model-installations",
                 method="POST",
                 requiredHeaders=["X-Idempotency-Key"],
                 idempotency={"mode": "required", "header": "X-Idempotency-Key"},
@@ -526,7 +603,7 @@ def test_loopback_transport_and_handshake() -> None:
             operation("/v2/captures/{capture_id}/raw"),
             operation(
                 "/v2/captures/{capture_id}/ocr",
-                responseSchema="CaptureOcrProjectionV3",
+                responseSchema="CaptureOcrProjection",
             ),
             operation("/v2/captures/{capture_id}/result"),
             operation(
@@ -549,12 +626,12 @@ def test_loopback_transport_and_handshake() -> None:
             ),
         ],
         "problems": [],
+        "failureCodes": [],
         "invariants": [],
     }
     bundle_bytes = json.dumps(bundle, separators=(",", ":"), sort_keys=True).encode()
     digest = hashlib.sha256(bundle_bytes).hexdigest()
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -569,17 +646,6 @@ def test_loopback_transport_and_handshake() -> None:
             ("GET", "/meta/v2/contracts"): lambda request: httpx.Response(
                 200, json=index, request=request
             ),
-            ("GET", "/v2/streaming/health/ready"): lambda request: httpx.Response(
-                200,
-                json={
-                    "protocolVersion": "2",
-                    "maxChunkBytes": 10,
-                    "checkpointIntervalMs": 500,
-                    "heartbeatIntervalMs": 1000,
-                    "stallTimeoutMs": 5000,
-                },
-                request=request,
-            ),
             ("GET", index["href"]): lambda request: httpx.Response(
                 200,
                 content=bundle_bytes,
@@ -591,7 +657,23 @@ def test_loopback_transport_and_handshake() -> None:
     client = CaptureRuntimeClient(transport=transport, allowed_contract_set_sha256=[digest])
     ready = client.handshake()
     assert isinstance(ready, RuntimeReady)
-    assert client.discover().schema_sha256 == CAPTURE_DOCUMENT_SCHEMA_SHA256
+    assert client.discover().capture_document_schema_sha256 == CAPTURE_DOCUMENT_SCHEMA_SHA256
+
+
+def test_contract_bundle_needs_its_job_failure_codes() -> None:
+    from capture_runtime_client._discovery import validate_contract_bundle
+
+    bundle = {
+        "contractSetVersion": "2",
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "surfaces": [{"id": "v2"}],
+        "schemas": [],
+        "operations": [],
+        "problems": [],
+        "invariants": [],
+    }
+    with pytest.raises(CaptureProtocolError, match="failureCodes"):
+        validate_contract_bundle(bundle, "0" * 64)
 
 
 def test_compatibility_failure_is_machine_readable() -> None:
@@ -604,6 +686,44 @@ def test_compatibility_failure_is_machine_readable() -> None:
     )
     with pytest.raises(CaptureRuntimeCompatibilityError):
         CaptureRuntimeClient(transport=transport).handshake()
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason", "accepted"),
+    [
+        ("gpu", None, True),
+        ("cpu-fallback", "gpu_provider_unavailable", True),
+        ("gpu-dml", None, False),
+        ("cpu-fallback", "dml_provider_unavailable", False),
+    ],
+)
+def test_handshake_requires_current_ocr_compute_names(
+    mode: str, reason: str | None, accepted: bool
+) -> None:
+    compute = {
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
+        "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "mode": mode,
+        "adapterClass": "dedicated",
+        "reasonCode": reason,
+        "userNoticeRequired": reason is not None,
+        "noticeCode": "ocr_cpu_fallback" if reason else None,
+    }
+    transport = InMemoryRuntimeTransport(
+        {
+            ("GET", "/v2/health/ready"): lambda request: httpx.Response(
+                200, json=_ready(ocrCompute=compute), request=request
+            )
+        }
+    )
+    client = CaptureRuntimeClient(transport=transport)
+    if accepted:
+        ocr_compute = client.handshake().ocr_compute
+        assert ocr_compute is not None
+        assert ocr_compute.model_dump(mode="json", by_alias=True, exclude_unset=True) == compute
+    else:
+        with pytest.raises(CaptureProtocolError):
+            client.handshake()
 
 
 def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
@@ -619,7 +739,7 @@ def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
     result = CaptureRuntimeClient(transport=transport).get_ocr("cap")
     assert isinstance(result, CaptureOcrProjection)
     assert result.pages[0].provenance is not None
-    assert result.pages[0].provenance.engine == "windowsml-ocr"
+    assert result.pages[0].provenance.engine == "text-recognition"
     assert [(point.x, point.y) for point in result.pages[0].boxes[0].polygon] == [
         (10.5, 20.25),
         (310.75, 12.5),
@@ -644,6 +764,10 @@ def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
     ("status_code", "code", "error_type"),
     [
         (401, "unauthorized", CaptureAuthenticationError),
+        (403, "origin_not_allowed", CaptureRemoteError),
+        (403, "forbidden_by_proxy", CaptureRemoteError),
+        # The status decides: a 403 naming `unauthorized` is still a refusal.
+        (403, "unauthorized", CaptureRemoteError),
         (404, "capture_not_found", CaptureRemoteError),
         (409, "ocr_unavailable", CaptureRemoteError),
     ],
@@ -659,7 +783,10 @@ def test_get_ocr_maps_auth_not_found_and_pending_errors(
                     "error": {
                         "code": code,
                         "message": "OCR is pending." if status_code == 409 else "OCR failed.",
-                        "details": {"retryable": status_code == 409},
+                        "details": {
+                            "retryable": status_code == 409,
+                            **({"category": "authentication"} if status_code == 403 else {}),
+                        },
                     }
                 },
                 request=request,
@@ -670,13 +797,17 @@ def test_get_ocr_maps_auth_not_found_and_pending_errors(
         CaptureRuntimeClient(transport=transport).get_ocr("cap")
     assert caught.value.status_code == status_code
     assert caught.value.code == code
+    if status_code == 403:
+        # A refused origin is an authorization error, never a bad token.
+        assert not isinstance(caught.value, CaptureAuthenticationError)
+        assert caught.value.category == "authorization"
 
 
 def test_generated_ocr_model_rejects_invalid_box_and_projection_state() -> None:
     assert CaptureOcrProjection.model_fields["pages"].is_required()
     unavailable = {
         "status": "unavailable",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
         "reason": "model_unavailable",
     }
@@ -930,7 +1061,7 @@ def test_shared_page_selection_keeps_source_page_numbers_like_typescript() -> No
         pdf_page_numbers=fixture["pdfPageNumbers"],  # type: ignore[arg-type]
     )
 
-    assert result.page_count == 4
+    assert result.processed_page_count == 4
     assert [page.page for page in result.pages] == [3, 7, 8, 20]
     assert upload.pdf_page_numbers == (3, 7, 8, 20)
     for pages in fixture["invalidPdfPageNumbers"]:  # type: ignore[attr-defined]
@@ -962,7 +1093,6 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
     bundle = b'{"contractSetVersion":"2","schemas":[],"operations":[]}'
     digest = hashlib.sha256(bundle).hexdigest()
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -986,10 +1116,34 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
         CaptureRuntimeClient(transport=transport).discover()
 
 
-def test_discovery_rejects_wrong_content_addressed_href() -> None:
+def test_discovery_rejects_a_contract_index_with_the_retired_catalog_version() -> None:
     digest = "a" * 64
     index = {
         "catalogVersion": "2",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
+        "contractSetVersion": "2",
+        "surfaces": [{"id": "v2"}],
+        "sha256": digest,
+        "href": f"/meta/v2/contracts/sha256/{digest}",
+        "mediaType": "application/json",
+    }
+    transport = InMemoryRuntimeTransport(
+        {
+            ("GET", "/v2/health/ready"): lambda request: httpx.Response(
+                200, json=_ready(), request=request
+            ),
+            ("GET", "/meta/v2/contracts"): lambda request: httpx.Response(
+                200, json=index, request=request
+            ),
+        }
+    )
+    with pytest.raises(CaptureProtocolError, match="outside the contract index"):
+        CaptureRuntimeClient(transport=transport, allowed_contract_set_sha256=[digest]).discover()
+
+
+def test_discovery_rejects_wrong_content_addressed_href() -> None:
+    digest = "a" * 64
+    index = {
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -1059,7 +1213,7 @@ def test_malformed_json_and_sse_resume_are_protocol_safe() -> None:
         "eventId": "e1",
         "sequence": 2,
         "captureId": "cap",
-        "kind": "audio",
+        "kind": "recording",
         "eventType": "completed",
         "stage": "completed",
         "createdAt": "2026-01-01T00:00:00+00:00",
@@ -1093,6 +1247,7 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
         "protocolVersion": "2",
         "captureId": "cap",
         "ingestionId": "ingestion-1",
+        "kind": "recording",
         "status": "failed",
         "progress": 1,
         "partialRevision": 0,
@@ -1106,24 +1261,36 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
         captured_headers.update(dict(request.headers))
         return httpx.Response(200, json=job, request=request)
 
+    started: list[tuple[str | None, object]] = []
+
+    def start_model(request: httpx.Request) -> httpx.Response:
+        started.append((request.headers.get("x-idempotency-key"), json.loads(request.content)))
+        return httpx.Response(202, json=model_installation, request=request)
+
     transport = _transport(
         {
-            ("GET", "/v2/runtime/model-installations/model-1"): lambda request: httpx.Response(
-                200, json=model_installation, request=request
+            ("POST", "/v2/runtime/structuring-model-installations"): start_model,
+            ("GET", "/v2/runtime/structuring-model-installations/model-1"): lambda request: (
+                httpx.Response(200, json=model_installation, request=request)
             ),
-            ("POST", "/v2/runtime/model-installations/model-1/cancel"): lambda request: (
-                httpx.Response(
-                    200,
-                    json={**model_installation, "status": "cancelled"},
-                    request=request,
-                )
+            (
+                "POST",
+                "/v2/runtime/structuring-model-installations/model-1/cancel",
+            ): lambda request: httpx.Response(
+                200,
+                json={**model_installation, "status": "cancelled"},
+                request=request,
             ),
             ("POST", "/v2/captures/cap/structure/failure"): report,
         }
     )
     client = CaptureRuntimeClient(transport=transport)
+    assert (
+        client.start_model_installation("option-1", idempotency_key="install-1").installation_id
+        == model_installation["installationId"]
+    )
+    assert started == [("install-1", {"optionId": "option-1", "consent": True})]
     assert client.get_model_installation("model-1").status.value == "running"
-    assert client.get_model_installation_status("model-1").status.value == "running"
     assert client.cancel_model_installation("model-1").status.value == "cancelled"
     client.report_structuring_failure(
         "cap", code="invalid", message="unable to structure", idempotency_key="failure-1"
@@ -1131,13 +1298,31 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
     assert captured_headers["x-idempotency-key"] == "failure-1"
 
 
+def test_general_installation_does_not_take_the_structuring_model() -> None:
+    requested: list[str] = []
+
+    def start(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
+        return httpx.Response(500, request=request)
+
+    client = CaptureRuntimeClient(
+        transport=_transport({("POST", "/v2/runtime/installations"): start})
+    )
+    with pytest.raises(ValueError, match="start_model_installation"):
+        client.start_installation(
+            "structuring-model",  # type: ignore[arg-type]
+            idempotency_key="model-request",
+        )
+    assert requested == []
+
+
 def test_uninstall_requirement_deletes_its_installation_and_checks_the_reply() -> None:
     requirement = {
         "requirementId": "speech-recognition",
-        "kind": "transcription",
+        "kind": "speech-recognition",
         "displayName": "Speech recognition",
         "status": "installable",
-        "requiredFor": ["audio"],
+        "requiredFor": ["recording"],
         "installStrategy": "runtime-catalog",
         "downloadBytes": 1024,
     }
@@ -1270,6 +1455,7 @@ def test_retry_policy_retries_idempotent_requests_only() -> None:
                 "protocolVersion": "2",
                 "captureId": "cap",
                 "ingestionId": "ingestion",
+                "kind": "recording",
                 "status": "failed",
                 "partialRevision": 0,
                 "lastEventSequence": 0,
@@ -1295,7 +1481,7 @@ def test_sse_reconnects_with_last_event_id_cursor() -> None:
             "eventId": "e1",
             "sequence": 1,
             "captureId": "cap",
-            "kind": "audio",
+            "kind": "recording",
             "eventType": "checkpoint",
             "stage": "extracting",
             "partialRevision": 1,
@@ -1306,7 +1492,7 @@ def test_sse_reconnects_with_last_event_id_cursor() -> None:
             "eventId": "e2",
             "sequence": 2,
             "captureId": "cap",
-            "kind": "audio",
+            "kind": "recording",
             "eventType": "completed",
             "stage": "completed",
             "partialRevision": 1,
@@ -1349,11 +1535,10 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         "protocolVersion": "2",
         "sessionId": "session-1",
         "captureId": "cap",
-        "rawSourceSha256": "a" * 64,
+        "sourceSha256": "a" * 64,
         "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
         "providerCapability": {
             "provider": {"engine": "ollama", "model": "model-1", "digest": "sha256:" + "b" * 64},
-            "capability": "capture-structuring",
             "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
         },
         "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
@@ -1374,15 +1559,16 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         "sourceSegmentIds": ["segment-1"],
         "providerPrompt": {"rawSegments": []},
         "providerSchema": {"type": "object"},
-        "numCtx": 2048,
+        "numCtx": 8192,
         "numPredict": 256,
         "batchDigest": "d" * 64,
         "status": "ready",
     }
-    seen: dict[str, str] = {}
+    seen: dict[str, object] = {}
 
     def open_route(request: httpx.Request) -> httpx.Response:
         seen["open-key"] = request.headers["x-idempotency-key"]
+        seen["open-body"] = json.loads(request.content)
         return httpx.Response(201, json=session, request=request)
 
     def submit_route(request: httpx.Request) -> httpx.Response:
@@ -1412,15 +1598,24 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
     )
     client = CaptureRuntimeClient(transport=transport)
     request = {
-        "captureId": "cap",
+        "profileId": "qwen3.5-0.8b-structure-v1",
         "providerCapability": session["providerCapability"],
         "schemaDialect": session["schemaDialect"],
-        "clientRequestId": "session-key",
     }
-    assert client.open_structuring_session("cap", request).session_id == "session-1"
-    assert client.open_structuring_session("cap", request).session_id == "session-1"
+    opened = client.open_structuring_session("cap", request, idempotency_key="session-key")
+    assert opened.session_id == "session-1"
+    replayed = client.open_structuring_session("cap", request, idempotency_key="session-key")
+    assert replayed.session_id == "session-1"
+    # The route names the capture and the header names the request.
+    assert set(seen["open-body"]) == {  # type: ignore[arg-type]
+        "protocolVersion",
+        "targetLanguage",
+        "profileId",
+        "providerCapability",
+        "schemaDialect",
+    }
     assert client.get_structuring_session("cap").session_id == "session-1"
-    assert client.pull_structuring_batch("cap", 0).batch_digest == batch["batchDigest"]
+    assert client.get_structuring_batch("cap", 0).batch_digest == batch["batchDigest"]
     client.submit_structuring_batch(
         "cap",
         0,
@@ -1439,9 +1634,11 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         },
         idempotency_key="batch-key",
     )
-    assert seen == {"open-key": "session-key", "submit-key": "batch-key"}
+    assert (seen["open-key"], seen["submit-key"]) == ("session-key", "batch-key")
     with pytest.raises(CaptureProtocolError):
-        client.open_structuring_session("other", request)
+        client.open_structuring_session(
+            "cap", {**request, "clientRequestId": "session-key"}, idempotency_key="session-key"
+        )
     with pytest.raises(CaptureProtocolError):
         client.open_structuring_session("cap", request, idempotency_key="")
 
@@ -1515,8 +1712,8 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     from capture_runtime_client.private.generated_models import (
         CaptureDocument,
         RawCapture,
-        RuntimeInstallationV2,
-        RuntimeRequirementsV2,
+        RuntimeInstallation,
+        RuntimeRequirements,
     )
 
     samples = json.loads(
@@ -1538,10 +1735,10 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     plain = RawCapture.model_validate(samples["rawCaptureWithoutSpeakers"])
     assert plain.speakers == []
     assert plain.diarization_engine is None
-    requirements = RuntimeRequirementsV2.model_validate(samples["runtimeRequirements"])
+    requirements = RuntimeRequirements.model_validate(samples["runtimeRequirements"])
     assert requirements.items[0].optional is True
     assert requirements.items[1].download_bytes == 10_480_000_000
-    installation = RuntimeInstallationV2.model_validate(samples["runtimeInstallation"])
+    installation = RuntimeInstallation.model_validate(samples["runtimeInstallation"])
     assert (installation.downloaded_bytes, installation.download_bytes) == (
         2_950_000_000,
         10_480_000_000,
@@ -1550,8 +1747,8 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
 
 def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
     from capture_runtime_client.private.generated_models import (
-        CaptureEventV2,
-        CaptureOperationV2,
+        CaptureEvent,
+        CaptureOperation,
     )
 
     samples = json.loads(
@@ -1560,11 +1757,11 @@ def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
             / "packages/capture-runtime/tests/fixtures/speaker-wire-samples.json"
         ).read_text(encoding="utf-8")
     )
-    document = CaptureOperationV2.model_validate(samples["documentCaptureOperation"])
+    document = CaptureOperation.model_validate(samples["documentCaptureOperation"])
     assert (document.pages_done, document.pages_total) == (9, 12)
-    recording = CaptureOperationV2.model_validate(samples["audioCaptureOperation"])
+    recording = CaptureOperation.model_validate(samples["recordingCaptureOperation"])
     assert (recording.covered_until_ms, recording.duration_ms) == (724_000, 2_490_000)
-    event = CaptureEventV2.model_validate(samples["documentCaptureEvent"])
+    event = CaptureEvent.model_validate(samples["documentCaptureEvent"])
     assert (event.pages_done, event.pages_total) == (9, 12)
 
     for progress in (
@@ -1573,13 +1770,15 @@ def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
         {"durationMs": 1_000},
     ):
         with pytest.raises(ValidationError):
-            CaptureOperationV2.model_validate({**samples["documentCaptureOperation"], **progress})
+            CaptureOperation.model_validate({**samples["documentCaptureOperation"], **progress})
 
 
 def test_capture_upload_asks_for_speakers_only_when_told() -> None:
-    assert CaptureUpload("meeting.wav", b"audio", "audio").identify_speakers is False
+    assert CaptureUpload("meeting.wav", b"audio", "recording").identify_speakers is False
     assert (
-        CaptureUpload("meeting.wav", b"audio", "audio", identify_speakers=True).identify_speakers
+        CaptureUpload(
+            "meeting.wav", b"audio", "recording", identify_speakers=True
+        ).identify_speakers
         is True
     )
 
@@ -1609,7 +1808,7 @@ def test_engine_processing_times_round_trip_through_public_client_model(timings)
     assert CaptureEngine.model_validate_json(engine.model_dump_json(by_alias=True)) == engine
 
 
-def test_delete_streaming_ingestion_deletes_the_uploaded_source() -> None:
+def test_delete_ingestion_deletes_the_uploaded_source() -> None:
     deleted: list[str] = []
 
     def delete(request: httpx.Request) -> httpx.Response:
@@ -1618,6 +1817,23 @@ def test_delete_streaming_ingestion_deletes_the_uploaded_source() -> None:
 
     transport = _transport({("DELETE", "/v2/ingestions/ingestion-1"): delete})
 
-    CaptureRuntimeClient(transport=transport).delete_streaming_ingestion("ingestion-1")
+    CaptureRuntimeClient(transport=transport).delete_ingestion("ingestion-1")
 
     assert deleted == ["/v2/ingestions/ingestion-1"]
+
+
+def test_ollama_device_name_round_trips_through_public_client_model() -> None:
+    from capture_runtime_client import CaptureEngine
+
+    engine = CaptureEngine.model_validate(
+        {
+            "engine": "ollama",
+            "model": "example",
+            "digest": "sha256:" + "a" * 64,
+            "device": "cuda",
+            "deviceName": "GPU example",
+        }
+    )
+    assert engine.device == "cuda"
+    assert engine.device_name == "GPU example"
+    assert CaptureEngine.model_validate_json(engine.model_dump_json(by_alias=True)) == engine

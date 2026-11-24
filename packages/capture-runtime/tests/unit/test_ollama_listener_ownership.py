@@ -18,11 +18,13 @@ import pytest
 from capture_runtime.capture.application.streaming_capture_service import _safe_failure_message
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import RuntimeSettings
+from capture_runtime.gpu_inventory import GpuInventory
 from capture_runtime.structuring.infrastructure.ollama import (
     IsolatedOllamaLifecycle,
     OllamaCaptureStructuringProvider,
     OwnedProcess,
     RuntimeUnavailableError,
+    device_policy,
 )
 from capture_runtime.structuring.infrastructure.ollama.installation_commands import CommandResult
 from capture_runtime.structuring.infrastructure.ollama.listener_owner import (
@@ -54,6 +56,35 @@ def test_structuring_safe_message_is_specific() -> None:
     assert _safe_failure_message(RuntimeUnavailableError("private detail")) == (
         "Structuring failed at a bounded runtime boundary."
     )
+
+
+def test_cancelled_lease_waiter_does_not_interrupt_or_keep_lease(tmp_path: Path) -> None:
+    lifecycle = IsolatedOllamaLifecycle(_ollama_config(tmp_path), clock=SystemClock())
+
+    async def exercise() -> None:
+        attempted = asyncio.Event()
+        cancellation = asyncio.Event()
+
+        async def wait_for_lease() -> None:
+            attempted.set()
+            async with lifecycle.lease(cancellation):
+                pytest.fail("a cancelled waiter entered the lease")
+
+        async with asyncio.timeout(5):
+            async with lifecycle.lease(asyncio.Event()):
+                waiting = asyncio.create_task(wait_for_lease())
+                await attempted.wait()
+                cancellation.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await waiting
+
+            # Cancellation can also race with immediate acquisition on a free lock.
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_lease()
+            async with lifecycle.lease(asyncio.Event()):
+                pass
+
+    asyncio.run(exercise())
 
 
 def test_race_recovery_uses_lease_for_tags_generate_and_next_start(tmp_path: Path) -> None:
@@ -234,6 +265,11 @@ def test_installer_tags_and_cli_use_verified_lease(
         listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
     )
     option = model_option("qwen3.5-4b-v1")
+    monkeypatch.setattr(device_policy, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(device_policy, "read_gpu_inventory", lambda: GpuInventory(True))
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "ambient")
+    monkeypatch.setenv("ROCR_VISIBLE_DEVICES", "ambient")
+    monkeypatch.setenv("OLLAMA_LLM_LIBRARY", "ambient")
     urls: list[str] = []
     commands: list[tuple[list[str], str]] = []
 
@@ -247,7 +283,7 @@ def test_installer_tags_and_cli_use_verified_lease(
                     {
                         "name": option.model_reference,
                         "digest": option.expected_digest or "a" * 64,
-                        "size": option.expected_bytes or 123,
+                        "size": option.download_bytes or 123,
                     }
                 ]
             },
@@ -257,6 +293,10 @@ def test_installer_tags_and_cli_use_verified_lease(
         async def run(self, arguments: list[str], **kwargs: object) -> CommandResult:
             environment = kwargs["environment"]
             assert isinstance(environment, dict)
+            assert environment["OLLAMA_MODELS"] == str(lifecycle.config.models_dir)
+            assert "CUDA_VISIBLE_DEVICES" not in environment
+            assert "ROCR_VISIBLE_DEVICES" not in environment
+            assert "OLLAMA_LLM_LIBRARY" not in environment
             commands.append((arguments, str(environment["OLLAMA_HOST"])))
             return CommandResult(0, "")
 
@@ -273,6 +313,121 @@ def test_installer_tags_and_cli_use_verified_lease(
     assert [arguments[1] for arguments, _ in commands] == ["pull", "create"]
     assert [host for _, host in commands] == ["127.0.0.1:12109"] * 2
     assert len(controller.stopped) == 1
+    assert controller.environments == [
+        {
+            **lifecycle.config.process_environment("127.0.0.1:12109"),
+            "CUDA_VISIBLE_DEVICES": "-1",
+            "HIP_VISIBLE_DEVICES": "-1",
+            "GGML_VK_VISIBLE_DEVICES": "-1",
+            "OLLAMA_VULKAN": "0",
+            "OLLAMA_IGPU_ENABLE": "0",
+        }
+    ]
+
+
+@pytest.mark.parametrize("first", ["structuring", "installation"])
+def test_structuring_and_installation_hold_the_same_exclusive_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first: str
+) -> None:
+    from capture_runtime.structuring.infrastructure.model_catalog import model_option
+
+    config = _ollama_config(tmp_path)
+    _record_installed_profile(config)
+    option = model_option("qwen3.5-4b-v1")
+    controller = FakeProcessController()
+    ports = iter([12111, 12112])
+    lifecycle = IsolatedOllamaLifecycle(
+        config,
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "fake-ollama",
+        port_selector=lambda: next(ports),
+        listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
+    )
+    monkeypatch.setattr(device_policy, "read_gpu_inventory", lambda: GpuInventory(False))
+
+    def install_tags(url: str, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "models": [
+                    {
+                        "name": option.model_reference,
+                        "digest": option.expected_digest or "a" * 64,
+                        "size": option.download_bytes or 123,
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "get", install_tags)
+
+    async def exercise() -> None:
+        entered = asyncio.Event()
+        unblock = asyncio.Event()
+        attempted = asyncio.Event()
+        cancellation = asyncio.Event()
+        observations: list[tuple[str, str]] = []
+
+        async def observe(operation: str) -> None:
+            observations.append((operation, lifecycle.host_url))
+            if operation == first:
+                entered.set()
+                await unblock.wait()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/tags":
+                return _tags(config)
+            await observe("structuring")
+            return httpx.Response(
+                200, json={"response": _valid_candidate(json.loads(request.content))}
+            )
+
+        class Runner:
+            async def run(self, arguments: list[str], **kwargs: object) -> CommandResult:
+                if arguments[1] == "pull":
+                    await observe("installation")
+                return CommandResult(0, "")
+
+        provider = OllamaCaptureStructuringProvider(
+            lifecycle, clock=SystemClock(), transport=httpx.MockTransport(handler)
+        )
+        installer = OllamaRequirementInstaller(
+            lifecycle, clock=SystemClock(), command_runner=Runner()
+        )
+
+        async def run(operation: str) -> None:
+            if operation == "structuring":
+                await provider.structure(_raw(), target_language=None, cancel_event=cancellation)
+            else:
+                await installer.install_model_option(
+                    option.option_id, cancel_event=cancellation, report_progress=lambda _: None
+                )
+
+        second = "installation" if first == "structuring" else "structuring"
+
+        async def wait_for_lease() -> None:
+            attempted.set()
+            await run(second)
+
+        async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+            tasks.create_task(run(first))
+            await entered.wait()
+            tasks.create_task(wait_for_lease())
+            await attempted.wait()
+            assert observations == [(first, "http://127.0.0.1:12111")]
+            assert len(controller.spawned) == 1
+            assert controller.stopped == []
+            unblock.set()
+
+        assert observations == [
+            (first, "http://127.0.0.1:12111"),
+            (second, "http://127.0.0.1:12112"),
+        ]
+        assert len(controller.spawned) == len(controller.stopped) == 2
+
+    asyncio.run(exercise())
 
 
 def test_bind_exit_retries_before_any_http(tmp_path: Path) -> None:
@@ -498,3 +653,176 @@ def test_provider_rejects_response_from_previous_lease(tmp_path):
                 cancel_event=asyncio.Event(),
             )
         )
+
+
+@pytest.mark.parametrize("blocker", ["failed_reap", "cancel", "shutdown"])
+def test_device_restart_reaps_before_replacing_and_respects_blockers(
+    tmp_path: Path, blocker: str
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingController(FakeProcessController):
+        def stop_tree(self, process: OwnedProcess) -> None:
+            entered.set()
+            assert release.wait(timeout=3)
+            if blocker == "failed_reap":
+                raise OSError("cannot reap")
+            super().stop_tree(process)
+
+    controller = BlockingController()
+    lifecycle = IsolatedOllamaLifecycle(
+        _ollama_config(tmp_path),
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "ollama",
+        listener_owner=SimpleNamespace(listener_pid=lambda port: 4242),
+        port_selector=lambda: 12003,
+    )
+
+    async def exercise() -> None:
+        cancel_event = asyncio.Event()
+        async with lifecycle.lease(cancel_event):
+            lifecycle.start()
+            task = asyncio.create_task(
+                lifecycle.restart_for_device(device_policy.OllamaDevicePolicy("cuda"), cancel_event)
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 2)
+                if blocker == "cancel":
+                    cancel_event.set()
+                elif blocker == "shutdown":
+                    lifecycle.begin_shutdown()
+            finally:
+                release.set()
+            error = asyncio.CancelledError if blocker == "cancel" else RuntimeUnavailableError
+            with pytest.raises(error):
+                await task
+            assert len(controller.spawned) == 1
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("blocker", ["task_cancel", "shutdown"])
+def test_corrective_start_reaps_interrupted_replacement(tmp_path: Path, blocker: str) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def listener_pid(port: int) -> int:
+        if port == 12004:
+            entered.set()
+            assert release.wait(timeout=3)
+        return 4242
+
+    controller = FakeProcessController()
+    ports = iter((12003, 12004))
+    lifecycle = IsolatedOllamaLifecycle(
+        _ollama_config(tmp_path),
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "ollama",
+        listener_owner=SimpleNamespace(listener_pid=listener_pid),
+        port_selector=lambda: next(ports),
+    )
+
+    async def exercise() -> None:
+        cancel_event = asyncio.Event()
+        async with lifecycle.lease(cancel_event):
+            lifecycle.start()
+            task = asyncio.create_task(
+                lifecycle.restart_for_device(device_policy.OllamaDevicePolicy("cuda"), cancel_event)
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 2)
+                if blocker == "task_cancel":
+                    task.cancel()
+                    await asyncio.wait_for(cancel_event.wait(), timeout=2)
+                else:
+                    lifecycle.begin_shutdown()
+            finally:
+                release.set()
+            error = asyncio.CancelledError if blocker == "task_cancel" else RuntimeUnavailableError
+            with pytest.raises(error):
+                await task
+            assert len(controller.spawned) == len(controller.stopped) == 2
+            assert not lifecycle.owns_running_process()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("install", [False, True])
+@pytest.mark.parametrize("cancel_task", [False, True])
+def test_slow_policy_resolution_keeps_event_loop_and_cancellation_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install: bool,
+    cancel_task: bool,
+) -> None:
+    from capture_runtime.structuring.infrastructure.ollama import lifecycle_impl
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def resolve() -> device_policy.OllamaDevicePolicy:
+        entered.set()
+        assert release.wait(5), "event loop did not release the policy lookup"
+        return device_policy.OllamaDevicePolicy("cuda", cuda_pin_reason="timeout")
+
+    monkeypatch.setattr(lifecycle_impl, "resolve_device_policy", resolve)
+    config = _ollama_config(tmp_path)
+    _record_installed_profile(config)
+    controller = FakeProcessController()
+    lifecycle = IsolatedOllamaLifecycle(
+        config,
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "fake-ollama",
+        port_selector=lambda: 12222,
+        listener_owner=SimpleNamespace(listener_pid=lambda port: 4242),
+    )
+
+    async def exercise() -> None:
+        cancellation = asyncio.Event()
+        if install:
+            installer = OllamaRequirementInstaller(lifecycle, clock=SystemClock())
+            operation = installer.install_model_option(
+                "qwen3.5-4b-v1",
+                cancel_event=cancellation,
+                report_progress=lambda _: None,
+            )
+        else:
+            provider = OllamaCaptureStructuringProvider(lifecycle, clock=SystemClock())
+            operation = provider.structure(_raw(), target_language=None, cancel_event=cancellation)
+        task = asyncio.create_task(operation)
+        try:
+            async with asyncio.timeout(3):
+                while not entered.is_set():
+                    await asyncio.sleep(0.001)
+                assert not task.done()
+                if cancel_task:
+                    task.cancel()
+                    await asyncio.sleep(0)
+                else:
+                    cancellation.set()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                # Cancelling an installation task (a runtime shutdown) is not the
+                # user's cancel of the job: its event stays clear, so the job is
+                # not recorded as cancelled. A capture's structuring is stopped
+                # through its own event.
+                assert cancellation.is_set() is not (install and cancel_task)
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    try:
+        asyncio.run(exercise())
+        if install and cancel_task:
+            # The launch finished, and the installer's cleanup stopped it.
+            assert len(controller.spawned) == len(controller.stopped)
+            assert not lifecycle.owns_running_process()
+        else:
+            assert not controller.spawned
+    finally:
+        lifecycle.stop()

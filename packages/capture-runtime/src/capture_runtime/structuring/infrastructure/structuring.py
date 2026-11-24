@@ -235,17 +235,14 @@ def structuring_batch_generation_options(
     max_num_ctx: int = DEFAULT_STRUCTURING_NUM_CTX,
     max_num_predict: int = DEFAULT_STRUCTURING_NUM_PREDICT,
 ) -> tuple[int, int]:
-    """Calculate adaptive provider budgets for one planned batch."""
+    """Return the session's max_num_ctx for every batch and adapt num_predict to the batch."""
 
     num_predict = min(
         max_num_predict,
         max(MIN_REQUEST_TOKENS, plan.output_tokens + OUTPUT_RESERVE_TOKENS),
     )
-    num_ctx = min(
-        max_num_ctx,
-        max(MIN_REQUEST_TOKENS, plan.input_tokens + num_predict + CONTEXT_RESERVE_TOKENS),
-    )
-    return num_ctx, num_predict
+    # Ollama reloads the model when num_ctx changes; on CUDA this takes tens of seconds.
+    return max_num_ctx, num_predict
 
 
 def _validation_issues(error: ValidationError) -> list[dict[str, object]]:
@@ -356,9 +353,9 @@ def validate_structuring_candidate(
             raw_wire.get("diarizationEngine"),
         ),
         "speakers": (document.get("speakers", []), raw_wire.get("speakers", [])),
-        "suggestedUnits": (
-            document.get("suggestedUnits", []),
-            raw_wire.get("suggestedUnits", []),
+        "suggestedRequirementIds": (
+            document.get("suggestedRequirementIds", []),
+            raw_wire.get("suggestedRequirementIds", []),
         ),
         "createdAt": (document.get("createdAt"), raw_wire.get("createdAt")),
     }
@@ -481,7 +478,7 @@ def assemble_structuring_document(
         "extractionEngine": raw_wire.get("extractionEngine"),
         "diarizationEngine": raw_wire.get("diarizationEngine"),
         "speakers": raw_wire.get("speakers", []),
-        "suggestedUnits": raw_wire.get("suggestedUnits", []),
+        "suggestedRequirementIds": raw_wire.get("suggestedRequirementIds", []),
         "structuringEngine": _wire(engine_identity),
         "warnings": raw_wire.get("warnings", []),
         "createdAt": raw_wire.get("createdAt"),

@@ -49,10 +49,10 @@ reimplement OCR policy.
 
 ### Canonical Paddle profile
 
-`model-sources/commit-a/model/pipeline.json` is the packaged canonical profile
+`model-sources/text-recognition/model/pipeline.json` is the packaged canonical profile
 spec and is copied byte-for-byte to the worker model root and runtime asset.
 Its canonical UTF-8 JSON bytes derive both `profileSpecSha256` and the stable
-profile ID (`capture-workbench-ocr-<hash-prefix>`).  The spec includes the
+profile ID (`ocr-<hash-prefix>`).  The spec includes the
 PP-OCRv6 detector/recognizer names and model revisions, the final
 Traditional-Chinese/multilingual dictionary path/revision/SHA, the three
 PaddleX orientation switches, DirectML provider policy, and preprocessing
@@ -72,7 +72,7 @@ policy mismatch fails closed.
 
 ### DirectML provider policy
 
-The canonical WindowsML OCR adapter makes one provider decision per pipeline
+The canonical ONNX OCR adapter makes one provider decision per pipeline
 creation. If `DmlExecutionProvider` is available, it creates one DML-first
 ONNX Runtime session with `CPUExecutionProvider` in the same session for
 unsupported kernels. It never catches a DML error to create a CPU-only
@@ -91,7 +91,7 @@ when exposed and recording is enabled by the installed ORT, while the
 profile's `Node` events are the fallback when that API is absent or reports
 that its recording option is unavailable. Missing or unreadable evidence, or zero
 assigned DML nodes, is a typed runtime failure; the result is never labelled
-`windowsml-dml` from the configured provider list alone. A proven assignment
+`directml` from the configured provider list alone. A proven assignment
 with at least one DML node remains valid even when other nodes are assigned to
 CPU. The profile is deleted after evidence is read and never becomes public OCR
 diagnostics.
@@ -127,7 +127,7 @@ failure; the runtime never fabricates a page count.
 ## API and wire interface
 
 `GET /v2/captures/{capture_id}/ocr` is Bearer-authenticated and returns
-`CaptureOcrProjectionV3`:
+`CaptureOcrProjection`:
 
 - `apiVersion: "2.0"` and `schemaVersion: "3"`;
 - capture identity, source identity when known, `status` (`completed` or
@@ -136,7 +136,7 @@ failure; the runtime never fabricates a page count.
 - each page has `page`, `status` (`recognized`, `empty`, `failed`), raster
   metadata (`width`, `height`, `scale`, `coordinateSystem: "pixel"`), exact
   OCR `text`, normalized polygon `boxes`, aggregate confidence, per-page provenance,
-  and an optional `CaptureFailureV2`.
+  and an optional `OperationFailure`.
 
 Boxes use a typed object `{polygon, text, confidence}`. `polygon` preserves the
 Paddle predictor-input polygon as an ordered list of at least four `{x, y}`
@@ -172,7 +172,7 @@ the route does not hide the typed failure behind a 409.
 
 ## Lifecycle interface
 
-`OwnedRuntimeSession` is the Rust deep module for one launch attempt.  Its
+`OwnedSidecarSession` is the Rust deep module for one launch attempt.  Its
 interface guarantees suspended creation, Job assignment before resume,
 `CREATE_BREAKAWAY_FROM_JOB` rejection, root-exit observation, idempotent
 `terminate_and_prove`, and a terminal cleanup result.  Desktop/Tauri and other

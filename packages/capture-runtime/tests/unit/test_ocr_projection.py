@@ -9,15 +9,15 @@ from capture_runtime.capture.infrastructure.capture_extraction import CaptureExt
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureFailureV2,
-    CaptureOcrProjectionV3,
+    CaptureOcrProjection,
     CaptureSource,
-    OcrBoxV3,
-    OcrPageProjectionV3,
+    OcrBox,
+    OcrPageProjection,
     OcrPageStatus,
     OcrProjectionStatus,
-    OcrProvenanceV3,
-    OcrRasterV3,
+    OcrProvenance,
+    OcrRaster,
+    OperationFailure,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
@@ -45,30 +45,30 @@ def _source() -> CaptureSource:
     )
 
 
-def _engine() -> OcrProvenanceV3:
-    return OcrProvenanceV3(
+def _engine() -> OcrProvenance:
+    return OcrProvenance(
         status="resolved",
-        engine="windowsml-ocr",
-        model="pp-ocrv6-medium-windowsml",
+        engine="text-recognition",
+        model="pp-ocrv6-medium",
         model_digest="sha256:" + "b" * 64,
-        device="windowsml-dml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        device="directml",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
 
 def test_canonical_projection_requires_pages_but_allows_failed_empty_pages() -> None:
-    schema = CaptureOcrProjectionV3.model_json_schema(by_alias=True)
+    schema = CaptureOcrProjection.model_json_schema(by_alias=True)
     assert "pages" in schema["required"]
     assert "minItems" not in schema["properties"]["pages"]
 
-    failure = CaptureFailureV2(
+    failure = OperationFailure(
         code="ocr_worker_failed",
         message="OCR worker failed.",
         stage="ocr",
         retryable=True,
     )
-    projection = CaptureOcrProjectionV3(
+    projection = CaptureOcrProjection(
         capture_id="capture-empty-failed",
         status=OcrProjectionStatus.FAILED,
         source=None,
@@ -76,16 +76,16 @@ def test_canonical_projection_requires_pages_but_allows_failed_empty_pages() -> 
         provenance=_engine(),
         api_version="2.0",
         schema_version="3",
-        page_count=0,
+        processed_page_count=0,
         runtime_version=RUNTIME_VERSION,
-        contract_sha256="d" * 64,
+        contract_set_sha256="d" * 64,
         failure=failure,
         created_at=datetime.now(UTC),
     )
     assert projection.pages == []
 
     with pytest.raises(ValidationError):
-        CaptureOcrProjectionV3(
+        CaptureOcrProjection(
             capture_id="capture-missing-pages",
             status=OcrProjectionStatus.FAILED,
             source=None,
@@ -95,28 +95,28 @@ def test_canonical_projection_requires_pages_but_allows_failed_empty_pages() -> 
         )
 
 
-def test_canonical_projection_requires_wire_identity_and_page_count() -> None:
-    schema = CaptureOcrProjectionV3.model_json_schema(by_alias=True)
+def test_canonical_projection_requires_wire_identity_and_processed_page_count() -> None:
+    schema = CaptureOcrProjection.model_json_schema(by_alias=True)
     required = set(schema["required"])
     assert {
         "apiVersion",
         "schemaVersion",
-        "pageCount",
+        "processedPageCount",
         "runtimeVersion",
-        "contractSha256",
+        "contractSetSha256",
         "provenance",
     } <= required
-    assert "coordinateSystem" in OcrRasterV3.model_json_schema(by_alias=True)["required"]
+    assert "coordinateSystem" in OcrRaster.model_json_schema(by_alias=True)["required"]
 
 
 def test_canonical_box_schema_requires_polygon_text_and_confidence_shape() -> None:
-    schema = OcrBoxV3.model_json_schema(by_alias=True)
+    schema = OcrBox.model_json_schema(by_alias=True)
     assert set(schema["required"]) == {"polygon", "text", "confidence"}
     assert "x" not in schema["properties"]
     assert schema["properties"]["polygon"]["minItems"] == 4
 
     with pytest.raises(ValidationError):
-        OcrBoxV3(
+        OcrBox(
             polygon=[
                 {"x": 0, "y": 0},
                 {"x": 10, "y": 0},
@@ -125,7 +125,7 @@ def test_canonical_box_schema_requires_polygon_text_and_confidence_shape() -> No
             text="malformed",
         )
     with pytest.raises(ValidationError):
-        OcrBoxV3(
+        OcrBox(
             polygon=[
                 {"x": 0, "y": 0},
                 {"x": 10, "y": 0},
@@ -137,66 +137,66 @@ def test_canonical_box_schema_requires_polygon_text_and_confidence_shape() -> No
 
 
 def test_pre_inference_provenance_is_an_explicit_unavailable_variant() -> None:
-    resolved_schema = OcrProvenanceV3.model_json_schema(by_alias=True)
-    resolved_digest_schema = resolved_schema["$defs"]["OcrProvenanceResolvedV3"]["properties"][
+    resolved_schema = OcrProvenance.model_json_schema(by_alias=True)
+    resolved_digest_schema = resolved_schema["$defs"]["OcrProvenanceResolved"]["properties"][
         "modelDigest"
     ]
     assert resolved_digest_schema["not"]["const"] == "sha256:" + "0" * 64
     unavailable = {
         "status": "unavailable",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "c" * 64,
         "reason": "model_unavailable",
     }
-    parsed = OcrProvenanceV3.model_validate(unavailable)
+    parsed = OcrProvenance.model_validate(unavailable)
     assert parsed.status == "unavailable"
-    assert parsed.profile_id == "capture-workbench-ocr-pipeline-v1"
+    assert parsed.profile_id == "ocr-pipeline-v1"
     assert "modelDigest" not in parsed.model_dump(by_alias=True)
     assert "device" not in parsed.model_dump(by_alias=True)
 
     with pytest.raises(ValidationError):
-        OcrProvenanceV3.model_validate(
+        OcrProvenance.model_validate(
             {
                 **unavailable,
                 "modelDigest": "sha256:" + "0" * 64,
-                "device": "windowsml-dml",
+                "device": "directml",
             }
         )
 
     with pytest.raises(ValidationError, match="resolved model"):
-        OcrProvenanceV3(
+        OcrProvenance(
             status="resolved",
-            engine="windowsml-ocr",
-            model="pp-ocrv6-medium-windowsml",
+            engine="text-recognition",
+            model="pp-ocrv6-medium",
             model_digest="sha256:" + "0" * 64,
-            device="windowsml-dml",
-            profile_id="capture-workbench-ocr-pipeline-v1",
+            device="directml",
+            profile_id="ocr-pipeline-v1",
             profile_spec_sha256="c" * 64,
         )
 
 
 def test_unavailable_provenance_is_only_valid_for_failed_pages_and_documents() -> None:
-    unavailable = OcrProvenanceV3(
+    unavailable = OcrProvenance(
         status="unavailable",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
         reason="model_unavailable",
     )
-    raster = OcrRasterV3(width=100, height=80, scale=2, coordinate_system="pixel")
-    failure = CaptureFailureV2(
+    raster = OcrRaster(width=100, height=80, scale=2, coordinate_system="pixel")
+    failure = OperationFailure(
         code="ocr_worker_failed",
         message="OCR worker failed.",
         stage="ocr",
         retryable=True,
     )
-    failed_page = OcrPageProjectionV3(
+    failed_page = OcrPageProjection(
         page=1,
         status=OcrPageStatus.FAILED,
         raster=raster,
         provenance=unavailable,
         failure=failure,
     )
-    failed = CaptureOcrProjectionV3(
+    failed = CaptureOcrProjection(
         capture_id="capture-unavailable",
         status=OcrProjectionStatus.FAILED,
         source=None,
@@ -204,16 +204,16 @@ def test_unavailable_provenance_is_only_valid_for_failed_pages_and_documents() -
         provenance=unavailable,
         api_version="2.0",
         schema_version="3",
-        page_count=1,
+        processed_page_count=1,
         runtime_version=RUNTIME_VERSION,
-        contract_sha256="d" * 64,
+        contract_set_sha256="d" * 64,
         failure=failure,
         created_at=datetime.now(UTC),
     )
     assert failed.provenance.status == "unavailable"
 
     with pytest.raises(ValidationError, match="resolved provenance"):
-        OcrPageProjectionV3(
+        OcrPageProjection(
             page=1,
             status=OcrPageStatus.RECOGNIZED,
             raster=raster,
@@ -222,7 +222,7 @@ def test_unavailable_provenance_is_only_valid_for_failed_pages_and_documents() -
             provenance=unavailable,
         )
     with pytest.raises(ValidationError, match="resolved provenance"):
-        CaptureOcrProjectionV3(
+        CaptureOcrProjection(
             capture_id="capture-completed-unavailable",
             status=OcrProjectionStatus.COMPLETED,
             source=_source(),
@@ -230,22 +230,22 @@ def test_unavailable_provenance_is_only_valid_for_failed_pages_and_documents() -
             provenance=unavailable,
             api_version="2.0",
             schema_version="3",
-            page_count=1,
+            processed_page_count=1,
             runtime_version=RUNTIME_VERSION,
-            contract_sha256="d" * 64,
+            contract_set_sha256="d" * 64,
             created_at=datetime.now(UTC),
         )
 
 
 def test_completed_projection_requires_recognized_pages_and_matching_page_provenance() -> None:
-    empty_page = OcrPageProjectionV3(
+    empty_page = OcrPageProjection(
         page=1,
         status=OcrPageStatus.EMPTY,
-        raster=OcrRasterV3(width=100, height=80, scale=2, coordinate_system="pixel"),
+        raster=OcrRaster(width=100, height=80, scale=2, coordinate_system="pixel"),
         provenance=_engine(),
     )
     with pytest.raises(ValidationError, match="recognized"):
-        CaptureOcrProjectionV3(
+        CaptureOcrProjection(
             capture_id="capture-no-recognized",
             status=OcrProjectionStatus.COMPLETED,
             source=_source(),
@@ -253,30 +253,30 @@ def test_completed_projection_requires_recognized_pages_and_matching_page_proven
             provenance=_engine(),
             api_version="2.0",
             schema_version="3",
-            page_count=1,
+            processed_page_count=1,
             runtime_version=RUNTIME_VERSION,
-            contract_sha256="d" * 64,
+            contract_set_sha256="d" * 64,
             created_at=datetime.now(UTC),
         )
 
-    page_with_other_provenance = OcrPageProjectionV3(
+    page_with_other_provenance = OcrPageProjection(
         page=1,
         status=OcrPageStatus.RECOGNIZED,
-        raster=OcrRasterV3(width=100, height=80, scale=2, coordinate_system="pixel"),
+        raster=OcrRaster(width=100, height=80, scale=2, coordinate_system="pixel"),
         text="recognized",
         confidence=0.5,
-        provenance=OcrProvenanceV3(
+        provenance=OcrProvenance(
             status="resolved",
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model="other",
             model_digest="sha256:" + "e" * 64,
             device="cpu",
-            profile_id="capture-workbench-ocr-pipeline-v1",
+            profile_id="ocr-pipeline-v1",
             profile_spec_sha256="c" * 64,
         ),
     )
     with pytest.raises(ValidationError, match="provenance"):
-        CaptureOcrProjectionV3(
+        CaptureOcrProjection(
             capture_id="capture-mismatched-provenance",
             status=OcrProjectionStatus.COMPLETED,
             source=_source(),
@@ -284,9 +284,9 @@ def test_completed_projection_requires_recognized_pages_and_matching_page_proven
             provenance=_engine(),
             api_version="2.0",
             schema_version="3",
-            page_count=1,
+            processed_page_count=1,
             runtime_version=RUNTIME_VERSION,
-            contract_sha256="d" * 64,
+            contract_set_sha256="d" * 64,
             created_at=datetime.now(UTC),
         )
 
@@ -345,7 +345,7 @@ def test_pipeline_interface_accepts_source_manifest_and_engine_port() -> None:
         engine,
     )
 
-    assert isinstance(projection, CaptureOcrProjectionV3)
+    assert isinstance(projection, CaptureOcrProjection)
     assert engine.manifest is not None
     assert projection.status is OcrProjectionStatus.COMPLETED
     assert [page.page for page in projection.pages] == [1, 2]
@@ -408,7 +408,7 @@ def test_canonical_request_accepts_explicit_manifest_scope() -> None:
         ScopedEngine(),
     )
 
-    assert isinstance(outcome, CaptureOcrProjectionV3)
+    assert isinstance(outcome, CaptureOcrProjection)
     assert seen_manifests == [manifest]
     assert [page.page for page in outcome.pages] == [1, 2]
 
@@ -582,13 +582,13 @@ def test_canonical_execution_emits_failed_page_and_no_success_on_provenance_chan
         OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
     )
     progress: list[dict[str, object]] = []
-    changed = OcrProvenanceV3(
+    changed = OcrProvenance(
         status="resolved",
-        engine="windowsml-ocr",
+        engine="text-recognition",
         model="different-model",
         model_digest="sha256:" + "d" * 64,
-        device="windowsml-dml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        device="directml",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -761,7 +761,7 @@ def test_polygon_round_trip_preserves_each_predictor_point_in_wire_order() -> No
     observation = OcrTextResult(
         text="perspective",
         device="cpu",
-        model="pp-ocrv6-medium-windowsml",
+        model="pp-ocrv6-medium",
         digest="sha256:" + "b" * 64,
         regions=(OcrRegion(text="perspective", confidence=0.93, polygon=polygon),),
         raster_width=120,
@@ -782,7 +782,7 @@ def test_polygon_round_trip_preserves_each_predictor_point_in_wire_order() -> No
         _streaming_request(manifest, progress, lambda: False),
         PolygonEngine(),
     )
-    assert isinstance(projection, CaptureOcrProjectionV3)
+    assert isinstance(projection, CaptureOcrProjection)
     wire = projection.model_dump(mode="json", by_alias=True)
 
     assert wire["pages"][0]["boxes"][0] == {
@@ -807,7 +807,7 @@ def test_pipeline_rejects_polygon_outside_manifest_raster() -> None:
     observation = OcrTextResult(
         text="outside",
         device="cpu",
-        model="pp-ocrv6-medium-windowsml",
+        model="pp-ocrv6-medium",
         digest="sha256:" + "b" * 64,
         regions=(OcrRegion(text="outside", confidence=0.9, polygon=polygon),),
         raster_width=120,
@@ -887,10 +887,10 @@ def test_invalid_model_digest_fails_closed_with_unavailable_provenance() -> None
                     ),
                 ),
                 provenance=CaptureEngine(
-                    engine="windowsml-ocr",
-                    model="pp-ocrv6-medium-windowsml",
+                    engine="text-recognition",
+                    model="pp-ocrv6-medium",
                     digest="sha256:" + "0" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                 ),
             )
 
@@ -1066,7 +1066,7 @@ def test_extraction_outcome_owns_projection_without_raw_capture_side_channel() -
         ],
         source_text="recognized",
         extraction_engine=CaptureEngine(
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model="model",
             digest="sha256:" + "d" * 64,
             device="cpu",
@@ -1118,8 +1118,8 @@ def test_canonical_request_keeps_source_page_numbers_of_a_non_contiguous_selecti
         SourcePageEngine(),
     )
 
-    assert isinstance(outcome, CaptureOcrProjectionV3)
-    assert outcome.page_count == 4
+    assert isinstance(outcome, CaptureOcrProjection)
+    assert outcome.processed_page_count == 4
     assert [page.page for page in outcome.pages] == list(selection)
     assert [page.text for page in outcome.pages] == [f"source page {page}" for page in selection]
     header = progress[0]
@@ -1233,9 +1233,9 @@ def test_projection_contract_requires_ascending_source_page_numbers(pages: list[
         "status": "failed",
         "source": None,
         "pages": [page(3), page(7)],
-        "pageCount": 2,
+        "processedPageCount": 2,
         "runtimeVersion": RUNTIME_VERSION,
-        "contractSha256": "d" * 64,
+        "contractSetSha256": "d" * 64,
         "provenance": _engine().model_dump(mode="json", by_alias=True),
         "failure": {
             "code": "ocr_no_text",
@@ -1245,7 +1245,15 @@ def test_projection_contract_requires_ascending_source_page_numbers(pages: list[
         },
         "createdAt": "2026-10-19T00:00:00+00:00",
     }
-    assert [item.page for item in CaptureOcrProjectionV3.model_validate(payload).pages] == [3, 7]
+    assert [item.page for item in CaptureOcrProjection.model_validate(payload).pages] == [3, 7]
 
     with pytest.raises(ValidationError):
-        CaptureOcrProjectionV3.model_validate({**payload, "pages": [page(n) for n in pages]})
+        CaptureOcrProjection.model_validate({**payload, "pages": [page(n) for n in pages]})
+    legacy_page_count = {**payload}
+    legacy_page_count["pageCount"] = legacy_page_count.pop("processedPageCount")
+    with pytest.raises(ValidationError):
+        CaptureOcrProjection.model_validate(legacy_page_count)
+    legacy_contract = {**payload}
+    legacy_contract["contractSha256"] = legacy_contract.pop("contractSetSha256")
+    with pytest.raises(ValidationError):
+        CaptureOcrProjection.model_validate(legacy_contract)

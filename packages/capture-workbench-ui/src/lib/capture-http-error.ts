@@ -1,4 +1,4 @@
-import type { CaptureFailure } from './contracts';
+import type { OperationFailure } from './contracts';
 export class CaptureHttpError extends Error {
   constructor(
     readonly status: number,
@@ -13,7 +13,7 @@ export class CaptureHttpError extends Error {
 
   readonly details?: unknown;
 
-  asFailure(stage?: CaptureFailure['stage']): CaptureFailure {
+  asFailure(stage?: OperationFailure['stage']): OperationFailure {
     return { code: this.code, message: this.message, stage };
   }
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import stat
 import subprocess
 import sys
 from copy import deepcopy
@@ -35,13 +36,13 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
     lock = model_source_lock.load_source_lock(source, require_approved=False)
     assert lock["approval"]["status"] == "approved"
     assert lock["approval"]["blockers"] == []
-    whisper = lock["fixtures"][1]
-    assert whisper["expectedEngine"] == "speech-recognition"
-    assert whisper["expectedModel"] == "tea-asr-1.1"
-    assert whisper["expectedDevice"] == "cuda"
-    assert len(whisper["expectedNormalizedOutputSha256"]) == 64
+    speech = lock["fixtures"][1]
+    assert speech["expectedEngine"] == "speech-recognition"
+    assert speech["expectedModel"] == "tea-asr-1.1"
+    assert speech["expectedDevice"] == "cuda"
+    assert len(speech["expectedNormalizedOutputSha256"]) == 64
     assert [item["requirementId"] for item in lock["requirements"]] == [
-        "windowsml-ocr",
+        "text-recognition",
         "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
@@ -75,7 +76,7 @@ def test_production_lock_pins_every_file_the_speaker_worker_needs() -> None:
         lambda payload: next(
             item
             for item in payload["requirements"][0]["files"]
-            if item["path"] == "provenance/commit-a.json"
+            if item["path"] == "provenance/text-recognition.json"
         ).update({"sha256": "0" * 64}),
         lambda payload: payload["fixtures"][0].update({"noticeSha256": "0" * 64}),
     ],
@@ -116,6 +117,10 @@ def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
         )
         return result.stdout.strip()
 
+    def remove_readonly(function, path, _error) -> None:
+        Path(path).chmod(stat.S_IWRITE)
+        function(path)
+
     repository.mkdir()
     run_git("init")
     run_git("config", "user.email", "checkout-test@example.invalid")
@@ -138,7 +143,7 @@ def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
     assert checked_out == model_source_lock.canonical_json_bytes(json.loads(checked_out))
     assert run_git("check-attr", "eol", "--", lock_relative.as_posix()).endswith(": eol: lf")
 
-    classification = tmp_path / "release-model-mode.json"
+    classification = repository / "release-model-mode.json"
     subprocess.run(
         [
             sys.executable,
@@ -152,6 +157,7 @@ def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
         check=True,
     )
     assert json.loads(classification.read_bytes()) == {"releaseMode": "model-enabled"}
+    shutil.rmtree(repository, onexc=remove_readonly)
 
 
 def test_nonempty_blocked_source_lock_fails_closed() -> None:
@@ -164,7 +170,7 @@ def test_nonempty_blocked_source_lock_fails_closed() -> None:
     }
     with pytest.raises(
         model_source_lock.ModelSourceLockError,
-        match="only the private Whisper two-run freeze blocker",
+        match="only the private speech two-run freeze blocker",
     ):
         model_source_lock.validate_source_lock(payload)
 
@@ -175,14 +181,14 @@ def test_blocked_source_lock_rejects_additional_approval_blockers() -> None:
         "approvedAt": None,
         "approvedBy": None,
         "blockers": [
-            model_source_lock.PENDING_WHISPER_FREEZE_BLOCKER,
+            model_source_lock.PENDING_SPEECH_FREEZE_BLOCKER,
             "Unrelated approval blocker.",
         ],
         "status": "blocked",
     }
     with pytest.raises(
         model_source_lock.ModelSourceLockError,
-        match="only the private Whisper two-run freeze blocker",
+        match="only the private speech two-run freeze blocker",
     ):
         model_source_lock.validate_source_lock(payload)
 
@@ -282,7 +288,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         ),
         (
             lambda payload: payload["fixtures"][1].update({"preferGpu": "true"}),
-            "private Whisper GPU preference is invalid",
+            "private speech GPU preference is invalid",
         ),
         (
             lambda payload: payload["fixtures"][1].update(
@@ -298,7 +304,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
             lambda payload: payload["fixtures"][0].update(
                 {"url": "https://fixtures.example.test/latest/ocr.png"}
             ),
-            "Commit A raw URL",
+            "Text recognition raw URL",
         ),
         (
             lambda payload: payload["fixtures"][0].update(
@@ -308,11 +314,11 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
                     "url": "https://fixtures.example.test/main/ocr.png",
                 }
             ),
-            "must bind Commit A",
+            "must bind the text recognition source commit",
         ),
         (
             lambda payload: payload["fixtures"][1].update({"id": payload["fixtures"][0]["id"]}),
-            "private Whisper fixture identity",
+            "private speech fixture identity",
         ),
         (
             lambda payload: payload.pop("requirements"),

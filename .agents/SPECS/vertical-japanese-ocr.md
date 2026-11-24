@@ -67,7 +67,7 @@ The reader is the optional, models-only unit `vertical-japanese-reader`
 (0.6.0): six upstream NDLOCR-Lite files plus their licence and notices,
 pinned in the model source lock at upstream commit `636d1cfe` (CC BY 4.0). Neither Cert Prep nor LAW installs it
 by default. When it is not installed and a page would have gone to it, the page
-keeps its first pass and the result lists the unit in `suggestedUnits`; both
+keeps its first pass and the result lists the unit in `suggestedRequirementIds`; both
 UIs offer to install it. The OCR profile (`capture-workbench-ocr-profile-v3`)
 declares the reader, so result identity does not depend on what a machine has
 installed. Provenance (`model`, `modelDigest`, `device`) describes the regular

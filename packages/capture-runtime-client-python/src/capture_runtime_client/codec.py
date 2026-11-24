@@ -17,7 +17,7 @@ from .errors import (
 
 def decode_model[ModelT: BaseModel](response: httpx.Response, model: type[ModelT]) -> ModelT:
     payload = decode_json(response)
-    if model.__name__ in {"CaptureOcrProjection", "CaptureOcrProjectionV3"}:
+    if model.__name__ == "CaptureOcrProjection":
         if not isinstance(payload, Mapping) or "pages" not in payload:
             raise CaptureRuntimeProtocolError(
                 "Capture Runtime returned an OCR projection without required pages."
@@ -55,7 +55,11 @@ def decode_json(response: httpx.Response) -> Any:
             or response.headers.get("x-correlation-id")
             or _optional_text(error_map.get("requestId", details_map.get("requestId")))
         )
-        if response.status_code in {401, 403} or code in {"unauthorized", "authentication_failed"}:
+        if response.status_code == 403:
+            # origin_not_allowed: an authorization refusal, not a bad token,
+            # whatever code or category the body names.
+            category = "authorization"
+        elif response.status_code == 401 or code == "unauthorized":
             raise CaptureAuthenticationError(
                 message,
                 status_code=response.status_code,

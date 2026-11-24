@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from uuid import UUID
 
 import httpx
@@ -28,8 +28,8 @@ from ._discovery import (
 )
 from ._error_mapping import (
     decode_capture_operation,
+    decode_capture_result,
     decode_response,
-    decode_streaming_result,
 )
 from ._retry import RetryPolicy
 from ._transport import create_http_runtime_transport
@@ -40,20 +40,21 @@ from .contracts import (
     CaptureEvent,
     CaptureOcrProjection,
     CaptureOperation,
+    CaptureRequirementId,
     CaptureSourceKind,
     Ingestion,
+    InstallableRequirementId,
     OpenStructuringSession,
     PartialCapture,
     RawCapture,
     RuntimeInstallation,
-    RuntimeModelInstallation,
-    RuntimeModelOptions,
     RuntimeReady,
     RuntimeRequirement,
     RuntimeRequirements,
-    RuntimeStreamingCapabilities,
     StructuringBatch,
     StructuringMode,
+    StructuringModelInstallation,
+    StructuringModelOptions,
     StructuringSession,
     SubmitStructuringBatch,
 )
@@ -88,7 +89,7 @@ class CaptureUpload:
 
 
 @dataclass(frozen=True, slots=True)
-class CaptureStreamingResult:
+class CaptureResult:
     """Terminal capture state with its raw extraction and structured document."""
 
     operation: CaptureOperation
@@ -160,9 +161,17 @@ class CaptureRuntimeClient:
         return decode_model(self._request("GET", "/v2/runtime/requirements"), RuntimeRequirements)
 
     def start_installation(
-        self, requirement_id: str, *, idempotency_key: UUID | str
+        self, requirement_id: InstallableRequirementId, *, idempotency_key: UUID | str
     ) -> RuntimeInstallation:
-        """Start installing a requirement with user consent; the key makes retries idempotent."""
+        """Start installing a requirement with user consent; the key makes retries idempotent.
+
+        The structuring model is installed with `start_model_installation`.
+        """
+        if requirement_id not in get_args(InstallableRequirementId):
+            raise ValueError(
+                f"{requirement_id} is not installed by a general installation; "
+                "install the structuring model with start_model_installation."
+            )
         return decode_model(
             self._request(
                 "POST",
@@ -199,7 +208,7 @@ class CaptureRuntimeClient:
             RuntimeInstallation,
         )
 
-    def uninstall_requirement(self, requirement_id: str) -> RuntimeRequirement:
+    def uninstall_requirement(self, requirement_id: CaptureRequirementId) -> RuntimeRequirement:
         """Remove an installed engine to free disk space; return the requirement, not installed.
 
         Uninstalling a requirement that is not installed returns it unchanged.
@@ -211,230 +220,51 @@ class CaptureRuntimeClient:
             RuntimeRequirement,
         )
 
-    def get_model_options(self) -> RuntimeModelOptions:
+    def get_model_options(self) -> StructuringModelOptions:
         """List the structuring model options the runtime allows."""
-        return decode_model(self._request("GET", "/v2/runtime/model-options"), RuntimeModelOptions)
-
-    def get_model_installation(self, installation_id: str) -> RuntimeModelInstallation:
-        """Read one structuring model installation's status."""
         return decode_model(
-            self._request("GET", f"/v2/runtime/model-installations/{_safe_id(installation_id)}"),
-            RuntimeModelInstallation,
+            self._request("GET", "/v2/runtime/structuring-model-options"),
+            StructuringModelOptions,
         )
 
-    def get_model_installation_status(self, installation_id: str) -> RuntimeModelInstallation:
-        """Status-oriented alias for :meth:`get_model_installation`."""
-        return self.get_model_installation(installation_id)
-
-    def cancel_model_installation(self, installation_id: str) -> RuntimeModelInstallation:
-        """Cancel a structuring model installation."""
-        return decode_model(
-            self._request(
-                "POST", f"/v2/runtime/model-installations/{_safe_id(installation_id)}/cancel"
-            ),
-            RuntimeModelInstallation,
-        )
-
-    def start_capture(self, upload: CaptureUpload, *, client_request_id: str) -> CaptureOperation:
-        """Open, upload, finalize, and start one v2 capture operation."""
-        return self.start_streaming_capture(upload, client_request_id=client_request_id)
-
-    def upload_path(
-        self,
-        path: Path,
-        *,
-        source_kind: CaptureSourceKind | str,
-        client_request_id: str,
-        media_type: str = "application/octet-stream",
-        target_language: str | None = None,
-        pdf_page_numbers: Sequence[int] | None = None,
-        identify_speakers: bool = False,
-        spoken_language: str | None = None,
-    ) -> CaptureOperation:
-        """Read a local file and start a capture for it (see :meth:`start_capture`)."""
-        return self.start_capture(
-            CaptureUpload(
-                path.name,
-                path.read_bytes(),
-                source_kind,
-                media_type,
-                target_language=target_language,
-                pdf_page_numbers=pdf_page_numbers,
-                identify_speakers=identify_speakers,
-                spoken_language=spoken_language,
-            ),
-            client_request_id=client_request_id,
-        )
-
-    def get_capture(self, capture_id: str) -> CaptureOperation:
-        """Read a capture operation's current state."""
-        return self.get_streaming_capture(capture_id)
-
-    def cancel_capture(self, capture_id: str) -> CaptureOperation:
-        """Request cancellation of a capture operation."""
-        return self.cancel_streaming_capture(capture_id)
-
-    def get_raw(self, capture_id: str) -> RawCapture:
-        """Read the raw extraction of a capture."""
-        return decode_model(
-            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/raw"), RawCapture
-        )
-
-    def get_ocr(self, capture_id: str) -> CaptureOcrProjection:
-        """Read the page-addressable OCR projection of a capture."""
-        return decode_model(
-            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/ocr"),
-            CaptureOcrProjection,
-        )
-
-    def get_result(self, capture_id: str) -> CaptureStreamingResult:
-        """Read the terminal capture state, raw extraction, and structured document."""
-        return self.get_streaming_result(capture_id)
-
-    def open_structuring_session(
-        self,
-        capture_id: str,
-        request: OpenStructuringSession | Mapping[str, Any],
-        *,
-        idempotency_key: UUID | str | None = None,
-    ) -> StructuringSession:
-        """Open a pull-based structuring session with a matching idempotency key."""
-        try:
-            payload = (
-                request
-                if isinstance(request, OpenStructuringSession)
-                else OpenStructuringSession.model_validate(request)
-            )
-        except ValidationError as error:
-            raise CaptureRuntimeProtocolError(
-                "Structuring session request is invalid.", error.errors(include_url=False)
-            ) from error
-        if payload.capture_id != capture_id:
-            raise CaptureRuntimeProtocolError(
-                "Structuring session captureId must match the route capture."
-            )
-        key = payload.client_request_id if idempotency_key is None else str(idempotency_key)
-        if not key or key != payload.client_request_id:
-            raise CaptureRuntimeProtocolError(
-                "X-Idempotency-Key must match structuring session clientRequestId."
-            )
+    def start_model_installation(
+        self, option_id: str, *, idempotency_key: UUID | str
+    ) -> StructuringModelInstallation:
+        """Start installing the selected structuring model with user consent."""
         return decode_model(
             self._request(
                 "POST",
-                f"/v2/captures/{_safe_id(capture_id)}/structure/session",
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Idempotency-Key": key,
-                },
-                json=payload.model_dump(mode="json", by_alias=True),
+                "/v2/runtime/structuring-model-installations",
+                headers={"X-Idempotency-Key": str(idempotency_key)},
+                json={"optionId": option_id, "consent": True},
             ),
-            StructuringSession,
+            StructuringModelInstallation,
         )
 
-    def get_structuring_session(self, capture_id: str) -> StructuringSession:
-        """Read the structuring session of a capture."""
-        return decode_model(
-            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/structure/session"),
-            StructuringSession,
-        )
-
-    def get_structuring_batch(self, capture_id: str, batch_index: int) -> StructuringBatch:
-        """Read one batch of a structuring session."""
+    def get_model_installation(self, installation_id: str) -> StructuringModelInstallation:
+        """Read one structuring model installation's status."""
         return decode_model(
             self._request(
-                "GET",
-                f"/v2/captures/{_safe_id(capture_id)}/structure/session/batches/{_safe_batch_index(batch_index)}",
+                "GET", f"/v2/runtime/structuring-model-installations/{_safe_id(installation_id)}"
             ),
-            StructuringBatch,
+            StructuringModelInstallation,
         )
 
-    def pull_structuring_batch(self, capture_id: str, batch_index: int) -> StructuringBatch:
-        """Alias that makes the pull nature explicit for host coordinators."""
-        return self.get_structuring_batch(capture_id, batch_index)
-
-    def submit_structuring_batch(
-        self,
-        capture_id: str,
-        batch_index: int,
-        submission: SubmitStructuringBatch | Mapping[str, Any],
-        *,
-        idempotency_key: UUID | str,
-    ) -> StructuringSession:
-        """Submit a host's result for one structuring batch; requires an idempotency key."""
-        try:
-            payload = (
-                submission
-                if isinstance(submission, SubmitStructuringBatch)
-                else SubmitStructuringBatch.model_validate(submission)
-            )
-        except ValidationError as error:
-            raise CaptureRuntimeProtocolError(
-                "Structuring batch submission is invalid.", error.errors(include_url=False)
-            ) from error
-        key = str(idempotency_key)
-        if not key:
-            raise CaptureRuntimeProtocolError(
-                "Structuring batch submissions require X-Idempotency-Key."
-            )
+    def cancel_model_installation(self, installation_id: str) -> StructuringModelInstallation:
+        """Cancel a structuring model installation."""
         return decode_model(
             self._request(
-                "PUT",
-                f"/v2/captures/{_safe_id(capture_id)}/structure/session/batches/{_safe_batch_index(batch_index)}",
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Idempotency-Key": key,
-                },
-                json=payload.model_dump(mode="json", by_alias=True),
+                "POST",
+                f"/v2/runtime/structuring-model-installations/{_safe_id(installation_id)}/cancel",
             ),
-            StructuringSession,
+            StructuringModelInstallation,
         )
 
-    def commit_structure(
-        self,
-        capture_id: str,
-        candidate: str | bytes | Mapping[str, object] | CaptureDocument,
-        *,
-        idempotency_key: UUID | str,
-    ) -> CaptureOperation:
-        """Commit the final structured document for a capture."""
-        return self.commit_streaming_structure(
-            capture_id,
-            candidate,
-            idempotency_key=idempotency_key,
-        )
-
-    def report_structuring_failure(
-        self,
-        capture_id: str,
-        *,
-        code: str,
-        message: str,
-        idempotency_key: UUID | str,
-    ) -> CaptureOperation:
-        """Report that host-side structuring failed for a capture."""
-        return self.report_streaming_failure(
-            capture_id,
-            code=code,
-            message=message,
-            idempotency_key=idempotency_key,
-        )
-
-    def delete_capture(self, capture_id: str) -> None:
-        """Delete a capture and its stored artifacts from the runtime."""
-        self.delete_streaming_capture(capture_id)
-
-    def get_streaming_capabilities(self) -> RuntimeStreamingCapabilities:
-        """Read streaming limits such as the maximum upload chunk size."""
-        return decode_model(
-            self._request("GET", "/v2/streaming/health/ready"), RuntimeStreamingCapabilities
-        )
-
-    def start_streaming_capture(
-        self, upload: CaptureUpload, *, client_request_id: str
-    ) -> CaptureOperation:
+    def start_capture(self, upload: CaptureUpload, *, client_request_id: str) -> CaptureOperation:
         """Upload a file through a chunked ingestion and start its capture.
 
-        The ingestion is deleted if any step before the capture starts fails.
+        Chunks stay within the readiness ``maxChunkBytes``. The ingestion is
+        deleted if any step before the capture starts fails.
         """
         content = upload.content
         digest = hashlib.sha256(content).hexdigest()
@@ -458,7 +288,8 @@ class CaptureRuntimeClient:
             Ingestion,
         )
         try:
-            chunk_size = min(1024 * 1024, self.get_streaming_capabilities().max_chunk_bytes)
+            capabilities = self._ensure_discovered().ready.capabilities
+            chunk_size = min(1024 * 1024, capabilities.max_chunk_bytes)
             for offset in range(ingestion.next_offset, len(content), chunk_size):
                 chunk = content[offset : offset + chunk_size]
                 ingestion = decode_model(
@@ -513,10 +344,160 @@ class CaptureRuntimeClient:
             self._transport.request("DELETE", f"/v2/ingestions/{ingestion.ingestion_id}")
             raise
 
-    def get_streaming_capture(self, capture_id: str) -> CaptureOperation:
+    def upload_path(
+        self,
+        path: Path,
+        *,
+        source_kind: CaptureSourceKind | str,
+        client_request_id: str,
+        media_type: str = "application/octet-stream",
+        structuring_mode: StructuringMode | str = StructuringMode.RUNTIME,
+        target_language: str | None = None,
+        pdf_page_numbers: Sequence[int] | None = None,
+        identify_speakers: bool = False,
+        spoken_language: str | None = None,
+    ) -> CaptureOperation:
+        """Read a local file and start a capture for it (see :meth:`start_capture`)."""
+        return self.start_capture(
+            CaptureUpload(
+                path.name,
+                path.read_bytes(),
+                source_kind,
+                media_type,
+                structuring_mode=structuring_mode,
+                target_language=target_language,
+                pdf_page_numbers=pdf_page_numbers,
+                identify_speakers=identify_speakers,
+                spoken_language=spoken_language,
+            ),
+            client_request_id=client_request_id,
+        )
+
+    def get_capture(self, capture_id: str) -> CaptureOperation:
         """Read a capture operation and check that it matches ``capture_id``."""
         return self._decode_capture_operation(
             self._request("GET", f"/v2/captures/{_safe_id(capture_id)}"), capture_id
+        )
+
+    def cancel_capture(self, capture_id: str) -> CaptureOperation:
+        """Request cancellation of a capture operation."""
+        return self._decode_capture_operation(
+            self._request("POST", f"/v2/captures/{_safe_id(capture_id)}/cancel"), capture_id
+        )
+
+    def get_raw(self, capture_id: str) -> RawCapture:
+        """Read the raw extraction of a capture."""
+        return decode_model(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/raw"), RawCapture
+        )
+
+    def get_ocr(self, capture_id: str) -> CaptureOcrProjection:
+        """Read the page-addressable OCR projection of a capture."""
+        return decode_model(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/ocr"),
+            CaptureOcrProjection,
+        )
+
+    def get_result(self, capture_id: str) -> CaptureResult:
+        """Read the terminal capture state, raw extraction, and structured document."""
+        operation, raw, result = decode_capture_result(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"),
+            capture_id,
+        )
+        return CaptureResult(operation=operation, raw=raw, result=result)
+
+    def open_structuring_session(
+        self,
+        capture_id: str,
+        request: OpenStructuringSession | Mapping[str, Any],
+        *,
+        idempotency_key: UUID | str,
+    ) -> StructuringSession:
+        """Open a pull-based structuring session for the route's capture.
+
+        The idempotency key identifies the request: repeating it with the same
+        body returns the same session.
+        """
+        try:
+            payload = (
+                request
+                if isinstance(request, OpenStructuringSession)
+                else OpenStructuringSession.model_validate(request)
+            )
+        except ValidationError as error:
+            raise CaptureRuntimeProtocolError(
+                "Structuring session request is invalid.", error.errors(include_url=False)
+            ) from error
+        key = str(idempotency_key)
+        if not key:
+            raise CaptureRuntimeProtocolError(
+                "Opening a structuring session needs an X-Idempotency-Key."
+            )
+        return decode_model(
+            self._request(
+                "POST",
+                f"/v2/captures/{_safe_id(capture_id)}/structure/session",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Idempotency-Key": key,
+                },
+                json=payload.model_dump(mode="json", by_alias=True),
+            ),
+            StructuringSession,
+        )
+
+    def get_structuring_session(self, capture_id: str) -> StructuringSession:
+        """Read the structuring session of a capture."""
+        return decode_model(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/structure/session"),
+            StructuringSession,
+        )
+
+    def get_structuring_batch(self, capture_id: str, batch_index: int) -> StructuringBatch:
+        """Read one batch of a structuring session."""
+        return decode_model(
+            self._request(
+                "GET",
+                f"/v2/captures/{_safe_id(capture_id)}/structure/session/batches/{_safe_batch_index(batch_index)}",
+            ),
+            StructuringBatch,
+        )
+
+    def submit_structuring_batch(
+        self,
+        capture_id: str,
+        batch_index: int,
+        submission: SubmitStructuringBatch | Mapping[str, Any],
+        *,
+        idempotency_key: UUID | str,
+    ) -> StructuringSession:
+        """Submit a host's result for one structuring batch; requires an idempotency key."""
+        try:
+            payload = (
+                submission
+                if isinstance(submission, SubmitStructuringBatch)
+                else SubmitStructuringBatch.model_validate(submission)
+            )
+        except ValidationError as error:
+            raise CaptureRuntimeProtocolError(
+                "Structuring batch submission is invalid.", error.errors(include_url=False)
+            ) from error
+        key = str(idempotency_key)
+        if not key:
+            raise CaptureRuntimeProtocolError(
+                "Structuring batch submissions require X-Idempotency-Key."
+            )
+        return decode_model(
+            self._request(
+                "PUT",
+                f"/v2/captures/{_safe_id(capture_id)}/structure/session/batches/{_safe_batch_index(batch_index)}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Idempotency-Key": key,
+                },
+                json=payload.model_dump(mode="json", by_alias=True),
+            ),
+            StructuringSession,
         )
 
     def get_partial(self, capture_id: str) -> PartialCapture:
@@ -529,14 +510,6 @@ class CaptureRuntimeClient:
                 "Capture Runtime returned an invalid capture identity."
             )
         return partial
-
-    def get_streaming_result(self, capture_id: str) -> CaptureStreamingResult:
-        """Read the terminal capture state, raw extraction, and structured document."""
-        operation, raw, result = decode_streaming_result(
-            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"),
-            capture_id,
-        )
-        return CaptureStreamingResult(operation=operation, raw=raw, result=result)
 
     def capture_events(
         self,
@@ -608,13 +581,7 @@ class CaptureRuntimeClient:
                 return
             reconnects += 1
 
-    def cancel_streaming_capture(self, capture_id: str) -> CaptureOperation:
-        """Request cancellation of a capture operation."""
-        return self._decode_capture_operation(
-            self._request("POST", f"/v2/captures/{_safe_id(capture_id)}/cancel"), capture_id
-        )
-
-    def commit_streaming_structure(
+    def commit_structure(
         self,
         capture_id: str,
         candidate: str | bytes | Mapping[str, object] | CaptureDocument,
@@ -644,7 +611,7 @@ class CaptureRuntimeClient:
             capture_id,
         )
 
-    def report_streaming_failure(
+    def report_structuring_failure(
         self, capture_id: str, *, code: str, message: str, idempotency_key: UUID | str
     ) -> CaptureOperation:
         """Report that host-side structuring failed for a capture."""
@@ -658,14 +625,14 @@ class CaptureRuntimeClient:
             capture_id,
         )
 
-    def delete_streaming_capture(self, capture_id: str) -> None:
+    def delete_capture(self, capture_id: str) -> None:
         """Delete a capture and its stored artifacts from the runtime.
 
         The uploaded source goes with it once no other capture uses it.
         """
         decode_response(self._request("DELETE", f"/v2/captures/{_safe_id(capture_id)}"))
 
-    def delete_streaming_ingestion(self, ingestion_id: str) -> None:
+    def delete_ingestion(self, ingestion_id: str) -> None:
         """Delete an uploaded source; refused while a capture using it is unfinished."""
         decode_response(self._request("DELETE", f"/v2/ingestions/{_safe_id(ingestion_id)}"))
 
@@ -767,4 +734,4 @@ def _safe_batch_index(value: int) -> int:
     return value
 
 
-__all__ = ["CaptureRuntimeClient", "CaptureUpload", "CaptureStreamingResult", "RuntimeDiscovery"]
+__all__ = ["CaptureResult", "CaptureRuntimeClient", "CaptureUpload", "RuntimeDiscovery"]

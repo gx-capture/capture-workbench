@@ -30,7 +30,6 @@ test('isTerminalCaptureStatus distinguishes every v2 terminal and non-terminal s
     assert.equal(isTerminalCaptureStatus(terminal), true, `expected ${terminal} to be terminal`);
   }
   for (const nonTerminal of [
-    'created',
     'waiting_input',
     'extracting',
     'awaiting_structuring',
@@ -44,7 +43,7 @@ test('v2 request builders support pdf, image, and audio with runtime or host str
   assert.deepEqual(
     buildOpenIngestionRequest({
       clientRequestId: 'req-1',
-      kind: 'audio',
+      kind: 'recording',
       fileName: 'sample.mp3',
       mediaType: 'audio/mpeg',
       totalBytes: 4096,
@@ -52,7 +51,7 @@ test('v2 request builders support pdf, image, and audio with runtime or host str
     }),
     {
       protocolVersion: '2',
-      kind: 'audio',
+      kind: 'recording',
       mode: 'file',
       clientRequestId: 'req-1',
       fileName: 'sample.mp3',
@@ -89,6 +88,14 @@ test('v2 request builders support pdf, image, and audio with runtime or host str
       startPolicy: 'eager',
     },
   );
+  assert.equal(
+    buildStartCaptureRequest({
+      clientRequestId: 'req-3',
+      ingestionId: 'ing-1',
+      identifySpeakers: true,
+    }).identifySpeakers,
+    true,
+  );
 });
 
 test('startV2Capture executes open, chunked PUTs, finalize, and capture start in order', async () => {
@@ -114,7 +121,7 @@ test('startV2Capture executes open, chunked PUTs, finalize, and capture start in
         return { ingestionId: 'ing-42', status: 'ready' } as T;
       }
       if (path === '/v2/captures') {
-        return { captureId: 'cap-99', status: 'created' } as T;
+        return { captureId: 'cap-99', status: 'extracting' } as T;
       }
       return undefined as T;
     },
@@ -126,7 +133,7 @@ test('startV2Capture executes open, chunked PUTs, finalize, and capture start in
     chunkBytes: 10,
   });
 
-  assert.deepEqual(operation, { captureId: 'cap-99', status: 'created' });
+  assert.deepEqual(operation, { captureId: 'cap-99', status: 'extracting' });
   assert.deepEqual(
     calls.map((call) => `${call.method ?? 'GET'} ${call.path}`),
     [

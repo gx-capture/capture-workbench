@@ -5,7 +5,7 @@ import type {
   CaptureDocument,
   CaptureEvent,
   CaptureOperation,
-  CaptureStreamingResult,
+  CaptureResult,
   PartialCapture,
   RawCapture,
   RuntimeReady,
@@ -28,19 +28,24 @@ export const READY: RuntimeReady = {
     service: 'capture-runtime',
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
-    contractSha256: 'a'.repeat(64),
-    mode: 'gpu-dml',
+    contractSetSha256: 'a'.repeat(64),
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,
     noticeCode: null,
   },
   capabilities: {
-    captureKinds: ['pdf', 'image', 'audio'],
+    captureKinds: ['pdf', 'image', 'recording'],
     structuringModes: ['runtime', 'host'],
     supportsCancellation: true,
     supportsRawDiagnostics: true,
     maxUploadBytes: 25_000_000,
+    maxChunkBytes: 1024 * 1024,
+    checkpointIntervalMs: 300_000,
+    heartbeatIntervalMs: 5_000,
+    stallTimeoutMs: 90_000,
+    supportsProgressiveRecording: true,
   },
 };
 
@@ -63,7 +68,7 @@ export const RAW: RawCapture = {
   ],
   sourceText: 'page one',
   extractionEngine: {
-    engine: 'windowsml',
+    engine: 'text-recognition',
     model: 'ocr-v1',
     digest: `sha256:${'b'.repeat(64)}`,
   },
@@ -107,7 +112,7 @@ export function streamingOperation(
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
-    kind: 'audio',
+    kind: 'recording',
     status,
     progress,
     partialRevision: 1,
@@ -128,6 +133,7 @@ export function streamingEvent(
     eventId: `event-${eventType}`,
     sequence: eventType === 'completed' ? 3 : 2,
     captureId: 'capture-1',
+    kind: 'recording',
     eventType,
     stage,
     createdAt: RAW.createdAt,
@@ -139,7 +145,6 @@ export const PARTIAL: PartialCapture = {
   captureId: 'capture-1',
   source: RAW.source,
   revision: 1,
-  coveredUntilMs: 0,
   segments: RAW.segments,
   sourceText: RAW.sourceText,
   extractionEngine: RAW.extractionEngine,
@@ -148,7 +153,7 @@ export const PARTIAL: PartialCapture = {
 
 export function streamingResult(
   operation = streamingOperation('completed'),
-): CaptureStreamingResult {
+): CaptureResult {
   return { operation, raw: RAW, result: DOCUMENT };
 }
 
@@ -180,16 +185,16 @@ export function fakeClient(
     getInstallation: vi.fn(),
     cancelInstallation: vi.fn(),
     captureEvents: vi.fn(() => of(streamingEvent('completed', 'completed'))),
-    startStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
-    getStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
-    cancelStreamingCapture: vi.fn(() => of(streamingOperation('cancelled'))),
-    getStreamingPartial: vi.fn(() => of(PARTIAL)),
-    getStreamingRaw: vi.fn(() => of(RAW)),
-    getStreamingResult: vi.fn(() => of(streamingResult())),
-    commitStreamingStructuredResult: vi.fn(() =>
+    startCapture: vi.fn(() => of(streamingOperation('completed'))),
+    getCapture: vi.fn(() => of(streamingOperation('completed'))),
+    cancelCapture: vi.fn(() => of(streamingOperation('cancelled'))),
+    getPartial: vi.fn(() => of(PARTIAL)),
+    getRaw: vi.fn(() => of(RAW)),
+    getResult: vi.fn(() => of(streamingResult())),
+    commitStructure: vi.fn(() =>
       of(streamingOperation('completed')),
     ),
-    reportStreamingStructuringFailure: vi.fn(() =>
+    reportStructuringFailure: vi.fn(() =>
       of({
         ...streamingOperation('failed'),
         error: {
@@ -199,7 +204,7 @@ export function fakeClient(
         },
       }),
     ),
-    deleteStreamingCapture: vi.fn(() => of(undefined)),
+    deleteCapture: vi.fn(() => of(undefined)),
     ...overrides,
   };
 }

@@ -98,7 +98,8 @@ class WorkerFailureDiagnostics:
         if self.exit_code is not None and (
             isinstance(self.exit_code, bool)
             or not isinstance(self.exit_code, int)
-            or not -255 <= self.exit_code <= 255
+            # POSIX signal exits are negative. Windows reports unsigned DWORDs.
+            or not -255 <= self.exit_code <= 0xFFFFFFFF
         ):
             raise ValueError("worker exit code is invalid")
         object.__setattr__(self, "stage_sequence", stages)
