@@ -232,11 +232,126 @@ def test_a_session_worker_is_told_the_chosen_speech_model(
 
     async def scenario() -> object:
         worker = await _SessionWorker.start(engine=engine, config=config)
-        output = await worker.stdout.read()
-        await worker.process.wait()
+        try:
+            output = await worker.stdout.read()
+        finally:
+            await worker.close()
         return json.loads(output)
 
     assert asyncio.run(scenario()) == sent
+
+
+def _session_worker_writing_audio(
+    tmp_path: Path,
+) -> tuple[InstalledEngine, ExtractionRuntimeConfig]:
+    script = tmp_path / "session_worker.py"
+    script.write_text(
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "directory = Path(os.environ['CAPTURE_SESSION_TEMP_DIR'])\n"
+        "(directory / 'window.wav').write_bytes(b'audio')\n"
+        "sys.stdout.buffer.write((str(directory) + '\\n').encode('utf-8'))\n"
+        "sys.stdout.buffer.flush()\n"
+        "sys.stdin.buffer.read()\n",
+        encoding="utf-8",
+    )
+    engine = replace(_engine(tmp_path), executable=script, model_dir=tmp_path)
+    config = ExtractionRuntimeConfig(
+        temp_dir=tmp_path / "temp",
+        max_pdf_pages=10,
+        max_image_pixels=100_000,
+        ocr_render_scale=2,
+        max_audio_duration_ms=60_000,
+        speech_prefer_gpu=True,
+    )
+    return engine, config
+
+
+def test_session_worker_close_removes_only_its_audio_directory(tmp_path: Path) -> None:
+    engine, config = _session_worker_writing_audio(tmp_path)
+    config.temp_dir.mkdir()
+    other_audio = config.temp_dir / "other.wav"
+    other_audio.write_bytes(b"other")
+
+    async def scenario() -> None:
+        worker = await _SessionWorker.start(engine=engine, config=config)
+        try:
+            directory = Path((await asyncio.wait_for(worker.stdout.readline(), 5)).decode().strip())
+            assert directory.parent == config.temp_dir
+            assert directory.name.startswith("capture-speech-session-")
+            assert (directory / "window.wav").read_bytes() == b"audio"
+        finally:
+            await worker.close()
+        assert not directory.exists()
+        assert config.temp_dir.is_dir()
+        assert other_audio.read_bytes() == b"other"
+        await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_successive_session_workers_use_different_directories(tmp_path: Path) -> None:
+    engine, config = _session_worker_writing_audio(tmp_path)
+    config.temp_dir.mkdir()
+
+    async def run_worker() -> Path:
+        worker = await _SessionWorker.start(engine=engine, config=config)
+        try:
+            line = await asyncio.wait_for(worker.stdout.readline(), 5)
+            assert line
+            return Path(line.decode().strip())
+        finally:
+            await worker.close()
+
+    async def scenario() -> None:
+        assert await run_worker() != await run_worker()
+
+    asyncio.run(scenario())
+
+
+def test_session_worker_close_preserves_audio_if_process_does_not_exit(tmp_path: Path) -> None:
+    class Process:
+        stdin = stdout = object()
+        returncode = None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> int:
+            raise TimeoutError
+
+    directory = tmp_path / "session"
+    directory.mkdir()
+    audio = directory / "window.wav"
+    audio.write_bytes(b"audio")
+
+    async def scenario() -> None:
+        process = Process()
+        worker = _SessionWorker(
+            process, asyncio.create_task(asyncio.sleep(0, result="")), temp_dir=directory
+        )
+        await worker.close()
+        assert process.terminated and process.killed
+        assert audio.read_bytes() == b"audio"
+
+    asyncio.run(scenario())
+
+
+def test_session_worker_start_failure_removes_its_directory(tmp_path: Path, monkeypatch) -> None:
+    engine, config = _session_worker_writing_audio(tmp_path)
+
+    async def fail(*args, env, **kwargs):
+        directory = Path(env["CAPTURE_SESSION_TEMP_DIR"])
+        assert directory.is_dir()
+        raise OSError("process creation failed")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail)
+    with pytest.raises(OSError, match="process creation failed"):
+        asyncio.run(_SessionWorker.start(engine=engine, config=config))
+    assert list(config.temp_dir.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -271,8 +386,10 @@ def test_a_session_worker_is_told_the_installed_content_and_not_the_variant(
 
     async def scenario() -> object:
         worker = await _SessionWorker.start(engine=engine, config=config)
-        output = await worker.stdout.read()
-        await worker.process.wait()
+        try:
+            output = await worker.stdout.read()
+        finally:
+            await worker.close()
         return json.loads(output)
 
     assert asyncio.run(scenario()) == {"model": None, "content": sent}

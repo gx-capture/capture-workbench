@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -14,10 +16,14 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, worker_child_environment
-from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
+from capture_runtime.constants import (
+    SPEECH_RECOGNITION_REQUIREMENT_ID,
+    SPEECH_SESSION_TEMP_DIR_PREFIX,
+)
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureEventType,
@@ -443,11 +449,24 @@ def _session_worker_launch(executable: Path) -> tuple[list[str], str]:
     return command, subprocess_path(executable.parent)
 
 
+def _remove_session_temp_dir(directory: Path) -> None:
+    """Remove a session worker's own directory; never follow a link or junction."""
+
+    with suppress(OSError):
+        metadata = directory.lstat()
+        if stat.S_ISDIR(metadata.st_mode) and not (
+            getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            shutil.rmtree(directory)
+
+
 class _SessionWorker:
     def __init__(
         self,
         process: asyncio.subprocess.Process,
         stderr_task: asyncio.Task[str],
+        *,
+        temp_dir: Path | None = None,
     ) -> None:
         self.process = process
         assert process.stdin is not None
@@ -455,6 +474,8 @@ class _SessionWorker:
         self.stdin = process.stdin
         self.stdout = process.stdout
         self._stderr_task = stderr_task
+        self._temp_dir = temp_dir
+        self._closed = False
         # The worker's last stage; the runtime's own heartbeats repeat it.
         self._stage = "transcribing"
 
@@ -475,7 +496,6 @@ class _SessionWorker:
         environment.update(
             {
                 "CAPTURE_SESSION_MODEL_PATH": subprocess_path(engine.model_dir),
-                "CAPTURE_SESSION_TEMP_DIR": subprocess_path(config.temp_dir),
                 "CAPTURE_SESSION_PREFER_GPU": "1" if config.speech_prefer_gpu else "0",
                 "CAPTURE_SESSION_ALLOW_CPU_FALLBACK": (
                     "1" if config.speech_recognition_allow_cpu_fallback else "0"
@@ -492,18 +512,26 @@ class _SessionWorker:
         content_id = engine.content_id
         if content_id is not None:
             environment["CAPTURE_SESSION_SPEECH_CONTENT"] = content_id
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=environment,
-            cwd=cwd,
-            limit=4 * 1024 * 1024 + 5,
-            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
-        )
+        config.temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = config.temp_dir.absolute() / f"{SPEECH_SESSION_TEMP_DIR_PREFIX}{uuid4().hex}"
+        temp_dir.mkdir(exist_ok=False)
+        try:
+            environment["CAPTURE_SESSION_TEMP_DIR"] = subprocess_path(temp_dir)
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=environment,
+                cwd=cwd,
+                limit=4 * 1024 * 1024 + 5,
+                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+            )
+        except (Exception, asyncio.CancelledError):
+            await asyncio.to_thread(_remove_session_temp_dir, temp_dir)
+            raise
         assert process.stderr is not None
-        return cls(process, asyncio.create_task(_drain_stderr(process.stderr)))
+        return cls(process, asyncio.create_task(_drain_stderr(process.stderr)), temp_dir=temp_dir)
 
     async def begin(
         self, *, capture_id: str, source: CaptureSource, spoken_language: str | None = None
@@ -710,6 +738,8 @@ class _SessionWorker:
         return ""
 
     async def close(self) -> None:
+        if self._closed:
+            return
         if self.process.returncode is None:
             with suppress(ProcessLookupError):
                 self.process.terminate()
@@ -724,6 +754,9 @@ class _SessionWorker:
             self._stderr_task.cancel()
         with suppress(asyncio.CancelledError):
             await self._stderr_task
+        self._closed = True
+        if self.process.returncode is not None and self._temp_dir is not None:
+            await asyncio.to_thread(_remove_session_temp_dir, self._temp_dir)
 
 
 async def _drain_stderr(stream: asyncio.StreamReader) -> str:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -440,6 +442,48 @@ def test_startup_cleans_only_owned_worker_temporary_files(settings_factory, tmp_
     shared_settings = settings_factory(CAPTURE_EXTRACTION_TEMP_DIR=str(outside))
     with TestClient(create_app(shared_settings)):
         assert all((outside / name).read_bytes() == b"shared" for name in names)
+
+
+def test_startup_removes_only_owned_session_directories(settings_factory, tmp_path):
+    settings = settings_factory()
+    temporary = settings.extraction.temp_dir
+    abandoned = temporary / "capture-speech-session-abcd"
+    unrelated = temporary / "keep"
+    shared = tmp_path / "shared-temp"
+    shared_session = shared / abandoned.name
+    for directory in (abandoned, unrelated, shared_session):
+        directory.mkdir(parents=True)
+        (directory / "window.wav").write_bytes(b"audio")
+    (temporary / "notes.txt").write_bytes(b"keep")
+
+    with TestClient(create_app(settings)):
+        assert not abandoned.exists()
+        assert (unrelated / "window.wav").read_bytes() == b"audio"
+        assert (temporary / "notes.txt").read_bytes() == b"keep"
+
+    with TestClient(create_app(settings_factory(CAPTURE_EXTRACTION_TEMP_DIR=str(shared)))):
+        assert (shared_session / "window.wav").read_bytes() == b"audio"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junctions")
+def test_startup_preserves_the_target_of_a_session_directory_junction(settings_factory, tmp_path):
+    import _winapi
+
+    settings = settings_factory()
+    temporary = settings.extraction.temp_dir
+    temporary.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    audio = outside / "window.wav"
+    audio.write_bytes(b"audio")
+    junction = temporary / "capture-speech-session-abcd"
+    _winapi.CreateJunction(str(outside), str(junction))
+    try:
+        with TestClient(create_app(settings)):
+            assert audio.read_bytes() == b"audio"
+    finally:
+        if junction.is_junction():
+            junction.rmdir()
 
 
 def test_startup_reports_failed_waiting_capture_to_host(settings_factory):

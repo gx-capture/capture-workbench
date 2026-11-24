@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import shutil
 import stat
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -22,7 +23,11 @@ from capture_runtime.capture.api.streaming import register_streaming_routes
 from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractor
 from capture_runtime.clock import Clock
 from capture_runtime.config import RuntimeSettings
-from capture_runtime.constants import RUNTIME_VERSION, WORKER_TEMP_PREFIXES
+from capture_runtime.constants import (
+    RUNTIME_VERSION,
+    SPEECH_SESSION_TEMP_DIR_PREFIX,
+    WORKER_TEMP_PREFIXES,
+)
 from capture_runtime.contract_set import (
     ContractSet,
     ContractSetError,
@@ -118,7 +123,7 @@ def _normalized_authority(value: str) -> str | None:
 
 
 def _remove_abandoned_worker_files(temp_dir: Path, app_data_dir: Path) -> None:
-    """Remove worker temporary files a previous process left behind.
+    """Remove worker temporary files and directories a previous process left behind.
 
     Only in a temp directory inside this runtime's app data: an overridden
     directory may be shared with another runtime that is running. Best effort:
@@ -133,10 +138,20 @@ def _remove_abandoned_worker_files(temp_dir: Path, app_data_dir: Path) -> None:
     except OSError:
         return
     for entry in entries:
-        if not entry.name.startswith(WORKER_TEMP_PREFIXES):
+        is_session_dir = entry.name.startswith(SPEECH_SESSION_TEMP_DIR_PREFIX)
+        if not is_session_dir and not entry.name.startswith(WORKER_TEMP_PREFIXES):
             continue
         try:
-            if stat.S_ISREG(entry.lstat().st_mode):
+            metadata = entry.lstat()
+            if is_session_dir:
+                # A speech session worker's own directory; a link or junction
+                # with that name is never followed.
+                reparse = getattr(metadata, "st_file_attributes", 0) & (
+                    stat.FILE_ATTRIBUTE_REPARSE_POINT
+                )
+                if stat.S_ISDIR(metadata.st_mode) and not reparse:
+                    shutil.rmtree(entry)
+            elif stat.S_ISREG(metadata.st_mode):
                 entry.unlink()
         except OSError:
             continue

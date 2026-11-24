@@ -20,6 +20,7 @@ from .versions import (
 WORKER_SOURCE_TEMP_PREFIX = "capture-worker-source-"
 SPEECH_TEMP_PREFIX = "capture-workbench-speech-"
 PROGRESSIVE_WINDOW_TEMP_PREFIX = "capture-progressive-window-"
+SPEECH_SESSION_TEMP_DIR_PREFIX = "capture-speech-session-"
 WORKER_TEMP_PREFIXES = (
     WORKER_SOURCE_TEMP_PREFIX,
     SPEECH_TEMP_PREFIX,
@@ -32,6 +33,7 @@ __all__ = [
     "WORKER_SOURCE_TEMP_PREFIX",
     "SPEECH_TEMP_PREFIX",
     "PROGRESSIVE_WINDOW_TEMP_PREFIX",
+    "SPEECH_SESSION_TEMP_DIR_PREFIX",
     "WORKER_TEMP_PREFIXES",
     "RECORDING_MAX_SOURCE_BYTES",
     "API_VERSION",
