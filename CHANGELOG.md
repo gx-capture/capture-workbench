@@ -21,6 +21,369 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.11.0
+
+Capture now calls OCR text recognition and uses `recording` for audio and
+video captures. The runtime selects and reports its own structuring device.
+Workbench shows live transcripts and treats captures as belonging to the app
+run that started them. Installed engine verification survives restarts, and
+full releases publish manifest v2.
+
+The contract set (`7802e8b8…`) and capture document schema (`7d2262f1…`)
+change from 0.10.0. The text recognition sources are pinned to the snapshot
+for `capture-runtime-model-sources-v0.11.0` (OCR profile
+`ocr-c3a409ecfd46b9ab`). The external model pins and private speech fixture
+are unchanged. Upgrade the runtime and its consumers together.
+
+### Breaking for clients and hosts: moving from 0.10.0
+
+- The contract-set SHA-256 moves from
+  `91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380` to
+  `7802e8b85d45e687f2ad0ee9980f03e26b5a5ad43d9df079bfacc2ddbfa6780a`.
+  The capture document schema SHA-256 moves from `5452631c…` to
+  `7d2262f13489df24eab83f8c3b5a5b5b7f5e8f7af0f521ac1b247ae86df9b493`.
+- Capture kind `audio` → `recording`. Requirement ids `windowsml-ocr` →
+  `text-recognition`, `ollama-runtime` → `structuring-runtime`, and
+  `capture-ollama-model` → `structuring-model`. A requirement's `kind`
+  is now its id. Fresh requests must use current values. General
+  installation rejects `structuring-model`. Use
+  `POST /v2/runtime/structuring-model-installations` for that model.
+- Text recognition provenance `engine` changes with the requirement id.
+  Its `device` changes from `windowsml-dml` to `directml` and its `model`
+  from `pp-ocrv6-medium-windowsml` to `pp-ocrv6-medium`. The display name
+  is now “Text recognition.” `OcrComputeMode` changes from `gpu-dml` to
+  `gpu`, and `dml_provider_unavailable` becomes `gpu_provider_unavailable`.
+- Rename `CAPTURE_WHISPER_PREFER_GPU` to `CAPTURE_SPEECH_PREFER_GPU` and
+  `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK` to
+  `CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK`. Remove
+  `CAPTURE_WINDOWSML_MODEL_DIR` and `CAPTURE_OLLAMA_PROFILE_ID`.
+  Runtime startup rejects all four old variables.
+- `GET /v2/streaming/health/ready` is removed. Use `GET /v2/health/ready`.
+  The operation id changes from `v2.streaming.health.ready` to
+  `v2.health.ready`. Read `RuntimeCapabilities` in `RuntimeReady.capabilities`
+  and remove `RuntimeDiscovery.streaming`. Use `supportsProgressiveRecording`
+  (Python `supports_progressive_recording`)
+  in place of `supportsProgressiveAudio` (`supports_progressive_audio`).
+  The `/v2/runtime/model-options` and `/v2/runtime/model-installations`
+  routes move to `/v2/runtime/structuring-model-options` and
+  `/v2/runtime/structuring-model-installations`, including installation
+  status and cancellation under the new path.
+- TypeScript SDK methods and Workbench client equivalents where applicable:
+  `startStreamingCapture` → `startCapture`, `getStreamingCapture` →
+  `getCapture`, `getStreamingPartial` → `getPartial`, `getStreamingRaw` →
+  `getRaw`, `getStreamingResult` → `getResult`, `getStreamingEvents` →
+  `captureEvents`, `cancelStreamingCapture` → `cancelCapture`, and
+  `deleteStreamingCapture` → `deleteCapture`.
+  `commitStreamingStructuredResult` → `commitStructure`,
+  `reportStreamingStructuringFailure` → `reportStructuringFailure`,
+  `getStreamingCapabilities` → `getReady`, `getModelInstallationStatus` →
+  `getModelInstallation`, and `pullStructuringBatch` →
+  `getStructuringBatch`. Replace `createCapture` with `startCapture`.
+  `deleteIngestion` is available for ingestion cleanup.
+- Python SDK: `start_streaming_capture` → `start_capture`,
+  `get_streaming_capture` → `get_capture`, `get_streaming_result` →
+  `get_result`, `cancel_streaming_capture` → `cancel_capture`,
+  `commit_streaming_structure` → `commit_structure`,
+  `report_streaming_failure` → `report_structuring_failure`,
+  `delete_streaming_capture` → `delete_capture`, `delete_streaming_ingestion`
+  → `delete_ingestion`, `get_model_installation_status` →
+  `get_model_installation`, `pull_structuring_batch` →
+  `get_structuring_batch`, and `get_streaming_capabilities` → `handshake`.
+  Readiness now returns typed `capabilities` and `ocr_compute`.
+  Model installation starts with `start_model_installation`, event
+  iteration uses `capture_events`, and `upload_path` accepts
+  `structuring_mode`.
+- `structureStreamingCapture` and `structureCapture` are removed.
+  The runtime still serves `POST /v2/captures/{capture_id}/structure`,
+  returning `CaptureDocument`. The capture's `GET /result` returns the
+  `CaptureResult` envelope.
+- Contract types: `StreamingCaptureStatus` → `CaptureStatus`,
+  `StreamingIngestionStatus` → `IngestionStatus`, `StreamingIngestionMode`
+  → `IngestionMode`, `StreamingEventType` → `CaptureEventType`,
+  `CaptureStreamingResult` → `CaptureResult`, `RuntimeStreamingCapabilities`
+  → `RuntimeCapabilities`, and `CaptureFailure` / `CaptureFailureV2` →
+  `OperationFailure`. The `RuntimeModelOption` and
+  `RuntimeModelInstallation` families use the `StructuringModel` prefix.
+  The problem registry names `ErrorDetails` in place of `ErrorDetailsV2`.
+- Import `CaptureReview` and `CaptureReviewEdit` from the Workbench UI.
+  For a Workbench client, replace `StartStreamingCaptureRequest` and
+  `CreateCaptureRequest` with `StartCaptureRequest`,
+  `CommitStreamingStructuredResultRequest` with
+  `CommitStructuredResultRequest`, and
+  `ReportStreamingStructuringFailureRequest` with
+  `ReportStructuringFailureRequest`. Handle `capture_client_unavailable`
+  in place of `streaming_client_unavailable`.
+- Fields: `contractSha256` → `contractSetSha256`, OCR projection
+  `pageCount` → `processedPageCount`, pull-session `rawSourceSha256` →
+  `sourceSha256`, discovery index `schemaSha256` →
+  `captureDocumentSchemaSha256`, model option `expectedBytes` →
+  `downloadBytes`, and `suggestedUnits` → `suggestedRequirementIds`
+  (Python `suggested_units` → `suggested_requirement_ids`).
+  Remove `RuntimeReady.schemaSha256` and the discovery index's
+  `catalogVersion`. Schema entries and the launcher manifest still use
+  `schemaSha256`, and the engine catalogue still uses `catalogVersion`.
+  Pass `expectedCaptureDocumentSchemaSha256` to the TypeScript client.
+  Passing the old `expectedSchemaSha256` throws.
+- To open a pull session, put the capture id in the route and send a
+  nonblank `X-Idempotency-Key`. Remove body fields `captureId`,
+  `clientRequestId` and `providerCapability.capability`. Supply
+  `profileId` and keep the provider's actual model in its identity.
+  OCR profile ids now use `ocr-<16 hex>` and structuring profiles use
+  `qwen` in place of the `capture-workbench-qwen` prefix. A fresh
+  pull-session request with a retired profile id gets 422
+  `validation_error`.
+- `kind` is required on `OpenIngestion`, `Ingestion`, `CaptureOperation`
+  and `CaptureEvent`. Captures start at `extracting` or `waiting_input`.
+  Remove capture status `created`, ingestion statuses `finalizing` and
+  `expired`, and model option status `installed`. Handle an absent
+  `PartialCapture.coveredUntilMs` for documents and for recordings whose
+  coverage is unknown. `GET /ocr` on a recording is 409
+  `ocr_unavailable`. A chunk whose `Content-Range` end is at or beyond
+  the total gets 422 `invalid_chunk_headers` before the size check.
+- Failure codes: `progressive_failed` → `extraction_failed`,
+  `progressive_interrupted` → `capture_interrupted`,
+  `progressive_output_invalid` → `extraction_output_invalid`,
+  `progressive_no_text_at_sample` → `extraction_no_text` (non-retryable,
+  stage `extraction`), `streaming_source_unavailable` →
+  `ingestion_source_unavailable`, and `installation_filesystem` →
+  `installation_timeout` or `installation_io_failed`. A stored
+  `installation_filesystem` job reads as `installation_failed`. The
+  SDKs drop the `authentication_failed` alias, classify HTTP 401 as
+  authentication, and classify HTTP 403 as authorization regardless of
+  its body. Update structuring device checks as described below.
+- Desktop IPC: `runtime_start_streaming_capture` →
+  `runtime_start_recording_capture`. The `runtime_get_streaming_`
+  commands for `capture`, `events`, `partial` and `result` become
+  `runtime_get_capture`, `runtime_get_capture_events`,
+  `runtime_get_partial` and `runtime_get_result`. Replace
+  `runtime_delete_streaming_capture`, `runtime_cancel_streaming_capture`
+  and `runtime_cancel_capture` with `runtime_delete_capture`. Remove
+  `runtime_structure_streaming_capture` and `runtime_structure_capture`.
+  Documents still use `runtime_create_capture` with page selection.
+  The library rejects new `persisting` and `recovery_required` statuses
+  and recovery fields. Earlier rows remain readable.
+- Launcher crate: `OwnedRuntimeSession` → `OwnedSidecarSession`,
+  `RuntimeTerminationProof` → `SidecarTerminationProof`,
+  `RuntimeCleanupError` → `SidecarCleanupError`,
+  `RuntimeCleanupErrorKind` → `SidecarCleanupErrorKind`,
+  `reserve_loopback_port` → `pick_free_loopback_port`, and
+  `reserve_distinct_loopback_port` → `pick_distinct_free_loopback_port`.
+- Contract bundle schema files remove the version suffix before
+  `.schema.json` from these stems:
+  - `-v2` on `capture-event`, `capture-operation`, `error-body`,
+    `error-envelope`, `finalize-ingestion`, `ingestion`,
+    `ocr-compute-preflight`, `ocr-page-scope`, `open-ingestion`,
+    `open-structuring-session`, `partial-capture`,
+    `report-structuring-failure`, `runtime-artifact-descriptor`,
+    `runtime-installation`, `runtime-installations`,
+    `runtime-requirement`, `runtime-requirements`, `start-capture`,
+    `start-runtime-installation`, `structuring-batch`,
+    `structuring-provider-capability`, `structuring-semantic-block`,
+    `structuring-session` and `submit-structuring-batch`.
+  - `-v3` on `capture-ocr-projection`, `ocr-box`,
+    `ocr-page-projection`, `ocr-point`, `ocr-provenance`,
+    `ocr-provenance-resolved`, `ocr-provenance-unavailable` and `ocr-raster`.
+  - Stems also change: `capture-failure-v2` → `operation-failure`,
+    `capture-streaming-result` → `capture-result`, both forms of
+    `runtime-streaming-capabilities` → `runtime-capabilities`, and
+    `runtime-model-{option,options,installation,installations}-v2` →
+    `structuring-model-{option,options,installation,installations}`.
+    `start-runtime-model-installation-v2` becomes
+    `start-structuring-model-installation`.
+  The standalone release asset is still `capture-document-v2.schema.json`.
+- Update release automation for manifest v2 and the candidate verification
+  summary below. Replace the `smoke-real-engines` target in
+  `capture-workbench-e2e` and the `chromium-real-engines` Playwright project
+  with the split installation and execution checks below. Remove
+  `CAPTURE_REAL_ENGINES_REUSE_INSTALLED`.
+
+### Consumers
+
+- Cert Prep and LAW Prep should pin the runtime, the Web Component
+  (`@gx-capture/capture-workbench-ui`), `@gx-capture/capture-runtime-client`,
+  Python's `capture-runtime-client` and `capture-sidecar-launcher` to 0.11.0
+  wherever used. Update both digests. The Web Component defaults to matching
+  the runtime's major and minor. The Python SDK checks the exact runtime
+  version.
+- Migrate fresh requests and decoders to the new contract. The runtime reads
+  supported 0.10.x records through compatibility adapters without migrating
+  them on read. The Desktop App displays and exports stored library results
+  as recorded.
+
+### Text recognition is named by what it does
+
+- Runtime startup removes the retired `engines/windowsml-ocr` and
+  `runtime-assets/windowsml-ocr` directories under the app-data lock
+  without following links. Reinstall text recognition. Unchanged model
+  downloads can be reused from the cache.
+- Stored OCR evidence remains readable. The runtime translates
+  `pageCount` and `contractSha256` together in historical OCR projections.
+  A projection mixing old and new keys is rejected.
+
+### Speech settings are named by what they control
+
+- `CAPTURE_SPEECH_PREFER_GPU` controls speech recognition and speaker
+  identification. Speech recognition CPU fallback is on by default and
+  controlled separately from worker mirroring. Set
+  `CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false` to disable it.
+- The Desktop App forwards worker-mirror and local OCR model overrides only
+  with the respective verification opt-in and a loopback mirror URL or an
+  absolute model root.
+
+### A recording is the capture kind for audio and video
+
+- Stored capture and ingestion metadata and events with `audio` or a
+  missing kind read as `recording`. A stored document partial with
+  `coveredUntilMs` of zero reads without that field.
+- Old structuring installation and selection records remain readable.
+  Host-commit retries and installation replays verify the historical
+  fingerprint before translating the record.
+
+### One readiness document, and client methods named by the action
+
+- Readiness advertises capture kinds, structuring modes, cancellation and
+  raw diagnostics, upload and chunk limits, timing and progressive recording
+  support. SDKs take their chunk limit from readiness and fetch the contract
+  index and bundle separately. The heartbeat uses the advertised interval.
+  TypeScript rejects empty `structuringModes` or `maxChunkBytes` over 4 MiB.
+- The Web Component forwards `pdfPageNumbers` only for PDF captures.
+  Desktop IPC's `runtime_get_result` returns the terminal result envelope.
+
+### What a failed capture and `/structure` report
+
+- Discovery separates HTTP `problems` from job `failureCodes`, which both
+  SDKs require. Host-reported structuring failure codes are kept as
+  submitted, including codes that the runtime has retired.
+- Caller-driven `POST /v2/captures/{capture_id}/structure` returns
+  503 `requirement_unavailable` for a missing or unavailable provider.
+  Invalid output or mismatched provider provenance gets 422
+  `structuring_invalid_output` with a fixed message. Failed or abandoned
+  requests release the capture back to `awaiting_structuring` for retry.
+  An explicit capture cancel ends it as `cancelled` and the structure
+  request can return 409 `invalid_capture_state`.
+- Worker failures report `speech_recognition_worker_failed` or
+  `speaker_identification_worker_failed` at stage `extraction`, with
+  `retryable: false`. Engine-resolution timeouts report
+  `requirement_unavailable`. An unconfigured extractor reports
+  `extraction_runtime_unavailable` with `retryable: false`.
+- Model installation retries are for transient failures. An invalid option,
+  profile digest, or model digest or size is a permanent failure. Uninstall
+  reports 409 `requirement_in_use` for active captures or installations,
+  a busy install lock or a Windows file sharing or lock violation. Other
+  uninstall execution failures report 500 `uninstall_failed`. Disabled
+  structuring model management reports `requirement_disabled`.
+- The runtime writes `<app_data_dir>/logs/runtime-diagnostics.log` in UTF-8,
+  rotating at 1 MiB with three backups. It records runtime start, worker
+  failures (requirement, code, failure class, exit code, cause type, worker
+  stages and elapsed milliseconds) and each capture's terminal outcome.
+  It never includes tokens, ids, file names, paths or content. Hosts that
+  discard runtime stderr can read this file.
+
+### Structuring runs on the device the runtime selects
+
+- On Windows, the runtime-owned Ollama selects a dedicated GPU by dedicated
+  memory, with NVIDIA then AMD preferred for ties. It uses CUDA for NVIDIA
+  and pins the GPU by UUID when identified, ROCm for AMD, Vulkan for other
+  dedicated or integrated-only GPUs, and CPU when no physical GPU is
+  present. Incomplete inventories, unknown adapters without a confirmed
+  dedicated GPU and non-Windows hosts leave selection to Ollama.
+- A verified first-batch mismatch can trigger one restart and batch replay.
+  Check `CaptureEngine.device` for the observed `cuda`, `rocm`, `vulkan` or
+  `cpu` backend, and `deviceName` for the observed GPU description when
+  available. Unknown observations and external Ollama leave device
+  provenance unset. Older documents with `local` or `remote` remain readable.
+- Batches use the session's configured context length (8192 by default),
+  including batches for host providers. Output budgets remain adaptive.
+  A historical model selection is accepted only if its option, base model
+  and profile digest match. Previously accepted batches replay with their
+  original digest.
+
+### Installed engines keep their verification, and installation stays answerable
+
+- The runtime reuses `verified-files.json` across restarts if its binding
+  to the active engine or model and the installed file snapshot match.
+  Missing, unreadable or stale records trigger full verification.
+- Installation's blocking file operations no longer hold up status reads.
+  The desktop transport reports a socket read timeout as “Capture Runtime
+  sent no data for 60 seconds.” A stalled body read can trigger it as well.
+- Live installation progress stays current while periodic progress writes
+  occur at most once a second per job. A runtime shutdown leaves unfinished
+  installations to be recovered as `runtime_restarted`.
+- Workbench keeps the last installation progress visible and retries failed
+  polls after 1, 2, 4 and then 8 seconds. On 404, it checks the requirements
+  installation list for a current job or refreshes model options, depending
+  on the job type. Confirmed cancellation stops that job's poll.
+- On startup the runtime removes inactive versions of models-only units
+  when it can do so safely.
+
+### A capture belongs to the app run that started it
+
+- Workbench starts one document or recording at a time, taking the oldest
+  waiting item whose feature is ready. A previous run's unfinished row is
+  shown as interrupted. Once the runtime is ready, Workbench requests
+  cleanup of old capture links without waiting for a reply.
+- In Workbench, Cancel aborts an in-flight upload or deletes its capture when
+  an id is available. The row is saved as cancelled even if the runtime
+  delete times out. Once the terminal write has been sent, Cancel is ignored.
+- Success saves the result and clears the capture link in one library update.
+  OCR success comes from its checkpoint and saves completed recognition
+  evidence once. Failed or cancelled attempts save no partial result or OCR
+  evidence from that attempt.
+- Failed, cancelled or interrupted rows without raw text offer Start again.
+  Workbench leaves failed attempts for the user to restart. To recapture a
+  row with raw text, delete and reimport it. History can delete idle rows
+  even if they still have a runtime link, without waiting for runtime cleanup.
+  If a reload loses the capture id during upload, runtime retention handles
+  the orphan (24 hours by default).
+- While a recording runs, Workbench polls for live transcript updates.
+  The desktop event read returns when the stream ends, after 250 ms of
+  silence following a complete event, or at the 10-second request deadline.
+- Runtime `POST /v2/captures/{capture_id}/cancel` requests a stop and can
+  return while the worker is still running. Use
+  `DELETE /v2/captures/{capture_id}` and wait for its response when the
+  worker needs to release the device. Worker close clears speech window
+  files, and runtime startup sweeps abandoned session directories without
+  following links.
+
+### Release manifest v2 and the checks an operator runs
+
+- Full releases publish the desktop installer and
+  `capture-release-manifest-v2.json` with `schemaVersion` `"2"` and
+  `releaseAssets` in place of `runtimeAssets`. Readers accept manifest v1
+  and v2 under their respective filenames and schema versions. An operator
+  can supersede a v1 release with a v2 release.
+- `candidate-verification-summary.json` replaces `release-ledger.json`.
+  Candidate verification and consumer gates check its identity and digests
+  against the candidate. The reader accepts legacy summaries for older
+  versions.
+- Run `capture-runtime:verify-release-model-candidate` for 0.11.0. This
+  check is required when the model source lock, an engine worker, or model
+  delivery differs from the last published release. Re-pinning text
+  recognition sources triggers it for 0.11.0.
+- Worker archives are reproducible from the same build inputs. Worker
+  builds track their own inputs so unrelated runtime changes can reuse
+  the same archive.
+- `capture-workbench-e2e:smoke-real-engines-installation` starts with empty
+  app data and verifies downloads, installation, cancellation, re-attach
+  and restart. `capture-workbench-e2e:smoke-real-engines-execution` reuses
+  app data from the same build and asks for a reinstall if the installed
+  engines differ. It checks real captures and devices, editing, export,
+  restart and deletion. Both check the installed speech pack. Execution
+  also checks live and final transcripts when both a long recording and
+  its oracle are configured.
+- On Windows, `capture-workbench-desktop:check-real-engine-devices`
+  checks the expected, reported and observed device. The manual
+  `diagnostic-installed-deterministic-capture-lifecycle` target in that
+  project checks reload, close during capture and native file drops on
+  the installed QA app. It is optional for release.
+
+### The sidecar launcher names the process it starts
+
+Keep using `launch_sidecar` or `launch_sidecar_with_observer` with the renamed
+types. The session still provides `spawn`, `terminate_and_prove` and
+`terminate`. The port helpers report a currently free port. The process
+that uses it must bind it.
+
 ## 0.10.0
 
 A minor release. Speech recognition ships as two packs, so a computer without

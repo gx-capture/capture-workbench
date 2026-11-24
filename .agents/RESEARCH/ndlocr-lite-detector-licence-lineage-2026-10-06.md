@@ -1,6 +1,6 @@
 # NDLOCR-Lite line detector — licence lineage (open question)
 
-Recorded 2026-10-06 for the user to follow up (tracked in [#248](https://github.com/gx-capture/capture-workbench/issues/248)). Capture is published with
+Recorded 2026-10-06 for the user to follow up (tracked in [#490](https://github.com/gx-capture/capture-workbench/issues/490)). Capture is published with
 this question open since 0.5.0, by the user's decision of 2026-10-06
 ([decisions](../DECISIONS/vertical-japanese-ocr.md)). Nothing here is legal
 advice; it lists what is known, what is not, and what could be done.

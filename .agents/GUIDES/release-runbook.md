@@ -1,11 +1,17 @@
 # Capture Workbench release runbook
 
-Current as of 2026-11-15. This is the operational procedure for publishing a
+Current as of 2026-11-24. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
 ## Current state
 
+- **0.11.0** (minor, changes the contract) is being prepared on the
+  integration branch `feat/contract-0.11.0`. Its release conditions, the
+  issues it closes and the remaining steps are tracked in
+  [#491](https://github.com/gx-capture/capture-workbench/issues/491); it is
+  published only after the packaged acceptance
+  ([#163](https://github.com/gx-capture/capture-workbench/issues/163)) passes.
 - **0.9.0** is the latest published release (2026-11-03): Route A first, then
   the full route (release candidate 41649253900, consumer gates 41659676388,
   release promotion 41666190542), so `v0.9.0` carries
@@ -34,7 +40,7 @@ source of truth for inputs.
   its hash, and only a contract change moves it.
 - **Open**: the licence lineage of the NDLOCR-Lite line detector's weights,
   delivered only in the optional `vertical-japanese-reader` unit; see
-  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md` ([#248](https://github.com/gx-capture/capture-workbench/issues/248)).
+  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md` ([#490](https://github.com/gx-capture/capture-workbench/issues/490)).
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
@@ -715,13 +721,18 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   move only the two `@gx-capture` lock entries (integrity and tarball from
   GitHub Packages) and verify with `pnpm install --frozen-lockfile`.
 - A version bump needs a new model-source snapshot before the lock can follow:
+  first set the lock's `releaseVersion` and every requirement's
+  `artifactVersion` to the new version by hand (`release-version-sync` never
+  rewrites the lock, `repin-text-recognition` keeps both, and `validate`
+  rejects any that differ from `release/version.json`), then
   run `scripts/generate_text_recognition_sources.py` after synchronizing the release version, then commit
   only `model-sources/text-recognition/` (source snapshot), push it with the annotated tag
   `capture-runtime-model-sources-v<version>`, then put its SHA in
   `TEXT_RECOGNITION_SOURCE_COMMIT`, then run `scripts/model_source_lock.py repin-text-recognition` to recompute the digests and byte counts of the
   first-party files from the committed bytes (`pipeline.json` and the
   provenance record the release version), and copy `text-recognition/model/pipeline.json` to
-  `src/capture_runtime/assets/ocr-profile.json`. The lock's approval record
+  `src/capture_runtime/assets/ocr-profile.json` (from 0.11.0 its profile id
+  reads `ocr-<16 hex>`, e.g. `ocr-c3a409ecfd46b9ab`). The lock's approval record
   changes only with the owner's consent.
 - Version management: preview with
   `pnpm nx run capture-tools:release-version-plan --args="--version <version>"`
@@ -736,7 +747,11 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
      existing model approval workflow (the snapshot bullet above); never
      rewrite approval or provenance.
   3. Run `pnpm nx run capture-runtime:generate-contracts` and the existing
-     engine/profile generators for the selected source lock.
+     engine/profile generators for the selected source lock. The placeholder
+     catalog `src/capture_runtime/assets/engine-catalog.json` comes from
+     `uv run python scripts/generate_engine_catalog.py --development-stub
+     --output src/capture_runtime/assets/engine-catalog.json` (in
+     `packages/capture-runtime`).
   4. Recompute and review the contract and receipt identities from canonical
      bytes, then run `pnpm nx run capture-tools:release-version-check`.
 
