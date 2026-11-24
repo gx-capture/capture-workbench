@@ -17,6 +17,8 @@ from capture_runtime.capture.infrastructure.capture_worker_client import WorkerC
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.provisioning.infrastructure import engine_installation
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineArtifactDescriptor,
+    EngineArtifactPart,
     EngineCatalog,
     canonical_json_bytes,
 )
@@ -571,6 +573,117 @@ def test_model_candidate_sends_ocr_fixture_page_manifest(
             "raster": {"width": 1024, "height": 256, "scale": 1.0, "coordinateSystem": "pixel"},
         }
     ]
+    # The worker renders at renderScale; the manifest above was built at the same scale.
+    assert received_options[0]["renderScale"] == 1.0
+    assert received_options[0]["maxImagePixels"] == 100_000_000
+
+
+def _local_worker_artifact(
+    payload: bytes, parts: tuple[EngineArtifactPart, ...] = ()
+) -> EngineArtifactDescriptor:
+    return EngineArtifactDescriptor(
+        role="worker",
+        requirement_id="speech-recognition",
+        artifact_version="0.0.1",
+        worker_protocol_version=WORKER_PROTOCOL_VERSION,
+        platform="windows",
+        arch="x86_64",
+        file_name="worker.zip",
+        bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        extracted_bytes=len(payload),
+        entry_point="worker.exe",
+        files_manifest_sha256="0" * 64,
+        url=None if parts else "https://example.invalid/worker.zip",
+        parts=parts,
+    )
+
+
+def _local_worker_parts(engine_dir: Path, *pieces: bytes) -> tuple[EngineArtifactPart, ...]:
+    parts = []
+    for index, piece in enumerate(pieces, start=1):
+        name = f"worker.zip.{index:03d}"
+        (engine_dir / name).write_bytes(piece)
+        parts.append(
+            EngineArtifactPart(
+                file_name=name,
+                bytes=len(piece),
+                sha256=hashlib.sha256(piece).hexdigest(),
+                url=f"https://example.invalid/{name}",
+            )
+        )
+    return tuple(parts)
+
+
+def _download_local_worker(
+    engine_dir: Path, artifact: EngineArtifactDescriptor, destination: Path
+) -> list[int]:
+    progress: list[int] = []
+    asyncio.run(
+        candidate.LocalWorkerDownloader(engine_dir).download(
+            artifact,
+            destination,
+            cancel_event=asyncio.Event(),
+            progress=progress.append,
+        )
+    )
+    return progress
+
+
+def test_local_worker_download_joins_a_parted_archive_in_order(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    parts = _local_worker_parts(engine_dir, b"first-part|", b"second-part")
+    destination = tmp_path / "worker.zip"
+
+    progress = _download_local_worker(
+        engine_dir, _local_worker_artifact(b"first-part|second-part", parts), destination
+    )
+
+    assert destination.read_bytes() == b"first-part|second-part"
+    assert progress[-1] == len(b"first-part|second-part")
+
+
+def test_local_worker_download_still_copies_a_single_archive(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    (engine_dir / "worker.zip").write_bytes(b"whole-archive")
+    destination = tmp_path / "worker.zip"
+
+    _download_local_worker(engine_dir, _local_worker_artifact(b"whole-archive"), destination)
+
+    assert destination.read_bytes() == b"whole-archive"
+
+
+def test_local_worker_download_rejects_a_missing_part(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    parts = _local_worker_parts(engine_dir, b"first-part|", b"second-part")
+    (engine_dir / parts[1].file_name).unlink()
+    destination = tmp_path / "worker.zip"
+
+    with pytest.raises(engine_installation.EngineInstallationError, match="missing or unsafe"):
+        _download_local_worker(
+            engine_dir, _local_worker_artifact(b"first-part|second-part", parts), destination
+        )
+    assert not destination.exists()
+
+
+def test_local_worker_download_rejects_a_part_that_differs_from_the_catalog(
+    tmp_path: Path,
+) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    parts = _local_worker_parts(engine_dir, b"first-part|", b"second-part")
+    # Same length, other bytes: the digests tell, not the sizes.
+    (engine_dir / parts[0].file_name).write_bytes(b"FIRST-PART|")
+    destination = tmp_path / "worker.zip"
+
+    with pytest.raises(engine_installation.EngineInstallationError, match="does not match"):
+        _download_local_worker(
+            engine_dir, _local_worker_artifact(b"first-part|second-part", parts), destination
+        )
+    assert not destination.exists()
 
 
 def test_speech_preflight_still_reads_a_legacy_catalog(

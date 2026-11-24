@@ -156,26 +156,46 @@ class LocalWorkerDownloader(ArtifactDownloader):
         cancel_event: asyncio.Event,
         progress,
     ) -> None:
-        source = self.engine_dir / descriptor.file_name
-        if not source.is_file() or source.is_symlink():
-            raise EngineInstallationError("candidate worker archive is missing or unsafe")
+        # An archive over 2 GB (the CUDA speech worker) is built only as its
+        # parts, <fileName>.001, .002, ...; join them in order, as the runtime's
+        # downloader does, and check each part as well as the whole archive.
+        pieces = [
+            (self.engine_dir / item.file_name, item.bytes, item.sha256)
+            for item in (descriptor.parts or (descriptor,))
+        ]
+        for source, _, _ in pieces:
+            if not source.is_file() or source.is_symlink():
+                raise EngineInstallationError("candidate worker archive is missing or unsafe")
         copied = 0
         digest = hashlib.sha256()
-        with source.open("rb") as reader, destination.open("xb") as writer:
-            while chunk := reader.read(DOWNLOAD_CHUNK_BYTES):
-                if cancel_event.is_set():
-                    raise asyncio.CancelledError
-                copied += len(chunk)
-                if copied > descriptor.bytes:
-                    raise EngineInstallationError("candidate worker exceeded catalog bytes")
-                writer.write(chunk)
-                digest.update(chunk)
-                progress(copied)
-            writer.flush()
-            os.fsync(writer.fileno())
-        if copied != descriptor.bytes or digest.hexdigest() != descriptor.sha256:
+        try:
+            with destination.open("xb") as writer:
+                for source, piece_bytes, piece_sha256 in pieces:
+                    piece_copied = 0
+                    piece_digest = hashlib.sha256()
+                    with source.open("rb") as reader:
+                        while chunk := reader.read(DOWNLOAD_CHUNK_BYTES):
+                            if cancel_event.is_set():
+                                raise asyncio.CancelledError
+                            piece_copied += len(chunk)
+                            copied += len(chunk)
+                            if piece_copied > piece_bytes or copied > descriptor.bytes:
+                                raise EngineInstallationError(
+                                    "candidate worker exceeded catalog bytes"
+                                )
+                            writer.write(chunk)
+                            digest.update(chunk)
+                            piece_digest.update(chunk)
+                            progress(copied)
+                    if piece_copied != piece_bytes or piece_digest.hexdigest() != piece_sha256:
+                        raise EngineInstallationError("candidate worker does not match catalog")
+                writer.flush()
+                os.fsync(writer.fileno())
+            if copied != descriptor.bytes or digest.hexdigest() != descriptor.sha256:
+                raise EngineInstallationError("candidate worker does not match catalog")
+        except EngineInstallationError:
             destination.unlink(missing_ok=True)
-            raise EngineInstallationError("candidate worker does not match catalog")
+            raise
 
 
 def _assert_pending_preflight_lock(lock: dict[str, Any]) -> None:
