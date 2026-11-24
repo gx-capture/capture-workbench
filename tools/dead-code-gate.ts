@@ -80,8 +80,9 @@ const PRODUCTION_ISSUE_TYPES = [
 ];
 
 /**
- * FastAPI routes, pydantic validators and pytest fixtures are called by the
- * framework, never by our code.
+ * FastAPI routes, pydantic validators, pytest fixtures and methods marked
+ * `@typing.override` (a base class such as logging.Handler calls them) are
+ * called by the framework, never by our code.
  */
 const VULTURE_IGNORE_DECORATORS = [
   '@router.*',
@@ -94,6 +95,7 @@ const VULTURE_IGNORE_DECORATORS = [
   '@field_validator',
   '@model_validator',
   '@pytest.fixture',
+  '@override',
 ];
 
 /** Generated contracts and vendored third-party code are not ours to trim. */

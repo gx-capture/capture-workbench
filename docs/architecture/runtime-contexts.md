@@ -21,6 +21,7 @@ flowchart LR
   n_capture_runtime_contract_set["capture_runtime.contract_set"]
   n_capture_runtime_contracts["capture_runtime.contracts"]
   n_capture_runtime_dependencies["capture_runtime.dependencies"]
+  n_capture_runtime_diagnostic_log["capture_runtime.diagnostic_log"]
   n_capture_runtime_diarization["capture_runtime.diarization"]
   n_capture_runtime_file_lock["capture_runtime.file_lock"]
   n_capture_runtime_gpu_inventory["capture_runtime.gpu_inventory"]
@@ -45,6 +46,7 @@ flowchart LR
   n_capture_runtime_main_ --> n_capture_runtime_frozen_extraction_residue
   n_capture_runtime_main_ --> n_capture_runtime_app
   n_capture_runtime_main_ --> n_capture_runtime_config
+  n_capture_runtime_main_ --> n_capture_runtime_diagnostic_log
   n_capture_runtime_main_ --> n_capture_runtime_provisioning
   n_capture_runtime_main_ --> n_capture_runtime_storage
   n_capture_runtime_frozen_extraction_residue --> n_capture_runtime_provisioning
@@ -70,6 +72,7 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_contract_set
   n_capture_runtime_capture --> n_capture_runtime_contracts
   n_capture_runtime_capture --> n_capture_runtime_dependencies
+  n_capture_runtime_capture --> n_capture_runtime_diagnostic_log
   n_capture_runtime_capture --> n_capture_runtime_diarization
   n_capture_runtime_capture --> n_capture_runtime_ocr
   n_capture_runtime_capture --> n_capture_runtime_pdf_page_selection
@@ -82,7 +85,6 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_worker_client
   n_capture_runtime_capture --> n_capture_runtime_worker_probe
   n_capture_runtime_capture --> n_capture_runtime_worker_process
-  n_capture_runtime_capture --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_config --> n_capture_runtime_constants
   n_capture_runtime_contract_set --> n_capture_runtime_contract_set_bundle
   n_capture_runtime_contract_set --> n_capture_runtime_constants
@@ -102,6 +104,10 @@ flowchart LR
   n_capture_runtime_dependencies --> n_capture_runtime_structuring
   n_capture_runtime_dependencies --> n_capture_runtime_testing
   n_capture_runtime_dependencies --> n_capture_runtime_worker_process
+  n_capture_runtime_diagnostic_log --> n_capture_runtime_constants
+  n_capture_runtime_diagnostic_log --> n_capture_runtime_contracts
+  n_capture_runtime_diagnostic_log --> n_capture_runtime_worker_process
+  n_capture_runtime_diagnostic_log --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_diarization --> n_capture_runtime_worker_payloads
   n_capture_runtime_diarization --> n_capture_runtime_constants
   n_capture_runtime_diarization --> n_capture_runtime_worker_client

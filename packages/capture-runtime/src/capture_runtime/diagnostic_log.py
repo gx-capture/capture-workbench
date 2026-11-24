@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
-from typing import get_args
+from typing import get_args, override
 
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import CaptureRequirementId, CaptureSourceKind, CaptureStatus
@@ -31,10 +31,12 @@ _MILLISECOND = timedelta(milliseconds=1)
 
 
 class _DiagnosticHandler(RotatingFileHandler):
+    @override
     def handleError(self, record: logging.LogRecord) -> None:
         # Logging's default traceback can disclose the log's filesystem path.
         pass
 
+    @override
     def close(self) -> None:
         with _CONFIGURATION_LOCK:
             _LOGGER.removeHandler(self)
