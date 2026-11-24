@@ -203,6 +203,15 @@ silent, current-user NSIS install and uninstall:
 corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skip-nx-cache
 ```
 
+Every installed QA check (this smoke and the capture-lifecycle check below) holds one
+lock per Windows account (by the SID of the process's access token, not by environment
+variables) and QA product, in any worktree, from its preflight through its cleanup;
+a second check refuses and names the one that holds it. Windows frees the lock when the
+holding process ends. The QA checks also refuse to install without an installed
+WebView2 Runtime (a valid version under the Evergreen runtime's registration, read as
+`.github/actions/ensure-webview2` reads it), because the QA installer would install one
+silently and its uninstaller would leave it behind.
+
 It refuses to run over an existing QA install,
 uses an owned run directory below `tmp/capture-workbench-desktop/installed-smoke`, launches
 WebView2 debugging with process-scoped environment variables, and uploads one
@@ -236,6 +245,72 @@ records `evidenceKind: installed-nsis-smoke` and the installer source.
 `deterministic` identifies the fixture-runtime QA build and `release` identifies
 the release installer. Both reports are diagnostic. Real OCR, speech recognition
 and structuring were not exercised.
+
+## Installed QA capture-lifecycle check
+
+The capture lifecycle's Desktop-only behaviour is checked on the installed QA build
+(fixture runtime) by a manual target. It is a diagnostic, not a release gate, and
+not part of verify or CI:
+
+```powershell
+corepack pnpm nx run capture-workbench-desktop:diagnostic-installed-deterministic-capture-lifecycle
+```
+
+It builds the QA installer first (`build-nsis-deterministic`). The check opens the
+app's window and sends it input: F5 and Ctrl+R, the native file dialog, mouse
+drags of files, and the title bar's close message. Leave the mouse and keyboard
+alone until it ends. Keys go out only while the QA app's process (PID and start
+time) owns the foreground, read as the last operation before they are sent; if the
+foreground changes while they are sent, the run fails saying input may have reached
+another window and sends nothing more. A drag aims at the app's drop area and counts
+only when the button was released at the drop point over the app's window; the helper
+always releases the button it pressed, also when a step fails, on its own deadline
+and when the check asks it to stop. Only if the check has to kill the helper does it
+say the left mouse button may need to be released by hand (click it once). It refuses
+to run over an existing QA installation, without an installed WebView2 Runtime, while
+another installed QA check holds the lock, and when a run tree of an earlier run is
+still there.
+
+It proves, in this order: F5 on the OCR page and Ctrl+R on the ASR page while a
+capture runs reload the page, leave the row interrupted, write nothing and delete
+only the stored capture link, and Start again completes; closing the app while a
+capture runs ends every process of the app tree within 1 s (exit times read from
+process handles opened before the close message) and leaves nothing by 1 s, 5 s and
+15 s (each from a snapshot started 0.5 s earlier whose inventory returned by that
+time; times are compared as measured); at the next start, recorded from before the
+page's first script (WebView2 starts paused with `WEBVIEW2_WAIT_FOR_SCRIPT_DEBUGGER`
+at every launch), the row is interrupted, nothing is written, the page asks the host
+once to delete exactly the stored link and the new runtime answers one DELETE with 204
+or 404, and Start again completes; files dropped with native OLE drag and drop on the
+OCR page, the ASR page and History are imported in drop order and captured one at a
+time in that order: in the library writes, and in the fixture runtime's own log, where
+a capture counts from the successful create that names it to the first successful read
+of its outcome. A claim that does not hold fails the run by name; uninstall and cleanup
+still run and report each step.
+
+Everything stays below `tmp/capture-workbench-desktop/installed-capture-lifecycle`.
+Before the first write, the workspace root and every folder down to the run tree must
+be real folders, not links or junctions. The run tree is removed at the end of a
+run only when no process of the run is left (before and after the uninstall), the
+uninstaller removed the installation, no registry key remains and the real product app
+data is unchanged; otherwise it is kept and the run fails. The evidence then lists
+recovery steps for exactly what remains (processes to end, the uninstaller if it is
+still in the tree, registry keys to delete) with workspace-relative paths, and the
+command prints the tree's absolute path to stderr. A step runs or deletes something
+only when the run verified it as its own: the uninstaller and the tree only while the
+tree carries this run's marker and is still the directory the run made, a registry key
+only in the view (32- or 64-bit) it was seen in and with the run's install directory
+as its install location. For anything else, and for a run tree an earlier run left,
+the steps say what to look at and why, and name nothing to run or delete. The check's own temporary directory
+is removed in its cleanup phase, or by the command line's exit hook when the check
+never got that far; both use the same removal, which leaves a directory in place when
+its path or identity no longer proves the run made it. One
+`installed-capture-lifecycle-<time>.json` per run records the outcome, the source
+commit, the installer's name, size and SHA-256, each phase's claims and
+observations, and the measured close times with their method; it passes only with
+every expected claim proven. The window helpers are
+`scripts/installed-window-input.ps1`, `scripts/installed-window-drop.ps1` and
+`scripts/installed-app-tree.ps1`.
 
 ## Loopback ownership boundary
 

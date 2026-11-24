@@ -68,7 +68,7 @@ flowchart LR
 - **刪除**：所有未被這次執行佔用的列（含帶有連結的列）都可按「刪除」；「紀錄」頁提供「刪除」（不提供「取消」），進行中的列「刪除」停用。刪除會重讀文件庫取得連結，但若重讀失敗或無結果，會刻意改用列表顯示的連結，讓每列都有退路（期間新連上的擷取會留到 runtime 保留期到期再清除）。只要索引項目已移除即視為刪除成功，即使檔案移除失敗亦同（殘留檔案於下次啟動清理）；若有連結則送出不等待的 runtime 刪除。
 - **舊版留下的列**：只讀取、不在啟動時改寫。文件庫照原樣讀取並列出舊版存下的 `persisting`、`recovery_required` 與復原欄位（`recoveryCode`、`recoveryMessage`）；`library_update_capture` 拒絕帶有這兩種狀態或任一復原欄位的新寫入，其他有效的 `library_update_capture` 取代擷取狀態時，一併清除該列的復原欄位；`library_save_edits` 只寫入編輯內容，不動這些欄位。舊版留下的 `persisting`、`recovery_required`、帶有連結或已有原始文字的 `queued`、沒有原始文字或屬於錄音的 `awaiting_confirmation`，以及復原碼為 `capture_recovery_required` 的 `failed`，都顯示「已中斷」（僅在沒有原始文字時提供「重新開始」）。若 `recovery_required` 的復原碼為 `runtime_cleanup_failed`，依序看：該媒體類型的終止階段、已存的錯誤代碼（`failed`）、已有原始文字（`completed`），皆無則顯示「已中斷」；佇列中的「檢視」仍依是否顯示「完成」或已有原始文字決定。
 
-不接回舊擷取是刻意的取捨：runtime 的擷取是暫時的，來源檔留在文件庫，任何擷取都能重做；理由與放棄的功能見[決策紀錄](../../.agents/DECISIONS/workbench-capture-ownership.md)。以上行為由 dev host 的生命週期旅程（[capture-lifecycle.dev-host.spec.ts](../../apps/capture-workbench-e2e/src/capture-lifecycle.dev-host.spec.ts)）與擷取服務測試（[desktop-capture.service.spec.ts](../../apps/capture-workbench/src/app/services/desktop-capture.service.spec.ts)）驗證。
+不接回舊擷取是刻意的取捨：runtime 的擷取是暫時的，來源檔留在文件庫，任何擷取都能重做；理由與放棄的功能見[決策紀錄](../../.agents/DECISIONS/workbench-capture-ownership.md)。以上行為由 dev host 的生命週期旅程（[capture-lifecycle.dev-host.spec.ts](../../apps/capture-workbench-e2e/src/capture-lifecycle.dev-host.spec.ts)）與擷取服務測試（[desktop-capture.service.spec.ts](../../apps/capture-workbench/src/app/services/desktop-capture.service.spec.ts)）驗證；只有桌面版能驗證的部分（擷取中在視窗按 F5 或 Ctrl+R、擷取中關閉程式、原生拖放）由手動執行的 `capture-workbench-desktop:diagnostic-installed-deterministic-capture-lifecycle` 在安裝的 QA 版檢查。
 
 文件與錄音共用同一個匯入順序（依建立時間由舊到新，同毫秒匯入仍保留選取順序）。批次匯入逐筆收集錯誤，單筆失敗不會阻止後續檔案匯入。
 
