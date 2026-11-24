@@ -70,8 +70,6 @@ from capture_runtime.ocr.application.use_cases import ExtractPageText
 from capture_runtime.ocr.infrastructure.image_normalization import (
     image_ocr_scale,
     normalize_image_content,
-    oriented_image_dimensions,
-    png_raster_dimensions,
 )
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
@@ -90,6 +88,7 @@ from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrPipeline,
     OcrRequest,
     OcrTerminalOutcome,
+    image_page_manifest,
 )
 from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
@@ -1147,19 +1146,7 @@ class StandaloneRuntimeCaptureExtractor:
         if raster_cache is not None:
             raster_cache.append(normalized)
         self._checkpoint(cancel_event)
-        raster_width, raster_height = png_raster_dimensions(normalized)
-        if raster_width is None or raster_height is None:
-            raise ValueError("OCR raster metadata is unavailable for image input.")
-        source_width, source_height = oriented_image_dimensions(content)
-        raster_scale = min(raster_width / source_width, raster_height / source_height)
-        return (
-            OcrPageManifest(
-                page=1,
-                raster_width=raster_width,
-                raster_height=raster_height,
-                raster_scale=raster_scale,
-            ),
-        )
+        return (image_page_manifest(content, normalized),)
 
     def _preflight_image_manifest(
         self,

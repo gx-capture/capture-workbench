@@ -29,6 +29,10 @@ from capture_runtime.contracts import (
     OcrRaster,
     OperationFailure,
 )
+from capture_runtime.ocr.infrastructure.image_normalization import (
+    oriented_image_dimensions,
+    png_raster_dimensions,
+)
 from capture_runtime.ocr.infrastructure.ocr_profile import load_profile_spec
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
@@ -78,6 +82,25 @@ class OcrPageManifest:
             or not 0 < float(self.raster_scale) <= 8
         ):
             raise OcrProjectionError("OCR manifest raster scale must be positive")
+
+
+def image_page_manifest(content: bytes, raster_png: bytes) -> OcrPageManifest:
+    """The one-page manifest of an image source whose OCR raster is ``raster_png``.
+
+    The OCR worker rejects a run whose raster differs from its manifest, so the runtime
+    and the release model check both build the manifest here from the normalized raster.
+    """
+
+    raster_width, raster_height = png_raster_dimensions(raster_png)
+    if raster_width is None or raster_height is None:
+        raise ValueError("OCR raster metadata is unavailable for image input.")
+    source_width, source_height = oriented_image_dimensions(content)
+    return OcrPageManifest(
+        page=1,
+        raster_width=raster_width,
+        raster_height=raster_height,
+        raster_scale=min(raster_width / source_width, raster_height / source_height),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1253,4 +1276,5 @@ __all__ = [
     "OcrRequestEnginePort",
     "OcrTerminalResult",
     "OcrTerminalOutcome",
+    "image_page_manifest",
 ]

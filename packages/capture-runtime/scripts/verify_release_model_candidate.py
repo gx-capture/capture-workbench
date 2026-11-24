@@ -25,6 +25,8 @@ from model_source_lock import (
 
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.contract_set import load_contract_set
+from capture_runtime.ocr.infrastructure.image_normalization import normalize_image_content
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline, image_page_manifest
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineCatalog,
@@ -623,21 +625,31 @@ async def verify_candidate(
                 if engine is None:
                     raise EngineInstallationError("candidate requirement did not activate")
                 fixture = fixtures[fixture_kind]
+                source_path = (fixture_root / fixture_kind).resolve()
                 if fixture_kind == "ocr":
                     selection = await manager.ocr_compute_selection(
                         contract_set_sha256=contract_set_sha256,
                     )
                     if selection is None:
                         raise EngineInstallationError("candidate OCR compute plan was unavailable")
+                    max_image_pixels = 100_000_000
+                    render_scale = 1.0
+                    content = source_path.read_bytes()
+                    raster = normalize_image_content(
+                        content, scale=render_scale, max_pixels=max_image_pixels
+                    )
+                    page = image_page_manifest(content, raster)
                     run_options: dict[str, object] = {
                         "computePlan": selection.execution_plan.to_dict(),
-                        "maxImagePixels": 100_000_000,
+                        "maxImagePixels": max_image_pixels,
+                        "renderScale": render_scale,
+                        "pageManifest": OcrPipeline().serialize_manifest((page,)),
                     }
                 else:
                     run_options = _speech_run_options(fixture)
                 run = await worker_client.run(
                     engine,
-                    source_path=(fixture_root / fixture_kind).resolve(),
+                    source_path=source_path,
                     media_type=fixture["mediaType"],
                     options=run_options,
                     cancel_event=asyncio.Event(),

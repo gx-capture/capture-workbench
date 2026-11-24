@@ -6,10 +6,11 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from PIL import Image
 
 from capture_runtime._worker_payloads import WorkerProbeResult, WorkerRunResult, WorkerSegment
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
@@ -24,6 +25,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 )
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
+from capture_runtime.workers.ocr_main import _page_manifest
 from tests.direct_model_fixtures import approved_source_lock, pending_source_lock
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -479,6 +481,96 @@ def test_model_enabled_candidate_with_both_speech_contents_goes_on_to_the_fixtur
                 private_speech_fixture=None,
             )
         )
+
+
+def test_model_candidate_sends_ocr_fixture_page_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock, _ = approved_source_lock()
+    catalog = _candidate_catalog(lock, speech_contents=True)
+    lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, catalog.to_dict())
+    fixture = next(item for item in lock["fixtures"] if item["kind"] == "ocr")
+    image_path = tmp_path / "fixture.png"
+    with Image.new("RGB", (1024, 256)) as image:
+        image.save(image_path)
+    fixture_bytes = image_path.read_bytes()
+    received_options: list[dict[str, object]] = []
+
+    class SpeechInstallReached(Exception):
+        pass
+
+    async def download(*, destination: Path, **_kwargs: object) -> None:
+        if destination.name == "ocr":
+            destination.write_bytes(fixture_bytes)
+
+    async def copy_private_fixture(*_args: object) -> None:
+        pass
+
+    async def install(requirement_id: str, **_kwargs: object) -> None:
+        if requirement_id == "speech-recognition":
+            raise SpeechInstallReached
+
+    async def select_compute(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(execution_plan=SimpleNamespace(to_dict=dict))
+
+    async def shutdown() -> None:
+        pass
+
+    class FakeWorker:
+        async def run(
+            self,
+            _engine: object,
+            *,
+            source_path: Path,
+            options: dict[str, object],
+            **_kwargs: object,
+        ) -> WorkerRunResult:
+            received_options.append(options)
+            _page_manifest(options.get("pageManifest"))
+            assert source_path.read_bytes() == fixture_bytes
+            return WorkerRunResult(
+                segments=(WorkerSegment(order=0, text=fixture["expectedText"]),),
+                engine=fixture["expectedEngine"],
+                model=fixture["expectedModel"],
+                digest="fixture-digest",
+                device=fixture["expectedDevice"],
+                warnings=(),
+            )
+
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", str(tmp_path))
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(candidate, "_download_exact_url", download)
+    monkeypatch.setattr(candidate, "_copy_private_fixture", copy_private_fixture)
+    monkeypatch.setattr(candidate, "WorkerClient", FakeWorker)
+    monkeypatch.setattr(
+        candidate,
+        "_candidate_installation_manager",
+        lambda *_args: SimpleNamespace(
+            install=install,
+            active_engine=lambda _requirement_id: object(),
+            ocr_compute_selection=select_compute,
+            shutdown=shutdown,
+        ),
+    )
+
+    with pytest.raises(SpeechInstallReached):
+        asyncio.run(
+            candidate.verify_candidate(
+                catalog_path=catalog_path,
+                engine_dir=tmp_path,
+                source_lock_path=lock_path,
+                output=tmp_path / "evidence.json",
+                private_speech_fixture=tmp_path / "speech",
+            )
+        )
+
+    assert len(received_options) == 1
+    assert received_options[0]["pageManifest"] == [
+        {
+            "page": 1,
+            "raster": {"width": 1024, "height": 256, "scale": 1.0, "coordinateSystem": "pixel"},
+        }
+    ]
 
 
 def test_speech_preflight_still_reads_a_legacy_catalog(
