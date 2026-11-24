@@ -253,6 +253,13 @@ function exceptionReason(relativePath) {
   }
   if (
     relativePath ===
+    'apps/capture-workbench-desktop/scripts/installed-capture-lifecycle.ts'
+  ) {
+    // Playwright page steps and window helpers, like the installed smoke.
+    return 'installed desktop capture-lifecycle CLI process boundary';
+  }
+  if (
+    relativePath ===
     'apps/capture-workbench-desktop/scripts/installed-renderer-boundary.ts'
   ) {
     // Its page-side functions await Tauri IPC inside Playwright's page.evaluate.

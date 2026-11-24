@@ -461,6 +461,20 @@
         "command": "node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts"
       }
     },
+    "diagnostic-installed-deterministic-capture-lifecycle": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Diagnostic only, not a release gate. Explicit Windows-only check of the capture lifecycle on the installed QA build (fixture runtime): reload keys and closing the app during a capture, and native drop on the OCR, ASR and History pages. It opens windows and sends keys and mouse drags to them, and installs and uninstalls the QA build in an isolated scope; intentionally excluded from ordinary verify and CI."
+      },
+      "dependsOn": ["build-nsis-deterministic"],
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/installed-capture-lifecycle"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/installed-capture-lifecycle-cli.ts"
+      }
+    },
     "measure-installed-core-size": {
       "cache": false,
       "executor": "nx:run-commands",
