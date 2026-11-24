@@ -838,7 +838,11 @@ class OcrProvenance(RootModel[OcrProvenancePayload]):
 
     def __init__(self, root: OcrProvenancePayload | None = None, **data: Any) -> None:
         if root is None:
-            root = TypeAdapter(OcrProvenancePayload).validate_python(data)
+            # mypy cannot type an Annotated union as TypeAdapter's argument;
+            # the adapter's own type parameter states what it validates.
+            payload_type: Any = OcrProvenancePayload
+            adapter = TypeAdapter[OcrProvenanceResolved | OcrProvenanceUnavailable](payload_type)
+            root = adapter.validate_python(data)
         elif data:
             raise TypeError("OcrProvenance accepts either root or wire fields, not both")
         elif isinstance(root, OcrProvenance):
