@@ -166,16 +166,24 @@ export interface CaptureLifecycleEvidence {
     readonly startAgainDeletes: number;
     /** The recording's speech worker when the reload was sent. */
     readonly workerAtReload: WorkerUse;
-    /** From the runtime's answer to the delete until that worker's process was seen ended. */
-    readonly workerStoppedMsAfterDelete: number;
+    /**
+     * From the runtime's answer to the delete until the first process sample that no longer
+     * listed that worker. A sample takes about half a second, so this bounds the time from
+     * above; the worker exits before the answer.
+     */
+    readonly workerSeenGoneMsAfterDeleteAnswer: number;
     readonly storedLinkKept: boolean;
     readonly runtimeGone: boolean;
   };
   readonly cancel: {
     /** The recording's speech worker when Cancel was clicked. */
     readonly workerAtCancel: WorkerUse;
-    /** From the runtime's answer to the delete until that worker's process was seen ended. */
-    readonly workerStoppedMsAfterDelete: number;
+    /**
+     * From the runtime's answer to the delete until the first process sample that no longer
+     * listed that worker. A sample takes about half a second, so this bounds the time from
+     * above; the worker exits before the answer.
+     */
+    readonly workerSeenGoneMsAfterDeleteAnswer: number;
     readonly cancellingShownWhileDeletePending: boolean;
     readonly cancelledShownAfterDelete: boolean;
     readonly runtimeDeletes: number;
@@ -825,9 +833,10 @@ async function runCaptureLifecycle(
     }).toBe(1);
     const startupDelete = startupDeletes()[0];
     assert.ok(startupDelete?.answeredAt !== undefined);
-    // The runtime ends the capture before it answers the delete, but the worker
-    // process exits after the answer (measured 0.7 to 1.7 s): its end is
-    // watched from the answer on, beside the steps that follow.
+    // The runtime answers the delete after the worker process has exited. We sample
+    // the process list from the answer on to confirm externally that the worker is
+    // gone. A sample takes about half a second, so the elapsed time bounds when the
+    // worker was last seen and does not measure when it exited.
     const reloadWorkerEnded = startedNow(untilWorkersEnded(workerAtReload, startupDelete.answeredAt));
     const reloadDeletes = startupDeletes().length;
     expect(commandsNamingCapture(commands, firstRecordingCapture, reloadedAt)).toEqual(['runtime_delete_capture']);
@@ -848,13 +857,13 @@ async function runCaptureLifecycle(
       timeout: SETTLE_TIMEOUT_MS, intervals: [250],
     }).toEqual(['runtime_delete_capture']);
     const reloadRuntimeGone = await runtimeGone(firstRecordingCapture);
-    const reloadWorkerStoppedMs = await reloadWorkerEnded();
+    const reloadWorkerSeenGoneMs = await reloadWorkerEnded();
     recordWindow('lifecycle-recording-1', 'speech-recognition', recording, 1, {
       endedAt: startupDelete.answeredAt,
       outcome: 'interrupted',
       runtimeDeleteMs: startupDelete.answeredAt - startupDelete.sentAt,
     });
-    log(`reloaded with the speech worker at ${workerAtReload.cpuSeconds} CPU s and ${workerAtReload.gpuMemoryMiB} MiB GPU memory: the recording is interrupted; the runtime answered its delete in ${startupDelete.answeredAt - startupDelete.sentAt}ms; its worker process ended within ${reloadWorkerStoppedMs}ms of the answer; Start again behind the PDF: ${firstStartAgain}`);
+    log(`reloaded with the speech worker at ${workerAtReload.cpuSeconds} CPU s and ${workerAtReload.gpuMemoryMiB} MiB GPU memory: the recording is interrupted; the runtime answered its delete in ${startupDelete.answeredAt - startupDelete.sentAt}ms; its worker process was no longer listed ${reloadWorkerSeenGoneMs}ms after the answer (first sample without it); Start again behind the PDF: ${firstStartAgain}`);
 
     // 4. The PDF ends at its checkpoint; the recording starts after its outcome.
     await expect(row('history-row', pdf)).toHaveAttribute('data-user-status', 'done', { timeout: input.documentTimeoutMs });
@@ -918,13 +927,13 @@ async function runCaptureLifecycle(
     await navigate('history');
     const secondStartAgain = await afterStartAgain(recording, null, secondPdf, secondPdfCapture);
     const cancelRuntimeGone = await runtimeGone(secondRecordingCapture);
-    const cancelWorkerStoppedMs = await cancelWorkerEnded();
+    const cancelWorkerSeenGoneMs = await cancelWorkerEnded();
     recordWindow('lifecycle-recording-2', 'speech-recognition', recording, 2, {
       endedAt: cancelDelete.answeredAt,
       outcome: 'cancelled',
       runtimeDeleteMs: cancelDelete.answeredAt - cancelDelete.sentAt,
     });
-    log(`cancelled with the speech worker at ${workerAtCancel.cpuSeconds} CPU s and ${workerAtCancel.gpuMemoryMiB} MiB GPU memory: the runtime answered the delete in ${cancelDelete.answeredAt - cancelDelete.sentAt}ms; its worker process ended within ${cancelWorkerStoppedMs}ms of the answer; the waiting PDF started; Start again behind it: ${secondStartAgain}`);
+    log(`cancelled with the speech worker at ${workerAtCancel.cpuSeconds} CPU s and ${workerAtCancel.gpuMemoryMiB} MiB GPU memory: the runtime answered the delete in ${cancelDelete.answeredAt - cancelDelete.sentAt}ms; its worker process was no longer listed ${cancelWorkerSeenGoneMs}ms after the answer (first sample without it); the waiting PDF started; Start again behind it: ${secondStartAgain}`);
     await expect(row('history-row', secondPdf)).toHaveAttribute('data-user-status', 'done', { timeout: input.documentTimeoutMs });
     recordWindow('lifecycle-pdf-2', 'text-recognition', secondPdf, 1, {
       endedAt: terminalAnsweredAt(secondPdf, 'awaiting_confirmation', 0),
@@ -997,7 +1006,7 @@ async function runCaptureLifecycle(
         interruptedShown: true,
         restartOffered: true,
         workerAtReload: workerUseOf(workerAtReload),
-        workerStoppedMsAfterDelete: reloadWorkerStoppedMs,
+        workerSeenGoneMsAfterDeleteAnswer: reloadWorkerSeenGoneMs,
         runtimeDeletes: reloadDeletes,
         startAgainDeletes: commandsNamingCapture(commands, firstRecordingCapture, beforeRestart).length,
         runtimeDeleteMs: startupDelete.answeredAt - startupDelete.sentAt,
@@ -1010,7 +1019,7 @@ async function runCaptureLifecycle(
         cancellingShownWhileDeletePending: true,
         cancelledShownAfterDelete: true,
         workerAtCancel: workerUseOf(workerAtCancel),
-        workerStoppedMsAfterDelete: cancelWorkerStoppedMs,
+        workerSeenGoneMsAfterDeleteAnswer: cancelWorkerSeenGoneMs,
         runtimeDeletes: cancelCommands.length,
         otherCommandsForCapture: cancelCommands.filter((command) => command !== 'runtime_delete_capture').length,
         runtimeDeleteMs: cancelDelete.answeredAt - cancelDelete.sentAt,

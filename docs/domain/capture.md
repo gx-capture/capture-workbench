@@ -22,6 +22,8 @@
 | 讀取事件 | `PollCaptureEvents` | 從序號游標讀取有界的事件重播。 |
 | 啟動擷取 | `StartCapture` | 建立作業，來源就緒時才排程。 |
 
+`POST /v2/captures/{id}/cancel` 只請求停止，記下 `cancelled` 後立即回覆；worker 可能還要數秒才結束（OCR 約 3 秒），因此 `cancelled` 不表示 worker 已結束。`DELETE /v2/captures/{id}` 等擷取的工作與其 worker 行程都結束後，才移除擷取並回覆。呼叫端若要等裝置空出來才開始下一筆，應刪除擷取並等待回覆。
+
 ## 聚合與不變條件
 
 `Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交與拉取結構化前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。唯一的回頭轉換是 `structuring` 回到 `awaiting_structuring`（`release_structuring`）：runtime 結構化供應者無法接受工作、回傳的結果通不過驗證，或這次呼叫以其他錯誤結束時，作業回到呼叫前的等待狀態，同一 `POST /v2/captures/{id}/structure` 可以重試，作業不會被記成失敗。取消不走這條回頭轉換，作業停在 `cancelled`。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。

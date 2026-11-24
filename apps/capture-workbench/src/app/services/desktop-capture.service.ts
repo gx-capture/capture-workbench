@@ -567,8 +567,8 @@ export class DesktopCaptureService {
 
   /**
    * The cancel's end: once the runtime delete has answered (the runtime
-   * cancels the work before it answers, its worker process exits a second
-   * or two later, and the host bounds the wait), the
+   * answers after the capture's work and its worker process have ended,
+   * and the host bounds the wait), the
    * document is stored cancelled without its link, whatever the answer.
    * Nothing of the capture is fetched or saved.
    */

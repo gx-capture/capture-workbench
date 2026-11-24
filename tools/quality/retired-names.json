@@ -2222,5 +2222,11 @@
     "match": "word",
     "replacement": "resultRowState (the result view takes its status and its reason from one row state)",
     "allowed": []
+  },
+  {
+    "name": "workerStoppedMsAfterDelete",
+    "match": "word",
+    "replacement": "workerSeenGoneMsAfterDeleteAnswer",
+    "allowed": []
   }
 ]

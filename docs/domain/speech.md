@@ -107,7 +107,10 @@ normalizes in place and releases PCM before inference. Waveform and model memory
 still grow with duration; this is not a fixed-memory inference path.
 
 Capture deletion waits for the task and its worker cleanup before removing the
-capture record or its last-reference ingestion. Cancellation is requested once;
+capture record or its last-reference ingestion. Each speech recognition session
+worker writes its window files to its own temporary directory, which is removed
+when the worker closes (including after a cancel or delete), or at the next
+runtime startup if a crash left it behind. Cancellation is requested once;
 worker cleanup remains joined even if cancellation is repeated. Deleting a
 terminal capture's ingestion also waits for cleanup, while deleting an ingestion
 used by a non-terminal capture retains the existing rejection. Disconnecting a
