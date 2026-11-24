@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { chromium, type Browser, type Page } from '@playwright/test';
-import { beginRendererBoundary, finishRendererBoundary, cancelRendererBoundary, recordRendererBoundary, forbidRecordingSourceBytes, startRendererBoundary, connectRendererBoundary, closeBrowserRendererBoundary } from './installed-renderer-boundary.ts';
+import { beginRendererBoundary, finishRendererBoundary, cancelRendererBoundary, recordRendererBoundary, recordedIpcRequests, forbidRecordingSourceBytes, startRendererBoundary, connectRendererBoundary, closeBrowserRendererBoundary } from './installed-renderer-boundary.ts';
 
 test('renderer boundary probes denied commands and audits the picker and the import from the network', async () => {
   const fixture = configure();
@@ -239,6 +239,71 @@ test('startup CDP recording precedes debugger resume and survives adoption by Pl
   }
 });
 
+/** A WebView debugger that answers every command and shows the IPC exchanges a test gives it. */
+function fakeStartupDebugger() {
+  const originalFetch = globalThis.fetch;
+  const originalSocket = globalThis.WebSocket;
+  const holder: { socket?: InstanceType<typeof DebuggerSocket> } = {};
+  class DebuggerSocket extends EventTarget {
+    constructor() {
+      super();
+      Object.assign(holder, { socket: this });
+      queueMicrotask(() => this.dispatchEvent(new Event('open')));
+    }
+    message(value: unknown) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
+    send(serialized: string) {
+      const request = JSON.parse(serialized);
+      queueMicrotask(() => this.message({ id: request.id, result: request.method === 'Network.getResponseBody' ? { body: '{}' } : {} }));
+    }
+    exchange(command: string, ending: 'loadingFinished' | 'loadingFailed' = 'loadingFinished') {
+      const requestId = `${command}-${Math.random()}`;
+      this.message({ method: 'Network.requestWillBeSent', params: { requestId, request: { method: 'POST', url: `http://ipc.localhost/${encodeURIComponent(command)}`, postData: '{}' } } });
+      this.message({ method: 'Network.responseReceived', params: { requestId, response: { status: 200 } } });
+      this.message({ method: `Network.${ending}`, params: { requestId } });
+    }
+    closed = false;
+    // The test decides when the connection ends; close only notes the call.
+    close() { this.closed = true; }
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify([{ type: 'page', webSocketDebuggerUrl: 'ws://127.0.0.1/fake' }]));
+  globalThis.WebSocket = DebuggerSocket as unknown as typeof WebSocket;
+  return {
+    socket: () => {
+      assert.ok(holder.socket);
+      return holder.socket;
+    },
+    restore: () => {
+      globalThis.fetch = originalFetch;
+      globalThis.WebSocket = originalSocket;
+    },
+  };
+}
+
+test('a claim on the startup record fails once the recorder lost its debugger, closed, or could not read a response', async () => {
+  for (const interruption of ['disconnected', 'closed', 'unreadable'] as const) {
+    const debuggerFake = fakeStartupDebugger();
+    const fixture = configure();
+    try {
+      const boundary = await startRendererBoundary('http://127.0.0.1:1234');
+      boundary.adopt(fixture.page);
+      const socket = debuggerFake.socket();
+      socket.exchange('library_delete_capture');
+      assert.deepEqual(recordedIpcRequests(fixture.page).map((request) => request.command), ['library_delete_capture']);
+      if (interruption === 'disconnected') socket.dispatchEvent(new Event('close'));
+      else if (interruption === 'closed') boundary.close();
+      else {
+        socket.exchange('library_update', 'loadingFailed');
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      }
+      // A library write the page sends now would not be seen: the DELETE alone proves nothing.
+      assert.throws(() => recordedIpcRequests(fixture.page), /IPC record does not cover the page up to now/u, interruption);
+    } finally {
+      fixture.restore();
+      debuggerFake.restore();
+    }
+  }
+});
+
 for (const failure of ['page', 'session', 'resume', 'none']) {
   test(`connection owns recorder cleanup when adoption reaches ${failure}`, async () => {
     const originalFetch = globalThis.fetch;
@@ -304,6 +369,48 @@ for (const failure of ['page', 'session', 'resume', 'none']) {
       chromium.connectOverCDP = originalConnect;
       globalThis.fetch = originalFetch;
       globalThis.WebSocket = originalSocket;
+    }
+  });
+}
+
+for (const hung of ['session', 'resume', 'detach'] as const) {
+  test(`a connected debugger whose ${hung} never answers ends at the attach deadline with its transports closed`, async () => {
+    const debuggerFake = fakeStartupDebugger();
+    const originalConnect = chromium.connectOverCDP;
+    let browserCloses = 0;
+    let sessionDetaches = 0;
+    const never = new Promise<never>(() => undefined);
+    const session = {
+      send: () => (hung === 'resume' ? never : Promise.resolve({})),
+      detach: () => {
+        sessionDetaches++;
+        return hung === 'detach' ? never : Promise.resolve();
+      },
+    };
+    const page = {
+      url: () => 'about:blank',
+      context: () => ({ newCDPSession: () => (hung === 'session' ? never : Promise.resolve(session)) }),
+    } as unknown as Page;
+    const browser = {
+      contexts: () => [{ pages: () => [page] }],
+      once: () => undefined,
+      close: async () => { browserCloses++; },
+    } as unknown as Browser;
+    chromium.connectOverCDP = (async () => browser) as typeof chromium.connectOverCDP;
+    try {
+      const started = Date.now();
+      const connecting = connectRendererBoundary('http://127.0.0.1:1234', true, () => undefined, 200);
+      const step = { session: 'the debugger session', resume: 'the debugger resume (Runtime.runIfWaitingForDebugger)', detach: 'the debugger session detach' }[hung];
+      await assert.rejects(connecting, { message: `WebView attach did not finish within 200 ms: it stopped at ${step}.` });
+      assert.ok(Date.now() - started < 5_000);
+      assert.equal(debuggerFake.socket().closed, true);
+      assert.equal(browserCloses, 1);
+      // The session that never answered is detached once (a detach that hung is not sent again);
+      // one that never came has nothing to detach.
+      assert.equal(sessionDetaches, hung === 'session' ? 0 : 1);
+    } finally {
+      chromium.connectOverCDP = originalConnect;
+      debuggerFake.restore();
     }
   });
 }

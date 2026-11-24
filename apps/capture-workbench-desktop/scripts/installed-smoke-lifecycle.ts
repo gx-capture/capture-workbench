@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import {
@@ -20,7 +20,115 @@ import {
 } from 'rxjs';
 
 import { sha256File } from './stage-runtime.ts';
-import { assertStrictDescendant } from './contracts/installed.ts';
+import { INSTALLED_EXECUTABLE_NAME, UNINSTALLER_NAME } from './constants/installed.ts';
+import { assertStrictDescendant, uninstallerArguments } from './contracts/installed.ts';
+import type { createInstalledRegistry } from './installed-registry.ts';
+
+type InstalledRegistry = ReturnType<typeof createInstalledRegistry>;
+type InstalledSmokeLifecycle = ReturnType<typeof createInstalledSmokeLifecycle>;
+
+export function pathExists(path: string): Observable<boolean> {
+  return defer(() => from(stat(path))).pipe(
+    map(() => true),
+    catchError((error) =>
+      error?.code === 'ENOENT' ? of(false) : throwError(() => error),
+    ),
+  );
+}
+
+/** Replaces an evidence file below the check's own root in one rename. */
+export function writeOwnedEvidence(root: string, destination: string, report: unknown): Observable<undefined> {
+  const safePath = assertStrictDescendant(root, destination, 'Evidence path');
+  const temporary = `${safePath}.tmp`;
+  return defer(() => from(rm(temporary, { force: true }))).pipe(
+    concatMap(() =>
+      from(
+        writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, {
+          encoding: 'utf8',
+          flag: 'wx',
+        }),
+      ),
+    ),
+    concatMap(() => from(rm(safePath, { force: true }))),
+    concatMap(() => from(rename(temporary, safePath))),
+    map(() => undefined),
+  );
+}
+
+/** The installer put the app into the owned directory, and the registry says so. */
+export function assertInstalledIntoOwnedDirectory(
+  lifecycle: Pick<InstalledSmokeLifecycle, 'assertOwnedRegularFile'>,
+  registry: Pick<InstalledRegistry, 'assertInstalledRegistryPointsToOwnedDirectory'>,
+  installDirectory: string,
+): Observable<undefined> {
+  return lifecycle.assertOwnedRegularFile(
+    installDirectory,
+    join(installDirectory, INSTALLED_EXECUTABLE_NAME),
+    'Installed Tauri executable',
+  ).pipe(
+    concatMap(() => registry.assertInstalledRegistryPointsToOwnedDirectory(installDirectory)),
+    map(() => undefined),
+  );
+}
+
+/**
+ * Runs the owned installation's own uninstaller and waits until its directory
+ * and uninstall key are gone. When the uninstaller is already missing, the
+ * installation counts as removed only if the executable is gone too.
+ */
+export function uninstallOwnedInstallation({
+  lifecycle,
+  registry,
+  smokeRoot,
+  installDirectory,
+  environment,
+  timeoutMs,
+}: {
+  lifecycle: Pick<InstalledSmokeLifecycle, 'assertOwnedRegularFile' | 'runCheckedExecutable'>;
+  registry: Pick<InstalledRegistry, 'assertInstalledRegistryPointsToOwnedDirectory' | 'waitForInstalledDirectoryRemoval'>;
+  smokeRoot: string;
+  installDirectory: string;
+  environment: Record<string, string>;
+  timeoutMs: number;
+}): Observable<{ uninstallKeyRemoved: boolean; productKeyRetained: boolean }> {
+  const uninstallerPath = join(installDirectory, UNINSTALLER_NAME);
+  return pathExists(uninstallerPath).pipe(
+    switchMap((exists) => {
+      if (!exists) {
+        return pathExists(join(installDirectory, INSTALLED_EXECUTABLE_NAME)).pipe(
+          concatMap((executableExists) =>
+            executableExists
+              ? throwError(
+                  () =>
+                    new Error(
+                      'Installed uninstaller is missing from the owned install directory.',
+                    ),
+                )
+              : registry.waitForInstalledDirectoryRemoval(installDirectory),
+          ),
+        );
+      }
+      return lifecycle
+        .assertOwnedRegularFile(installDirectory, uninstallerPath, 'Installed uninstaller')
+        .pipe(
+          concatMap((uninstaller) =>
+            registry.assertInstalledRegistryPointsToOwnedDirectory(installDirectory).pipe(
+              concatMap(() =>
+                lifecycle.runCheckedExecutable(
+                  uninstaller,
+                  uninstallerArguments(smokeRoot, installDirectory),
+                  'Installed NSIS uninstaller',
+                  environment,
+                  timeoutMs,
+                ),
+              ),
+            ),
+          ),
+          concatMap(() => registry.waitForInstalledDirectoryRemoval(installDirectory)),
+        );
+    }),
+  );
+}
 
 export function expectedInstallerName(version, productName = 'Capture Workbench') {
   if (!/^\d+\.\d+\.\d+$/u.test(version)) {

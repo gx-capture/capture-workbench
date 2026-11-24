@@ -589,7 +589,11 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
   );
 }
 
-function prepareFirstRun(page: Page) {
+/**
+ * Finishes first-run setup of the installed QA app: installs text and speech
+ * recognition if its card asks, waits until both are ready, and returns to OCR.
+ */
+export function prepareFirstRun(page: Page) {
   const runtimeStatus = page.getByTestId('runtime-status');
   const firstRunCard = page.getByTestId('first-run-card');
   const chooseFiles = page.getByTestId('ocr-choose-files');

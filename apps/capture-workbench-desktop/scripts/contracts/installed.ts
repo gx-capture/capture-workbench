@@ -58,6 +58,56 @@ export function assertRegistryOwnership(value, expectedDirectory, label) {
   }
 }
 
+const WEBVIEW2_RUNTIME_CLIENT = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+/**
+ * Where an installed Evergreen WebView2 Runtime records its version (`pv`):
+ * per machine on 64-bit and 32-bit Windows, and per user.
+ */
+export const WEBVIEW2_RUNTIME_VERSION_KEYS = [
+  { scope: 'per-machine', key: `HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\${WEBVIEW2_RUNTIME_CLIENT}` },
+  { scope: 'per-machine', key: `HKLM\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\${WEBVIEW2_RUNTIME_CLIENT}` },
+  { scope: 'per-user', key: `HKCU\\Software\\Microsoft\\EdgeUpdate\\Clients\\${WEBVIEW2_RUNTIME_CLIENT}` },
+] as const;
+
+/**
+ * Whether a `pv` value is the version of an installed runtime, read as CI's
+ * prerequisite does (.github/actions/ensure-webview2,
+ * `[version]$version -gt [version]'0.0.0.0'`): a .NET version of two to four
+ * dot-separated whole numbers, each at most Int32's maximum and with any
+ * number of leading zeros (`1.00000000000` is 1.0), greater than 0.0.0.0.
+ * .NET counts a missing component as below 0, so `0.0` is not greater and a
+ * version is greater exactly when one of its components is above 0.
+ */
+function isInstalledWebViewRuntimeVersion(value: string | undefined): value is string {
+  if (typeof value !== 'string') return false;
+  const parts = value.trim().split('.');
+  if (parts.length < 2 || parts.length > 4 || !parts.every((part) => /^[0-9]+$/u.test(part))) return false;
+  // Number reads leading zeros as decimal; a component too long for Int32 reads above it.
+  const components = parts.map(Number);
+  return components.every((component) => component <= 2_147_483_647) && components.some((component) => component > 0);
+}
+
+/**
+ * The QA installer installs a missing WebView2 Runtime silently and its
+ * uninstaller leaves it behind, so an installed QA check runs the installer
+ * only when the runtime is already there. A version that is missing, is not a
+ * version, or is 0.0.0.0 means not installed.
+ */
+export function assertWebViewRuntimeInstalled(
+  found: readonly { readonly scope: string; readonly version: string | undefined }[],
+): { readonly scope: string; readonly version: string } {
+  const installed = found.find((entry): entry is { scope: string; version: string } => isInstalledWebViewRuntimeVersion(entry.version));
+  if (!installed) {
+    throw new Error(
+      'The WebView2 Runtime is not installed (no valid version under EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5} for this machine or user). '
+      + 'The QA installer would install it and its uninstaller would leave it behind, so the check does not install. '
+      + 'Install the Evergreen WebView2 Runtime from https://developer.microsoft.com/microsoft-edge/webview2/ and run the check again.',
+    );
+  }
+  return { scope: installed.scope, version: installed.version.trim() };
+}
+
 export function assertTaskkillResult(result, stillOwned) {
   if (result.error) {
     throw new Error(
@@ -79,10 +129,7 @@ export function assertInstallationCleanupAllowed(ownedProcessesStopped) {
   }
 }
 
-export function buildInstalledAppEnvironment(source, directories, cdpPort): Record<string, string> {
-  if (!Number.isSafeInteger(cdpPort) || cdpPort < 0 || cdpPort > 65_535) {
-    throw new Error('WebView2 CDP port must be 0 (dynamic) or from 1 through 65535.');
-  }
+function allowlistedEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const allowedName of childEnvironmentAllowlist) {
     const sourceEntry = Object.entries(source).find(
@@ -93,6 +140,31 @@ export function buildInstalledAppEnvironment(source, directories, cdpPort): Reco
     );
     if (sourceEntry) environment[allowedName] = sourceEntry[1] as string;
   }
+  return environment;
+}
+
+/**
+ * The environment of an installer, uninstaller or system tool an installed
+ * check starts: only allowlisted variables, with TEMP and TMP in a directory
+ * the check owns.
+ */
+export function installedChildEnvironment(
+  source: NodeJS.ProcessEnv,
+  isolatedTemp: string,
+  ownedRoot: string,
+): Record<string, string> {
+  const environment = allowlistedEnvironment(source);
+  const safeTemp = assertStrictDescendant(ownedRoot, isolatedTemp, 'Temporary directory');
+  environment.TEMP = safeTemp;
+  environment.TMP = safeTemp;
+  return environment;
+}
+
+export function buildInstalledAppEnvironment(source, directories, cdpPort): Record<string, string> {
+  if (!Number.isSafeInteger(cdpPort) || cdpPort < 0 || cdpPort > 65_535) {
+    throw new Error('WebView2 CDP port must be 0 (dynamic) or from 1 through 65535.');
+  }
+  const environment = allowlistedEnvironment(source);
 
   const isolatedRoot = resolve(directories.root);
   const appData = assertStrictDescendant(

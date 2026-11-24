@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import {
+  catchError,
   concatMap,
   defer,
   from,
@@ -17,8 +18,10 @@ import {
 } from 'rxjs';
 
 import {
+  WEBVIEW2_RUNTIME_VERSION_KEYS,
   assertRegistryOwnership,
   assertStrictDescendant,
+  assertWebViewRuntimeInstalled,
 } from './contracts/installed.ts';
 
 export function createInstalledRegistry({
@@ -135,20 +138,56 @@ export function createInstalledRegistry({
     );
   }
 
-  function assertNoPreExistingInstallation() {
+  /** The product's uninstall and product keys that exist in any registry view. */
+  function existingProductKeys() {
     return from([uninstallRegistryKey, productRegistryKey]).pipe(
-      concatMap((key) =>
-        from(registryViews).pipe(
-          concatMap((view) => registryKeyExists(key, view).pipe(map((exists) => (exists ? `${key} (${view})` : undefined)))),
-        ),
-      ),
+      concatMap((key) => registryKeyExistsInAnyView(key).pipe(map((exists) => (exists ? [key] : [])))),
       toArray(),
-      concatMap((existing) => {
-        const found = existing.filter(Boolean);
-        return found.length > 0
+      map((found): string[] => found.flat()),
+    );
+  }
+
+  /** Where a key of the product says the installation is: the uninstall key's InstallLocation, the product key's default value. */
+  function installLocation(key, view) {
+    return key === uninstallRegistryKey
+      ? registryValue(key, 'InstallLocation', view)
+      : registryDefaultValue(key, view);
+  }
+
+  /**
+   * Each uninstall or product key of the product in each view it exists in,
+   * and whether its install location is `expectedDirectory` (null when it
+   * could not be read). Recovery names a key to delete only by its view and
+   * only when the location is the expected one.
+   */
+  function productKeysByView(expectedDirectory: string): Observable<{ key: string; view: string; installLocationOurs: boolean | null }[]> {
+    return from([uninstallRegistryKey, productRegistryKey]).pipe(
+      concatMap((key) => from(registryViews).pipe(
+        concatMap((view) => registryKeyExists(key, view).pipe(
+          concatMap((exists) => !exists ? of([]) : installLocation(key, view).pipe(
+            map((value) => {
+              try {
+                assertRegistryOwnership(value, expectedDirectory, key);
+                return [{ key, view, installLocationOurs: true }];
+              } catch {
+                return [{ key, view, installLocationOurs: false }];
+              }
+            }),
+            catchError(() => of([{ key, view, installLocationOurs: null }])),
+          )),
+        )),
+      )),
+      toArray(),
+      map((found) => found.flat()),
+    );
+  }
+
+  function assertNoPreExistingInstallation() {
+    return existingProductKeys().pipe(
+      concatMap((found) =>
+        found.length > 0
           ? throwError(() => new Error('A pre-existing Capture Workbench installation was found; refusing to modify it.'))
-          : of(undefined);
-      }),
+          : of(undefined)),
     );
   }
 
@@ -203,10 +242,7 @@ export function createInstalledRegistry({
           concatMap((view) => registryKeyExists(key, view).pipe(
             concatMap((exists) => {
               if (!exists) return of(undefined);
-              const ownership$ = key === uninstallRegistryKey
-                ? registryValue(key, 'InstallLocation', view)
-                : registryDefaultValue(key, view);
-              return ownership$.pipe(
+              return installLocation(key, view).pipe(
                 map((value) => {
                   assertRegistryOwnership(value, expectedDirectory, `${key} (${view}-bit view)`);
                   const result = registryCommand(['delete', key, '/f', `/reg:${view}`]);
@@ -226,6 +262,17 @@ export function createInstalledRegistry({
       concatMap((remaining) => remaining.some(Boolean)
         ? throwError(() => new Error('Owned NSIS registry residue remained after cleanup.'))
         : of(undefined)),
+    );
+  }
+
+  /** Refuses unless a WebView2 Runtime is installed; answers its scope and version. */
+  function requireWebViewRuntime() {
+    return from(WEBVIEW2_RUNTIME_VERSION_KEYS).pipe(
+      concatMap(({ scope, key }) =>
+        registryValue(key, 'pv', '64').pipe(map((version) => ({ scope, version }))),
+      ),
+      toArray(),
+      map((found) => assertWebViewRuntimeInstalled(found)),
     );
   }
 
@@ -263,9 +310,11 @@ export function createInstalledRegistry({
 
   return {
     waitForInstalledDirectoryRemoval,
+    productKeysByView,
     assertNoPreExistingInstallation,
     assertInstalledRegistryPointsToOwnedDirectory,
     removeOwnedRegistryResidue,
+    requireWebViewRuntime,
     windowsSystemExecutable,
   };
 }

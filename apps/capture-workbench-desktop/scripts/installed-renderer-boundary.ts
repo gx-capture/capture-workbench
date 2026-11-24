@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { chromium, type Browser, type Page, type Request, type Response } from '@playwright/test';
+import { chromium, type Browser, type CDPSession, type Page, type Request, type Response } from '@playwright/test';
 import { isPackagedWorkbenchUrl } from './packaged-workbench-page.ts';
 import {
   assertRawCaptureForFixture,
@@ -19,6 +19,11 @@ interface BoundaryAudit {
   readonly pending: Promise<void>[];
   readonly successfulPlugins: string[];
   readonly forbiddenSourceDocuments: Set<string>;
+  /**
+   * Why the record stopped covering the page, or null while it does. Shared
+   * by every copy of the audit, so adoption by a page keeps it.
+   */
+  readonly coverage: { interrupted: string | null };
   readonly detach: () => void;
 }
 
@@ -27,7 +32,8 @@ const IPC_HOST = 'ipc.localhost';
 const UNREADABLE = '<unreadable>';
 const audits = new WeakMap<Page, BoundaryAudit>();
 
-function ipcCommand(url: string): string | null {
+/** The Tauri command an IPC request from the page names, or null for any other request. */
+export function ipcCommand(url: string): string | null {
   try {
     const parsed = new URL(url);
     return parsed.hostname === IPC_HOST ? decodeURIComponent(parsed.pathname.slice(1)) : null;
@@ -108,6 +114,7 @@ export function recordRendererBoundary(page: Page): void {
     pending,
     successfulPlugins,
     forbiddenSourceDocuments,
+    coverage: { interrupted: null },
     detach: () => {
       page.off('request', onRequest);
       page.off('response', onResponse);
@@ -155,6 +162,21 @@ export async function finishRendererBoundary(page: Page, fixtureDirectory: strin
   assert.ok(commands.has('library_select_sources'), 'Renderer boundary did not observe the native picker.');
   assert.ok(commands.has('library_import_selection'), 'Renderer boundary did not observe token import.');
   return [...commands].sort();
+}
+
+/**
+ * The IPC requests recorded for the page so far, in the order the page sent
+ * them. For a page connected while WebView2 waited for the script debugger,
+ * the record starts before the page's first script. Fails unless the record
+ * covers the page up to now: a recorder that was closed or lost its
+ * debugger, or could not read a response, may have missed a request.
+ */
+export function recordedIpcRequests(page: Page): { command: string; body: string }[] {
+  const audit = audits.get(page);
+  assert.ok(audit, 'Renderer boundary audit was not started.');
+  assert.equal(audit.coverage.interrupted, null, `The IPC record does not cover the page up to now: ${audit.coverage.interrupted}`);
+  assert.ok(!audit.responses.includes(UNREADABLE), 'The IPC record does not cover the page up to now: an IPC response could not be read.');
+  return audit.requests.map((serialized) => JSON.parse(serialized) as { command: string; body: string });
 }
 
 function stopRecording(page: Page): void {
@@ -304,13 +326,17 @@ export async function startRendererBoundary(endpoint: string) {
   const close = () => {
     if (finished) return;
     finished = true;
+    audit.coverage.interrupted ??= 'the startup recorder was closed.';
     detachSocket();
     settlePending();
     socket.close();
   };
   const onClose = () => {
     // A premature debugger loss must never produce successful evidence.
-    if (!finished) audit.responses.push(UNREADABLE);
+    if (!finished) {
+      audit.responses.push(UNREADABLE);
+      audit.coverage.interrupted ??= 'the startup recorder lost its debugger connection.';
+    }
     finished = true;
     detachSocket();
     settlePending();
@@ -340,23 +366,65 @@ export function closeBrowserRendererBoundary(browser: Browser | undefined): void
   browserRecorders.delete(browser);
 }
 
+/**
+ * How long the whole attach and resume may take, from the debugger target
+ * list to the resumed page. Its steps with their own bounds take at most
+ * about 16 s together; the rest (the debugger session, its resume and detach)
+ * had none, so a WebView that stopped answering held the start for ever.
+ */
+const ATTACH_DEADLINE_MS = 30_000;
+
+/** One deadline over a sequence of steps; the error names the step it stopped at. */
+function attachDeadline(deadlineMs: number) {
+  let step = 'the start';
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true;
+      reject(new Error(`WebView attach did not finish within ${deadlineMs} ms: it stopped at ${step}.`));
+    }, deadlineMs);
+  });
+  // Between steps nothing waits on the expiry; the next step sees it.
+  expiry.catch(() => undefined);
+  return {
+    /** The step's result, unless the deadline passes first; what it yields after that is undone. */
+    within<T>(name: string, operation: Promise<T>, undoLate?: (late: T) => unknown): Promise<T> {
+      step = name;
+      if (undoLate) void operation.then((late) => { if (expired) undoLate(late); }, () => undefined);
+      return Promise.race([operation, expiry]);
+    },
+    clear: () => clearTimeout(timer),
+  };
+}
+
 export async function connectRendererBoundary(
   endpoint: string,
   auditRenderer: boolean,
   onRecorderAttached: (attached: boolean) => void,
+  deadlineMs = ATTACH_DEADLINE_MS,
 ): Promise<Browser> {
-  const boundary = auditRenderer ? await startRendererBoundary(endpoint) : undefined;
-  onRecorderAttached(Boolean(boundary));
+  const deadline = attachDeadline(deadlineMs);
+  let boundary: Awaited<ReturnType<typeof startRendererBoundary>> | undefined;
   let browser: Browser | undefined;
+  let session: CDPSession | undefined;
   try {
-    browser = await chromium.connectOverCDP(endpoint, { timeout: 2_000 });
+    boundary = auditRenderer
+      ? await deadline.within('the startup debugger connection', startRendererBoundary(endpoint), (late) => late.close())
+      : undefined;
+    onRecorderAttached(Boolean(boundary));
+    browser = await deadline.within(
+      'the Playwright connection',
+      chromium.connectOverCDP(endpoint, { timeout: 2_000 }),
+      (late) => late.close().catch(() => undefined),
+    );
     if (boundary) {
       // The target is paused before its first script, so it may still be at
       // its initial URL and may not be listed yet. The window has one page.
       const pageDeadline = Date.now() + 5_000;
       let pages = browser.contexts().flatMap((context) => context.pages());
       while (pages.length === 0 && Date.now() < pageDeadline) {
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        await deadline.within('the application page', new Promise((resolvePromise) => setTimeout(resolvePromise, 50)));
         pages = browser.contexts().flatMap((context) => context.pages());
       }
       const page = pages.find((candidate) => isPackagedWorkbenchUrl(candidate.url()))
@@ -365,15 +433,33 @@ export async function connectRendererBoundary(
       boundary.adopt(page);
       browserRecorders.set(browser, boundary.close);
       browser.once('disconnected', boundary.close);
-      const session = await page.context().newCDPSession(page);
-      await session.send('Runtime.runIfWaitingForDebugger');
-      await session.detach();
+      session = await deadline.within(
+        'the debugger session',
+        page.context().newCDPSession(page),
+        (late) => late.detach().catch(() => undefined),
+      );
+      await deadline.within('the debugger resume (Runtime.runIfWaitingForDebugger)', session.send('Runtime.runIfWaitingForDebugger'));
+      // Cleared before the wait, so a detach that times out is not sent a second time.
+      const detaching = session;
+      session = undefined;
+      await deadline.within('the debugger session detach', detaching.detach());
     }
     return browser;
   } catch (error) {
     boundary?.close();
-    await browser?.close().catch(() => undefined);
+    void session?.detach().catch(() => undefined);
+    if (browser) {
+      // Closing must not hang either: a connection that stopped answering is dropped.
+      let closeTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        browser.close().catch(() => undefined),
+        new Promise((resolvePromise) => { closeTimer = setTimeout(resolvePromise, 5_000); }),
+      ]);
+      clearTimeout(closeTimer);
+    }
     throw error;
+  } finally {
+    deadline.clear();
   }
 }
 
