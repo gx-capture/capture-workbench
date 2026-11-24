@@ -155,7 +155,7 @@ import {
   uninstallOwnedInstallation,
   writeOwnedEvidence,
 } from './installed-smoke-lifecycle.ts';
-import { invokeTauriCommand } from './real-desktop-ocr-smoke.ts';
+import { invokeTauriCommand } from './packaged-workbench-session.ts';
 
 /** How long a page step may take before its claim fails. */
 const STEP_TIMEOUT_MS = 15_000;

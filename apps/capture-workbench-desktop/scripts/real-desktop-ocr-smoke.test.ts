@@ -13,45 +13,48 @@ import test from 'node:test';
 import type { Browser, Page } from '@playwright/test';
 
 import {
-  acceptanceScreenshot,
   assertDiagnosticsMatchesDurableOcr,
   assertPdfPageOneSemanticEvidence,
   assertExpectedOcrDevice,
   assertOcrExecutionProofMatchesInstalledJourney,
   assertRealDesktopSmokeEvidence,
-  closeOwnedDesktopRoot,
-  connectToPackagedPage,
-  deleteCompletedDocument,
   DesktopOcrTerminalFailure,
   DesktopOcrLifecycleFailure,
   emitAcceptanceSemanticEvidence,
-  establishOwnedDesktopLaunch,
   extractDurableOcrSegments,
-  finalizeDesktopTeardown,
   isRealOcrWorkerFailure,
   isOwnedSmokeDocumentName,
   parseOcrProvenance,
-  pinViewportToWindow,
   readAndAssertVisibleOcrPages,
   readDurableOcrProvenance,
   readOcrComputeModeFromSettings,
   readOcrProvenance,
   readOcrRequirementStatus,
-  requestDesktopTeardown,
   realDesktopRuntimeReadyTimeoutMs,
-  realDesktopTeardownTimeoutMs,
   resolveDesktopRuntimePreflight,
-  resolveLocalInstalledRuntimeIdentity,
-  resolveDesktopTeardownMode,
   resolveExpectedOcrDevice,
+  resolveLocalInstalledRuntimeIdentity,
   runOcrFirstRunSetup,
   runtimeSetupDiagnostics,
   scrubLocalModelEnvironment,
   safeTerminalDesktopOcrFailure,
   verifyInstalledOcrExecutionProof,
-  visibleRuntimeError,
   waitForDesktopOcrCompletion,
 } from './real-desktop-ocr-smoke.ts';
+import {
+  checkpointScreenshot,
+  closeOwnedDesktopRoot,
+  connectToPackagedPage,
+  deleteCompletedDocument,
+  establishOwnedDesktopLaunch,
+  finalizeDesktopTeardown,
+  pinViewportToWindow,
+  requestDesktopTeardown,
+  realDesktopTeardownTimeoutMs,
+  resolveDesktopTeardownMode,
+  visibleRuntimeError,
+} from './packaged-workbench-session.ts';
+
 import type { OcrSemanticEvidenceV1 } from './ocr-semantic-evidence.ts';
 // eslint-disable-next-line @nx/enforce-module-boundaries -- test crosses the workspace journal seam.
 import { openAcceptanceCheckpointWriter } from '../../../tools/acceptance-checkpoint-journal.ts';
@@ -1842,11 +1845,10 @@ test('OCR screenshot evidence masks whole privacy-sensitive result panes and met
     },
   } as unknown as Page;
   const screenshots: string[] = [];
-  const acceptance = { artifactRoot: 'C:\\artifacts' } as unknown as Parameters<typeof acceptanceScreenshot>[1];
 
-  await acceptanceScreenshot(
+  await checkpointScreenshot(
     fakePage,
-    acceptance,
+    'C:\\artifacts',
     screenshots,
     '01-consent-required',
     async () => {

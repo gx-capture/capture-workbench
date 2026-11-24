@@ -60,28 +60,30 @@ import {
 import {
   assertDiagnosticsMatchesDurableOcr,
   assertDurableOcrCheckpoint,
-  closePackagedBrowser,
-  connectToPackagedPage,
   exactOcrQueueRow,
   extractDurableOcrSegments,
-  invokeTauriCommand,
-  isLoopbackPortOpen,
   parseAuthenticatedOcrPreflight,
-  pinViewportToWindow,
   queryPackagedUiState,
   readAndAssertVisibleOcrPages,
-  readDurableLibraryDetail,
   readImportedSourceSha256,
   readOcrComputeModeFromSettings,
-  reattachToPackagedPage,
-  requestDesktopTeardown,
-  reservePort,
   runOcrFirstRunSetup,
   waitForDesktopOcrCompletion,
   waitForImportedDocumentId,
   waitForPackagedRuntimeReadySignal,
-  waitUntil,
 } from './real-desktop-ocr-smoke.ts';
+import {
+  closePackagedBrowser,
+  connectToPackagedPage,
+  invokeTauriCommand,
+  isLoopbackPortOpen,
+  pinViewportToWindow,
+  readDurableLibraryDetail,
+  reattachToPackagedPage,
+  requestDesktopTeardown,
+  reservePort,
+  waitUntil,
+} from './packaged-workbench-session.ts';
 import { nativeClickWebViewElement, nativeOpenDialogUiAutomation } from './installed-native-dialog.ts';
 import { appRoot } from './stage-runtime.ts';
 

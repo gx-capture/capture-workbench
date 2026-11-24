@@ -5,10 +5,10 @@
 import { expect, test } from '@playwright/test';
 
 import {
-  acceptanceScreenshotMasks,
   DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS,
   main,
 } from './real-desktop-ocr-smoke.ts';
+import { checkpointScreenshotMasks } from './packaged-workbench-session.ts';
 
 const OCR_ONLY_MAIN_CHECKPOINT_NAMES: readonly string[] = [
   '01-consent-required',
@@ -124,7 +124,7 @@ test('real Capture Workbench WebView2 golden journey matches approved screenshot
       await expect(page).toHaveScreenshot(`${screenshotName(name)}.png`, {
         animations: 'disabled',
         fullPage: false,
-        mask: acceptanceScreenshotMasks(page),
+        mask: checkpointScreenshotMasks(page),
       });
     },
   });

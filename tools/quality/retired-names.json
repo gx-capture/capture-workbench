@@ -2228,5 +2228,35 @@
     "match": "word",
     "replacement": "workerSeenGoneMsAfterDeleteAnswer",
     "allowed": []
+  },
+  {
+    "name": "acceptanceScreenshot",
+    "match": "word",
+    "replacement": "checkpointScreenshot (the journeys take checkpoint screenshots in acceptance and in baseline review)",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceScreenshots",
+    "match": "word",
+    "replacement": "checkpointScreenshots",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceScreenshotMasks",
+    "match": "word",
+    "replacement": "checkpointScreenshotMasks",
+    "allowed": []
+  },
+  {
+    "name": "injectAcceptancePrivacyStyle",
+    "match": "word",
+    "replacement": "injectCheckpointPrivacyStyle",
+    "allowed": []
+  },
+  {
+    "name": "readLatestOcrInstallation",
+    "match": "word",
+    "replacement": "readLatestInstallation(page, 'text-recognition')",
+    "allowed": []
   }
 ]

@@ -191,6 +191,11 @@ function exceptionReason(relativePath) {
   if (
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts' ||
+    // The real-engine journeys on the packaged Desktop App and the modules
+    // they share: Playwright page steps, the owned app process, the loopback
+    // worker mirror and the run's files.
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-workbench-session.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts' ||
     relativePath ===
