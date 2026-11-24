@@ -2254,9 +2254,57 @@
     "allowed": []
   },
   {
+    "name": "DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS",
+    "match": "word",
+    "replacement": "DESKTOP_OCR_CHECKPOINTS (each checkpoint says whether it is compared)",
+    "allowed": []
+  },
+  {
+    "name": "DesktopOcrAcceptanceCheckpointName",
+    "match": "word",
+    "replacement": "DesktopOcrCheckpointName",
+    "allowed": []
+  },
+  {
+    "name": "acceptanceResponsiveLayout",
+    "match": "word",
+    "replacement": "assertViewportDoesNotOverflow",
+    "allowed": []
+  },
+  {
+    "name": "assertConfiguredHostAppData",
+    "match": "word",
+    "replacement": "assertHostOwnedAppData (local smoke only; acceptance and review use the run data root)",
+    "allowed": []
+  },
+  {
     "name": "readLatestOcrInstallation",
     "match": "word",
     "replacement": "readLatestInstallation(page, 'text-recognition')",
+    "allowed": []
+  },
+  {
+    "name": "01-runtime-ready-ocr-only",
+    "match": "substring",
+    "replacement": "01-runtime-ready (one baseline name per checkpoint)",
+    "allowed": []
+  },
+  {
+    "name": "04-review-complete-ocr-only",
+    "match": "substring",
+    "replacement": "04-review-complete (one baseline name per checkpoint)",
+    "allowed": []
+  },
+  {
+    "name": "E2E_ACCEPTANCE_UPDATE_SNAPSHOTS",
+    "match": "word",
+    "replacement": "Copy the exact owner-approved images by hand (apps/capture-workbench-desktop/README.md#approving-images)",
+    "allowed": []
+  },
+  {
+    "name": "E2E_ACCEPTANCE_BASELINE_REVIEWED",
+    "match": "word",
+    "replacement": "Copy the exact owner-approved images by hand (apps/capture-workbench-desktop/README.md#approving-images)",
     "allowed": []
   }
 ]

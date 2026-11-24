@@ -15,7 +15,12 @@ The desktop host starts one verified `capture-runtime` sidecar on a random loopb
 ## Acceptance targets
 
 - `capture-workbench-desktop:diagnostic-desktop-ocr` runs real OCR against the
-  non-installed `build-acceptance` binary; it is a diagnostic, not release evidence.
+  non-installed `build-acceptance` binary. Run in acceptance mode it is the OCR
+  half of the packaged acceptance below; it is not the release evidence of a
+  consumer gate.
+- `capture-workbench-desktop:acceptance-packaged-real-asr` and
+  `review-packaged-real-screenshots`: the packaged acceptance with real OCR and
+  speech recognition, below.
 - `capture-workbench-desktop:build-practical-installer` and
   `acceptance-practical-installed` build a side-by-side production installer
   (only the identifier, product name, and binary name differ) and run the
@@ -28,6 +33,142 @@ Each consumer runs its own acceptance gate and writes its own manifest.
 Cert Prep's gate is `acceptance-real` and LAW's gate is
 `law-prep-web-e2e:acceptance-real`; a release is gated by those gates.
 The release procedure is in `.agents/GUIDES/release-runbook.md`.
+
+## Packaged acceptance with real engines
+
+Two journeys drive the non-installed `build-acceptance` binary with real
+engines and compare checkpoint screenshots with approved baselines (#163):
+
+- OCR (`scripts/real-desktop-ocr-smoke.ts`, spec
+  `real-desktop-ocr-acceptance.spec.ts`): first-run OCR install, a scanned PDF
+  or image through the native picker, its result and provenance, deletion in
+  History. Compared: `01-consent-required`, `01-runtime-ready`,
+  `03-ocr-checkpoint` (the result page) and `04-review-complete`; the install
+  and processing screenshots show moving progress and are saved only.
+- ASR (`scripts/real-desktop-asr-journey.ts`, spec
+  `real-desktop-asr-acceptance.spec.ts`): speech recognition installed from the
+  ASR page, a structuring model from Settings › Diagnostics (a recording is
+  structured before it is done), a recording done, its result and provenance,
+  the same recording cancelled (取消中, then 已取消) and started again to its
+  end, speech recognition removed on Settings › Engines, both documents deleted
+  in History. Compared: `asr-ready`, `asr-done-row`, `asr-result`,
+  `asr-cancelled-row` and `engine-removed`. The completed row after Start again
+  is saved as `asr-restarted-row`. Cancel and Start again are proven
+  at layer 1; here each runs once for its screens. Speech runs the installed
+  pack's default (`tea-asr-1.1` on `cuda` with the NVIDIA driver,
+  `tea-asr-1.1-mini` on `cpu` without). The structured result must carry the
+  raw capture's speech provenance, and Settings › Diagnostics must show it.
+
+Masks (`checkpointScreenshotMasks`) cover file names, recognized text, the
+transcript, the live transcript lines and partial text, the player, speaker
+names, recording durations and History's "updated" column. The continuous
+privacy CSS also hides the file name in History's delete dialog. Both journeys
+end by proving the app, its runtime and workers, the CDP port and the run's data
+are gone.
+
+Both open the app's window and use the native file picker; leave the mouse
+and keyboard alone while they run. Comparisons continue after a mismatch or a
+missing baseline. Under `<run>/test-results/`, a mismatch produces actual,
+expected and diff images, and a missing baseline produces a masked actual image
+for approval. The journey writes its evidence after teardown with each
+comparison's outcome and the cleanup checks. A completed run requires every
+comparison to match and every cleanup check to pass.
+
+Inputs (private files stay outside the repositories and are never uploaded):
+
+- `CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT` is required for both OCR and ASR. Choose a
+  short parent directory such as `C:\cwr`. Each run creates and removes its own
+  subdirectory for app data, engines and the engine cache. The generated
+  subdirectory path must be at most 40 characters because engine workers load
+  only from paths shorter than Windows MAX_PATH.
+- OCR: `CAPTURE_REAL_DESKTOP_OCR_PDF` (or `_INPUT` for an image) with
+  `<input>.expected.json` beside it, or another file named by
+  `CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS`. Only page 1 of a PDF is
+  recognized, so the text anchors must come from page 1.
+- ASR: `CAPTURE_REAL_DESKTOP_ASR_RECORDING`, an excerpt of one to three minutes.
+  `CAPTURE_REAL_DESKTOP_STRUCTURING_MODEL_OPTION_ID` picks the structuring
+  model (default `qwen3.5-0.8b-v1`). A cold run downloads the speech models
+  (about 10.5 GB for the `cuda` pack) and the structuring model.
+
+### Baseline review (no candidate)
+
+The review runs both journeys on the local acceptance build with the local
+release runtime, before a runtime candidate exists. Build
+`capture-runtime:build-release-artifacts` first; the target stages
+`packages/capture-runtime/dist/release`, builds `build-acceptance` and serves
+that release's worker archives from a loopback mirror. Set
+`CAPTURE_REAL_DESKTOP_RELEASE_DIR` to use another directory for both runtime
+staging and the worker mirror:
+
+```powershell
+$env:CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT = 'C:\cw163'
+$env:CAPTURE_REAL_DESKTOP_OCR_PDF = 'C:\private\scan.pdf'
+$env:CAPTURE_REAL_DESKTOP_ASR_RECORDING = 'C:\private\excerpt.m4a'
+corepack pnpm nx run capture-workbench-desktop:review-packaged-real-screenshots
+```
+
+`--journey ocr` or `--journey asr` after the target runs one journey. Its run ID is
+`E2E_BASELINE_REVIEW_RUN_ID`, never `E2E_ACCEPTANCE_RUN_ID`, and its evidence
+(`output/playwright/capture-workbench-review/<run>/<journey>-journey-evidence.json`)
+says `baseline-review` and names no candidate, so it cannot pass for release
+acceptance. Both modes require the effective Playwright setting
+`updateSnapshots: 'none'` and reject command-line snapshot updates.
+The review command ends with the list of
+checkpoints whose image differed from its baseline or had none.
+
+### Approving images
+
+The product owner looks at each listed checkpoint's `-actual.png`, and its
+`-expected.png` and `-diff.png` when it has a baseline, in the review run's
+`test-results`. For each approved checkpoint, copy that exact actual image
+into the snapshot directory as its baseline, then commit the images in their
+own change:
+
+```powershell
+# The ASR spec has no snapshot directory before its first approved baseline.
+New-Item -ItemType Directory -Force apps\capture-workbench-desktop\scripts\real-desktop-asr-acceptance.spec.ts-snapshots | Out-Null
+Copy-Item <run>\test-results\<test folder>\asr-result-actual.png `
+  apps\capture-workbench-desktop\scripts\real-desktop-asr-acceptance.spec.ts-snapshots\asr-result-chromium-win32.png
+```
+
+The OCR baselines are in `real-desktop-ocr-acceptance.spec.ts-snapshots`. A
+rejected image is a UI defect to fix and review again. `packaged-checkpoints.test.ts`
+fails when a baseline belongs to no compared checkpoint.
+
+### Acceptance (with the runtime candidate)
+
+After the release candidate exists, one acceptance run of each journey
+confirms the approved baselines against the candidate's runtime. Stage the
+candidate's runtime, build the acceptance installer (it records the
+provenance) and the acceptance binary:
+
+```powershell
+node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
+  --artifact <candidate>\runtime\capture-runtime-x86_64-pc-windows-msvc.exe `
+  --manifest <candidate>\runtime\capture-runtime-manifest.json `
+  --schema <candidate>\runtime\capture-document-v2.schema.json --source release
+corepack pnpm nx run capture-workbench-desktop:build-nsis-acceptance
+corepack pnpm nx run capture-workbench-desktop:build-acceptance
+$env:CAPTURE_RUNTIME_CANDIDATE_ROOT = '<candidate>'
+$env:CAPTURE_RUNTIME_CANDIDATE_ID = '<candidate id>'
+$env:CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE = '<folder build-nsis-acceptance printed>\capture-workbench-acceptance-nsis.provenance.json'
+$env:CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT = 'C:\cw163'
+$env:CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN = '1'
+$env:CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT = '<local OCR model directory>'
+$env:CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE = 'directml'
+$env:CAPTURE_REAL_DESKTOP_OCR_PDF = 'C:\private\scan.pdf'
+node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts
+$env:CAPTURE_REAL_DESKTOP_ASR_RECORDING = 'C:\private\excerpt.m4a'
+corepack pnpm nx run capture-workbench-desktop:acceptance-packaged-real-asr
+```
+
+The OCR run uses the script, not the `diagnostic-desktop-ocr` target, whose
+first step stages the locally built runtime over the candidate's. Acceptance
+requires the candidate identity (`CAPTURE_RUNTIME_CANDIDATE_*`) and
+authenticates the packaged runtime against it. Each journey writes
+`<journey>-journey-evidence.json` with `mode: acceptance` and the candidate ID
+under `output/playwright/capture-workbench/<run>`. OCR also writes the
+acceptance manifest there.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a

@@ -8,9 +8,9 @@
 // and its Windows Job owns the runtime and the engine workers.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, rmdir, stat } from 'node:fs/promises';
 import net from 'node:net';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { chromium, type Page } from '@playwright/test';
 
@@ -164,18 +164,38 @@ export async function closeOwnedDesktopRoot(
   });
 }
 
-/** Hides the recognized text and private file names from every frame of a run. */
+/**
+ * Hides private text from every frame while a run records video or takes
+ * screenshots: the elements the checkpoint masks cover for privacy (file
+ * names, recognized text, transcripts, speaker names and the player).
+ */
 export async function injectCheckpointPrivacyStyle(page: Page, enabled: boolean): Promise<void> {
   if (!enabled) return;
   await page.addStyleTag({
     content: `
-      [data-testid="result-source-pane"] > * {
+      [data-testid="result-source-pane"] > *,
+      [data-testid="result-player"] {
         visibility: hidden !important;
         opacity: 0 !important;
       }
       [data-testid="result-page-text"],
       [data-testid="diagnostics-document-filename"],
-      [data-testid="result-detail-filename"] {
+      [data-testid="result-detail-filename"],
+      [data-testid="result-title"],
+      [data-testid="ocr-queue-row"] td:first-child,
+      [data-testid="ocr-queue-row"] td:first-child *,
+      [data-testid="asr-queue-row"] td:first-child,
+      [data-testid="asr-queue-row"] td:first-child *,
+      [data-testid="history-row"] td:nth-child(2),
+      [data-testid="history-row"] td:nth-child(2) *,
+      [data-testid="history-delete-filename"],
+      [data-testid="asr-live-card"] h2,
+      [data-testid="asr-live-line"],
+      [data-testid="asr-live-line"] *,
+      [data-testid="result-transcript-table"],
+      [data-testid="result-transcript-table"] *,
+      [data-testid="result-speaker-name"],
+      [data-testid="result-speaker-input"] {
         color: transparent !important;
         text-shadow: none !important;
         caret-color: transparent !important;
@@ -212,8 +232,10 @@ export async function checkpointScreenshot(
 
 /**
  * What a checkpoint screenshot must neither show nor compare: private file
- * names, the recognized text and its source, and values that differ between
- * runs.
+ * names, recognized text, transcripts, speaker names and the player, and
+ * values that differ between runs or inputs (times, recording durations, the
+ * History "updated" column). The OCR and ASR journeys share one list; a mask
+ * whose element is absent changes nothing.
  */
 export function checkpointScreenshotMasks(page: Page) {
   return [
@@ -224,9 +246,20 @@ export function checkpointScreenshotMasks(page: Page) {
     page.getByTestId('diagnostics-document-filename'),
     page.locator('[data-testid="ocr-queue-row"] td:first-child'),
     page.locator('[data-testid="history-row"] td:nth-child(2)'),
+    page.locator('[data-testid="history-row"] td:nth-child(5)'),
     // Mask privacy-sensitive result panes as whole containers.
     page.getByTestId('result-source-pane'),
     page.getByTestId('result-text-pane'),
+    page.locator('[data-testid="asr-queue-row"] td:first-child'),
+    page.getByTestId('asr-row-duration'),
+    page.locator('[data-testid="asr-live-card"] h2'),
+    page.getByTestId('asr-live-heard'),
+    page.getByTestId('streaming-partial'),
+    page.getByTestId('asr-live-line'),
+    page.getByTestId('result-player'),
+    page.getByTestId('result-transcript-table'),
+    page.getByTestId('result-speaker-name'),
+    page.getByTestId('result-speaker-input'),
   ];
 }
 
@@ -275,9 +308,8 @@ export async function deleteCompletedDocument(
     throw new Error('Standalone desktop cleanup could not determine the target document identity.');
   }
   const selectedFileName = await row.locator('td:nth-child(2) a').textContent();
-  assert.equal(
-    selectedFileName?.trim(),
-    fileName,
+  assert.ok(
+    selectedFileName?.trim() === fileName,
     'Standalone desktop cleanup must verify the exact selected filename.',
   );
   const status = await row.getAttribute('data-user-status');
@@ -483,21 +515,10 @@ export function delay(milliseconds: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
-export async function waitForOwnedTreeGone(
-  rootPid: number | undefined,
-  runtimeSidecarPid: number | undefined,
-): Promise<OwnedChildProcess[] | undefined> {
-  try {
-    return await waitUntil(async () => {
-      const children = descendantProcessRecords(rootPid);
-      if (rootPid !== undefined && isProcessAlive(rootPid)) return undefined;
-      if (runtimeSidecarPid !== undefined && isProcessAlive(runtimeSidecarPid)) return undefined;
-      if (children === undefined) return [];
-      return children.length === 0 ? children : undefined;
-    }, 30_000, 'Owned Capture Workbench process tree did not settle after native teardown.');
-  } catch {
-    return descendantProcessRecords(rootPid);
-  }
+async function waitForOwnedTreeGone(observe: () => boolean): Promise<void> {
+  // A later inventory after CDP and data cleanup supplies the final verdict.
+  await waitUntil(async () => observe() || undefined, 30_000,
+    'Owned Capture Workbench process tree did not settle after native teardown.').catch(() => undefined);
 }
 
 /** A requirement's status as the host's `runtime_requirements` reports it. */
@@ -556,18 +577,25 @@ export async function readLatestInstallation(
   };
 }
 
+/**
+ * How long reading a diagnostic text may wait for its element. textContent
+ * waits until the element exists, and the journeys run under Playwright Test,
+ * which sets no action timeout: an absent element would wait forever.
+ */
+export const diagnosticsTextTimeoutMs = 1_000;
+
 export async function visibleRuntimeError(page: Page): Promise<string | undefined> {
   try {
     const diagnosticsError = page.getByTestId('diagnostics-runtime-error');
     if (await diagnosticsError.isVisible().catch(() => false)) {
-      const message = await diagnosticsError.textContent().catch(() => undefined);
+      const message = await diagnosticsError.textContent({ timeout: diagnosticsTextTimeoutMs }).catch(() => undefined);
       return `Capture Workbench runtime entered an error state: ${message?.trim() || 'no detail was rendered.'}`;
     }
     const statusState = await page.getByTestId('runtime-status').getAttribute('data-state').catch(() => undefined);
     if (statusState !== 'error') return undefined;
     await page.getByTestId('runtime-status').click().catch(() => undefined);
     await diagnosticsError.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => undefined);
-    const message = await diagnosticsError.textContent().catch(() => undefined);
+    const message = await diagnosticsError.textContent({ timeout: diagnosticsTextTimeoutMs }).catch(() => undefined);
     return `Capture Workbench runtime entered an error state: ${message?.trim() || 'no detail was rendered.'}`;
   } catch {
     return undefined;
@@ -591,43 +619,72 @@ export interface OwnedChildProcess {
   readonly commandLine: string;
 }
 
-export function descendantProcessRecords(rootPid: number | undefined): OwnedChildProcess[] | undefined {
-  if (!rootPid || process.platform !== 'win32') return rootPid ? [] : undefined;
+export interface OwnedProcessInventory {
+  readonly livePids: readonly number[];
+  readonly descendants: readonly OwnedChildProcess[];
+}
+
+export function readOwnedProcessInventory(rootPids: readonly number[]): OwnedProcessInventory | undefined {
+  if (rootPids.length === 0 || process.platform !== 'win32') return undefined;
   const script = [
-    `$root = ${rootPid}`,
-    '$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)',
+    "$ErrorActionPreference = 'Stop'",
+    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+    `$roots = @(${rootPids.join(',')})`,
+    '$all = @(Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId, ParentProcessId, Name, CommandLine)',
+    'if ($PID -notin $all.ProcessId -or @($all | Where-Object { $null -eq $_.ProcessId -or $null -eq $_.ParentProcessId }).Count -gt 0) { throw "Incomplete process inventory." }',
     '$pending = [System.Collections.Generic.Queue[int]]::new()',
-    '$pending.Enqueue($root)',
+    'foreach ($root in $roots) { $pending.Enqueue($root) }',
     '$found = [System.Collections.Generic.List[object]]::new()',
+    '$seen = [System.Collections.Generic.HashSet[int]]::new()',
+    'foreach ($root in $roots) { [void]$seen.Add($root) }',
     'while ($pending.Count -gt 0) {',
     '  $parent = $pending.Dequeue()',
     '  foreach ($child in @($all | Where-Object { $_.ParentProcessId -eq $parent })) {',
     '    $childPid = [int]$child.ProcessId',
-    '    if (-not ($found | Where-Object { $_.ProcessId -eq $childPid })) { $found.Add($child); $pending.Enqueue($childPid) }',
+    '    if ($seen.Add($childPid)) { $found.Add($child); $pending.Enqueue($childPid) }',
     '  }',
     '}',
-    '$found | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress',
+    '@{ livePids = @($all.ProcessId); descendants = @($found | Select-Object ProcessId, Name, CommandLine) } | ConvertTo-Json -Depth 4 -Compress',
   ].join('; ');
   for (const shell of ['pwsh.exe', 'powershell.exe']) {
     const result = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], {
       encoding: 'utf8',
       windowsHide: true,
     });
-    if (result.error || result.status !== 0) continue;
+    if (result.error || result.status !== 0 || result.stderr?.trim()) continue;
     try {
-      const parsed = JSON.parse(String(result.stdout || 'null')) as unknown;
-      const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' ? [parsed] : [];
-      return records.flatMap((record) => {
-        if (!record || typeof record !== 'object') return [];
-        const value = record as { ProcessId?: unknown; Name?: unknown; CommandLine?: unknown };
-        const pid = Number(value.ProcessId);
-        return Number.isInteger(pid) && pid > 0
-          ? [{ pid, name: String(value.Name ?? ''), commandLine: String(value.CommandLine ?? '') }]
-          : [];
-      });
+      const parsed = JSON.parse(String(result.stdout)) as { livePids?: unknown; descendants?: unknown };
+      if (!Array.isArray(parsed?.livePids) || parsed.livePids.length === 0 || !Array.isArray(parsed.descendants)) continue;
+      const livePids = parsed.livePids as unknown[];
+      if (!livePids.every((pid): pid is number => typeof pid === 'number' && Number.isSafeInteger(pid) && pid >= 0)) continue;
+      const live = new Set(livePids);
+      if (live.size !== livePids.length) continue;
+      const descendants: OwnedChildProcess[] = [];
+      for (const record of parsed.descendants as unknown[]) {
+        const child = record as { ProcessId?: unknown; Name?: unknown; CommandLine?: unknown } | null;
+        const commandLine = child?.CommandLine;
+        if (typeof child?.ProcessId !== 'number' || !live.has(child.ProcessId) || typeof child.Name !== 'string'
+          || (commandLine !== null && typeof commandLine !== 'string')) break;
+        descendants.push({ pid: child.ProcessId, name: child.Name, commandLine: typeof commandLine === 'string' ? commandLine : '' });
+      }
+      if (descendants.length === parsed.descendants.length) return { livePids, descendants };
     } catch {
       // Try the alternate PowerShell host below.
     }
+  }
+  return undefined;
+}
+
+export function ownedProcessCleanupFailure(
+  observedPids: ReadonlySet<number>,
+  finalInventory: OwnedProcessInventory | undefined,
+  inventoryFailed: boolean,
+): string | undefined {
+  if (inventoryFailed || !finalInventory || observedPids.size === 0) {
+    return 'Owned Capture Workbench process inventory was incomplete.';
+  }
+  if (finalInventory.descendants.length > 0 || finalInventory.livePids.some((pid) => observedPids.has(pid))) {
+    return 'Owned Capture Workbench processes remained after teardown.';
   }
   return undefined;
 }
@@ -671,6 +728,22 @@ export async function isLoopbackPortOpen(port: number): Promise<boolean> {
   });
 }
 
+/** The local OCR model override never reaches an app unless a run sets it on purpose. */
+const localModelEnvironmentKeys = [
+  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN',
+  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT',
+  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_SHA256',
+  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_IDENTITY',
+] as const;
+
+export function scrubLocalModelEnvironment(
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const scrubbed = { ...environment };
+  for (const key of localModelEnvironmentKeys) delete scrubbed[key];
+  return scrubbed;
+}
+
 /** The WebView2 arguments that open the CDP endpoint on loopback only. */
 export function desktopCdpArguments(cdpPort: number): string {
   return `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort} --remote-allow-origins=*`;
@@ -697,12 +770,128 @@ export async function readRuntimeSidecarPid(page: Page): Promise<number | undefi
   return Number.isSafeInteger(processId) && Number(processId) > 0 ? Number(processId) : undefined;
 }
 
+/**
+ * The run's own data: the packaged app's app data (library and runtime data,
+ * engines included) and its local app data (the runtime's engine cache).
+ * The root must be short: an engine worker's native libraries load only from
+ * paths shorter than Windows MAX_PATH, and the runtime installs a worker's
+ * files about 90 characters below the app data directory
+ * (`runtime\engines\<requirement>\versions\.<version>.<id>\worker\`), with
+ * worker-internal paths of up to about 110 characters.
+ */
+export interface RunDataRoot {
+  readonly root: string;
+  readonly appData: string;
+  readonly localAppData: string;
+}
+
+export const runDataRootMaxCharacters = 40;
+const runDirectoryPrefix = 'r';
+const runDirectorySuffixLength = 6;
+
+export function requireRunDataParent(value: string | undefined, variable: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    throw new Error(`${variable} must name a short directory such as C:\\cwr: engine workers load only from paths shorter than Windows MAX_PATH.`);
+  }
+  return trimmed;
+}
+
+/** Creates a privately owned run directory under the configured short parent. */
+export async function prepareRunDataRoot(
+  value: string | undefined,
+  variable: string,
+  maxCharacters = runDataRootMaxCharacters,
+  createDataDirectory: (path: string) => Promise<void> = mkdir,
+): Promise<RunDataRoot> {
+  const parent = resolve(requireRunDataParent(value, variable));
+  const prefix = join(parent, runDirectoryPrefix);
+  if (prefix.length + runDirectorySuffixLength > maxCharacters) {
+    throw new Error(
+      `${variable} must leave room for a run directory of at most ${maxCharacters} characters: engine workers load only from paths shorter than Windows MAX_PATH.`,
+    );
+  }
+  const firstCreatedParent = await mkdir(parent, { recursive: true });
+  let root: string | undefined;
+  try {
+    root = await mkdtemp(prefix);
+    const run = {
+      root,
+      appData: join(root, 'app-data'),
+      localAppData: join(root, 'local-app-data'),
+    };
+    await createDataDirectory(run.appData);
+    await createDataDirectory(run.localAppData);
+    return run;
+  } catch (error) {
+    if (root !== undefined) await rm(root, { recursive: true, force: true });
+    // Only the parents this call created, deepest first; never one above them.
+    for (const directory of createdParents(parent, firstCreatedParent)) {
+      if (!(await rmdir(directory).then(() => true, () => false))) break;
+    }
+    throw error;
+  }
+}
+
+/**
+ * The directories `mkdir(parent, { recursive: true })` created, deepest first,
+ * given the first one it reported. On Windows Node reports that one with a
+ * `\\?\` prefix, so paths are compared normalized; when the reported one is not
+ * an ancestor of `parent`, nothing is claimed.
+ */
+export function createdParents(parent: string, firstCreated: string | undefined): string[] {
+  if (!firstCreated) return [];
+  const comparable = (path: string): string => {
+    const plain = resolve(
+      path.startsWith('\\\\?\\UNC\\') ? `\\\\${path.slice(8)}`
+        : path.startsWith('\\\\?\\') ? path.slice(4)
+          : path,
+    );
+    return process.platform === 'win32' ? plain.toLowerCase() : plain;
+  };
+  const first = comparable(firstCreated);
+  const created: string[] = [];
+  for (let directory = resolve(parent); ; directory = dirname(directory)) {
+    created.push(directory);
+    if (comparable(directory) === first) return created;
+    if (dirname(directory) === directory) return [];
+  }
+}
+
+/** The packaged app's environment for a run whose data stays below the run's data root. */
+export function runDataEnvironment(run: RunDataRoot): Readonly<Record<string, string>> {
+  return {
+    APPDATA: run.appData,
+    LOCALAPPDATA: run.localAppData,
+    CAPTURE_ACCEPTANCE_APP_DATA_ROOT: run.appData,
+    // The acceptance build accepts app data only strictly below this root.
+    E2E_ARTIFACT_ROOT: run.root,
+  };
+}
+
+/** Removes the run's data root; true only when nothing of it is left. */
+export async function removeRunDataRoot(run: RunDataRoot): Promise<boolean> {
+  let removed = true;
+  for (const directory of [run.appData, run.localAppData]) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {
+      removed = false;
+    });
+  }
+  // The root goes only when the run's directories were all it held.
+  await rmdir(run.root).catch(() => {
+    removed = false;
+  });
+  const left = await stat(run.root).then(() => true).catch(() => false);
+  return removed && !left;
+}
+
 export interface OwnedDesktopSessionTeardown {
   readonly page: Page | undefined;
   readonly app: ReturnType<typeof spawn>;
   readonly teardownMode: DesktopTeardownMode;
   readonly runtimeSidecarPid: number | undefined;
   readonly sidecarObserved: boolean;
+  readonly earlierInventories?: readonly (OwnedProcessInventory | undefined)[];
   readonly browserClients: readonly CdpBrowser[];
   readonly cdpPort: number;
   readonly webViewData: string;
@@ -734,14 +923,34 @@ export async function finishOwnedDesktopSession(
   options: OwnedDesktopSessionTeardown,
 ): Promise<OwnedDesktopSessionCleanup> {
   const { app, runtimeSidecarPid } = options;
-  const ownedChildren = descendantProcessRecords(app.pid);
-  const ownedSidecars = ownedChildren?.filter(isCaptureSidecarProcess) ?? [];
-  const sidecarObserved = options.sidecarObserved || (ownedChildren !== undefined && ownedSidecars.length > 0);
-  const ownedProcessIds = app.pid
-    ? [app.pid, ...(ownedChildren ?? []).map((process_) => process_.pid), ...(runtimeSidecarPid ? [runtimeSidecarPid] : [])]
-    : undefined;
+  const observedPids = new Set<number>();
+  if (app.pid !== undefined) observedPids.add(app.pid);
+  if (runtimeSidecarPid !== undefined) observedPids.add(runtimeSidecarPid);
+  let sidecarObserved = options.sidecarObserved || runtimeSidecarPid !== undefined;
+  let inventoryFailed = app.pid === undefined;
+  const recordInventory = (inventory: OwnedProcessInventory | undefined): void => {
+    if (!inventory) {
+      inventoryFailed = true;
+      return;
+    }
+    for (const child of inventory.descendants) {
+      observedPids.add(child.pid);
+      if (isCaptureSidecarProcess(child)) sidecarObserved = true;
+    }
+  };
+  for (const inventory of options.earlierInventories ?? []) recordInventory(inventory);
+  const inventory = (): OwnedProcessInventory | undefined => {
+    const snapshot = readOwnedProcessInventory([...observedPids]);
+    recordInventory(snapshot);
+    return snapshot;
+  };
+  const processesGone = (): boolean => {
+    const snapshot = inventory();
+    return ownedProcessCleanupFailure(observedPids, snapshot, false) === undefined;
+  };
+  inventory();
   await finalizeDesktopTeardown(options.page, app, options.teardownMode, options.report);
-  await waitForOwnedTreeGone(app.pid, runtimeSidecarPid);
+  await waitForOwnedTreeGone(processesGone);
   for (const browserClient of [...options.browserClients].reverse()) {
     await withTimeout(browserClient.close(), 5_000, 'Playwright CDP disconnect timed out.').catch(() => undefined);
   }
@@ -749,7 +958,7 @@ export async function finishOwnedDesktopSession(
   // detached. Wait for the native close/Job transition once more before
   // taking final liveness evidence; there is deliberately no JS PID kill
   // fallback when that proof cannot be obtained.
-  await waitForOwnedTreeGone(app.pid, runtimeSidecarPid);
+  await waitForOwnedTreeGone(processesGone);
   let workerMirrorReleased = options.workerMirror === undefined;
   if (options.workerMirror) {
     try {
@@ -764,19 +973,15 @@ export async function finishOwnedDesktopSession(
   });
   if (!(await options.removeRunData())) runData = false;
   // Windows can finish the native Job transition while the final artifact
-  // cleanup is still running. Re-read the observed PIDs at this point so the
+  // cleanup is still running. Take one final inventory at this point so the
   // evidence describes the final state.
   await delay(250);
-  const rootProcessDead = app.pid === undefined || !isProcessAlive(app.pid);
-  const ownedProcessesDead = ownedProcessIds !== undefined &&
-    ownedProcessIds.every((pid) => !isProcessAlive(pid));
-  const runtimeSidecarCleaned = runtimeSidecarPid !== undefined
-    ? !isProcessAlive(runtimeSidecarPid)
-    : sidecarObserved && rootProcessDead && ownedSidecars.every((process_) => !isProcessAlive(process_.pid));
+  const finalInventory = inventory();
+  const processFailure = ownedProcessCleanupFailure(observedPids, finalInventory, inventoryFailed);
+  if (processFailure) options.report(processFailure);
   return {
-    app: rootProcessDead && ownedProcessesDead,
-    sidecar: sidecarObserved && runtimeSidecarCleaned &&
-      ownedSidecars.every((process_) => !isProcessAlive(process_.pid)),
+    app: processFailure === undefined,
+    sidecar: sidecarObserved && processFailure === undefined,
     sidecarObserved,
     cdpPort,
     runData,

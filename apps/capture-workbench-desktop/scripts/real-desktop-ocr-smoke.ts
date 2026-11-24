@@ -12,22 +12,34 @@ import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 //
 // then proves the app, the runtime sidecar, the CDP port, and temporary app data are gone.
 //
+// It runs in one of three modes (packaged-journey-run.ts): acceptance
+// (E2E_ACCEPTANCE_RUN_ID, bound to a runtime candidate, writes the acceptance
+// manifest), baseline review (E2E_BASELINE_REVIEW_RUN_ID, the local release
+// runtime, writes ocr-journey-evidence.json), or, with neither, the local
+// smoke without screenshots. Acceptance and review take the checkpoint
+// screenshots (DESKTOP_OCR_CHECKPOINTS) and keep the app's data in the run's
+// own short data root.
 //
 // Inputs (one per line):
 //   CAPTURE_REAL_DESKTOP_OCR_INPUT: required image source path unless CAPTURE_REAL_DESKTOP_OCR_PDF is set.
 //   CAPTURE_REAL_DESKTOP_OCR_PDF: required PDF source path unless CAPTURE_REAL_DESKTOP_OCR_INPUT is set.
 //   CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS: optional expectations JSON path (defaults to `<input>.expected.json` beside the input).
-//   CAPTURE_REAL_DESKTOP_APP_DATA: required in non-acceptance mode; host-owned app-data directory under %APPDATA%.
-//   APPDATA: required in non-acceptance mode to verify CAPTURE_REAL_DESKTOP_APP_DATA.
+//   CAPTURE_REAL_DESKTOP_APP_DATA: required for the local smoke; host-owned app-data directory under %APPDATA%.
+//   APPDATA: required for the local smoke to verify CAPTURE_REAL_DESKTOP_APP_DATA.
+//   CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT: required in acceptance and review; a short parent like C:\cwr.
+//     The app's unique data directory below it must fit in 40 characters and is removed after the run.
+//   CAPTURE_REAL_DESKTOP_RELEASE_DIR: optional in review; the local release whose worker archives the run serves
+//     (defaults to packages/capture-runtime/dist/release).
 //   CAPTURE_REAL_DESKTOP_EXECUTABLE: optional path to capture-workbench-desktop.exe (defaults to the release target binary).
 //   CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: optional expected OCR device (`directml` or `cpu`; also `--expected-ocr-device`).
 //   CAPTURE_REAL_DESKTOP_TEARDOWN: optional teardown mode (`window-close` default, or `terminate-process`).
 //   E2E_ACCEPTANCE_RUN_ID: optional; when set, enables installed OCR-only acceptance mode with privacy-safe evidence.
+//   E2E_BASELINE_REVIEW_RUN_ID: optional; when set, enables the baseline review mode (excludes E2E_ACCEPTANCE_RUN_ID).
 //   E2E_ACCEPTANCE_EVENT_ROOT: required in acceptance mode; directory for acceptance checkpoint journal events.
 //   E2E_ARTIFACT_ROOT: optional diagnostic log root (required in acceptance mode via createAcceptanceRun).
 //   E2E_ACCEPTANCE_SCOPE_PATH: optional in acceptance mode; path to the acceptance scope ownership file.
 //   E2E_ACCEPTANCE_DIAGNOSTICS: optional; `1` enables stage and OCR lifecycle diagnostic logs.
-//   E2E_ACCEPTANCE_KEEP_APP_DATA: optional; `1` retains acceptance app-data directories after teardown.
+//   E2E_ACCEPTANCE_KEEP_APP_DATA: optional; `1` keeps the run's data root after teardown (its cleanup is then unproven).
 //   CAPTURE_RUNTIME_CANDIDATE_ROOT: required in acceptance mode; path to the staged runtime candidate directory.
 //   CAPTURE_RUNTIME_CANDIDATE_ID: required in acceptance mode; 64-char lowercase SHA-256 of the runtime candidate.
 //   CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN: required in acceptance mode; must be `1`.
@@ -106,8 +118,8 @@ import {
   closeOwnedDesktopRoot,
   deleteCompletedDocument,
   delay,
-  descendantProcessRecords,
   desktopCdpArguments,
+  diagnosticsTextTimeoutMs,
   establishOwnedDesktopLaunch,
   finishOwnedDesktopSession,
   injectCheckpointPrivacyStyle,
@@ -119,12 +131,18 @@ import {
   navigateToHistoryPage,
   readDurableLibraryDetail,
   pinViewportToWindow,
+  prepareRunDataRoot,
   readLatestInstallation,
+  readOwnedProcessInventory,
   readRequirementStatus,
   readRuntimeSidecarPid,
   reattachToPackagedPage,
+  removeRunDataRoot,
+  requireRunDataParent,
   reservePort,
   resolveDesktopTeardownMode,
+  runDataEnvironment,
+  scrubLocalModelEnvironment,
   visibleRuntimeError,
   waitForPortClosed,
   waitUntil,
@@ -132,11 +150,28 @@ import {
   type CdpBrowser,
   type DurableLibraryDetailRecord,
   type OwnedDesktopSessionCleanup,
+  type OwnedProcessInventory,
+  type RunDataRoot,
 } from './packaged-workbench-session.ts';
 import {
   openFilesystemAuthority,
   type FilesystemAuthority,
 } from './filesystem-authority.ts';
+import { comparedCheckpointNames, type JourneyCheckpointComparison } from './packaged-checkpoint-comparison.ts';
+import {
+  checkpointNameOf,
+  packagedJourneyVerdict,
+  packagedWorkerMirrorCleanedUp,
+  resolvePackagedJourneyRun,
+  writePackagedJourneyEvidence,
+  type PackagedJourneyProvenance,
+} from './packaged-journey-run.ts';
+import {
+  readReviewRelease,
+  resolveReviewReleaseDirectory,
+  startReleaseWorkerMirror,
+  type ReleaseWorkerMirror,
+} from './release-worker-mirror.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const outputDirectory = join(workspaceRoot, 'tmp', 'capture-workbench-desktop', 'real-desktop-ocr-smoke');
@@ -153,21 +188,6 @@ const productIdentifier = 'io.github.gx-capture.capture-workbench';
 const maxSourceBytes = 50 * 1024 * 1024;
 const ownedSmokeDocumentPattern =
   /^standalone-real-ocr-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[a-z0-9]+$/iu;
-
-const localModelEnvironmentKeys = [
-  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN',
-  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT',
-  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_SHA256',
-  'CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_IDENTITY',
-] as const;
-
-export function scrubLocalModelEnvironment(
-  environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  const scrubbed = { ...environment };
-  for (const key of localModelEnvironmentKeys) delete scrubbed[key];
-  return scrubbed;
-}
 
 function acceptanceStage(stage: string): void {
   if (process.env.E2E_ACCEPTANCE_DIAGNOSTICS === '1') {
@@ -862,23 +882,35 @@ export function assertRealDesktopSmokeEvidence(
 }
 
 export async function main(options: {
-  readonly checkpoint?: (page: Page, name: string) => Promise<void>;
+  readonly comparison?: JourneyCheckpointComparison;
 } = {}): Promise<void> {
-  const acceptance: AcceptanceRun | undefined = process.env.E2E_ACCEPTANCE_RUN_ID
+  const journeyRun = resolvePackagedJourneyRun(process.env, workspaceRoot);
+  const acceptance: AcceptanceRun | undefined = journeyRun?.mode === 'acceptance'
     ? createAcceptanceRun(process.env, 'capture-workbench', workspaceRoot)
     : undefined;
-  const isolated = acceptance !== undefined;
+  const review = journeyRun?.mode === 'baseline-review' ? journeyRun : undefined;
+  // Acceptance and baseline review keep the app's data in the run's own
+  // short root and take checkpoint screenshots; the local smoke does neither.
+  const isolated = journeyRun !== undefined;
+  const runDataVariable = 'CAPTURE_REAL_DESKTOP_RUN_DATA_ROOT';
+  const runDataParent = isolated ? requireRunDataParent(process.env[runDataVariable], runDataVariable) : undefined;
   const checkpointScreenshots: string[] = [];
+  const comparisons = options.comparison?.outcomes ?? [];
+  const expectedComparisons = comparedCheckpointNames(DESKTOP_OCR_CHECKPOINTS);
   const acceptanceErrors: string[] = [];
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   let acceptanceStatus: 'completed' | 'failed' = 'failed';
   let acceptanceArtifactFailure: Error | undefined;
+  // Set in the finally block, thrown after it, so it never replaces an error in flight.
+  let journeyVerdictFailure: Error | undefined;
   let videoPath: string | undefined;
   let videoStarted = false;
   let sessionCleanup: OwnedDesktopSessionCleanup | undefined;
   let sidecarObserved = false;
+  const earlierInventories: (OwnedProcessInventory | undefined)[] = [];
   let workerMirror: LocalCandidateWorkerMirror | undefined;
+  let reviewMirror: ReleaseWorkerMirror | undefined;
   let localCandidateModelIdentity: LocalCandidateModelIdentity | undefined;
   let workerDownloadRequired = false;
   let runtimeSidecarPid: number | undefined;
@@ -888,17 +920,24 @@ export async function main(options: {
   let ocrExecutionProof: AcceptanceOcrExecutionProofSummary | undefined;
   let verifiedOcrExecutionFailure: AcceptanceOcrExecutionFailureSummary | undefined;
   let authenticatedOcrPreflight: AuthenticatedOcrPreflightObservation | undefined;
+  let observedProvenance: PackagedJourneyProvenance | undefined;
   let uiGpuBeforeImport = false;
   let importedSourceSha256: string | undefined;
   let localScopeOwner: CaptureAcceptanceScopeOwner | undefined;
   let checkpointJournal: AcceptanceCheckpointWriter | undefined;
   let launchedApp: ReturnType<typeof spawn> | undefined;
   let importedDocumentId: string | undefined;
+  let runData: RunDataRoot | undefined;
 
   const observeOwnedSidecar = (): void => {
-    if (!isolated || sidecarObserved) return;
-    const children = descendantProcessRecords(launchedApp?.pid);
-    sidecarObserved = children?.some(isCaptureSidecarProcess) === true;
+    if (!isolated) return;
+    const pid = launchedApp?.pid;
+    const known = new Set(earlierInventories.flatMap((inventory) => inventory?.descendants.map((child) => child.pid) ?? []));
+    if (pid !== undefined) known.add(pid);
+    if (runtimeSidecarPid !== undefined) known.add(runtimeSidecarPid);
+    const inventory = readOwnedProcessInventory([...known]);
+    earlierInventories.push(inventory);
+    sidecarObserved ||= inventory?.descendants.some(isCaptureSidecarProcess) === true;
     void localScopeOwner?.refresh().catch(() => undefined);
   };
 
@@ -947,17 +986,13 @@ export async function main(options: {
     }
     localModelRoot = requiredPath('CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT');
   }
-  const appData = acceptance
-    ? resolve(acceptance.artifactRoot, 'app-data')
-    : requiredPath('CAPTURE_REAL_DESKTOP_APP_DATA');
   await requireRegularFile(sourcePath, sourceVariable);
-  if (acceptance) {
-    await mkdir(appData, { recursive: true });
-  } else {
+  if (!isolated) {
+    const appData = requiredPath('CAPTURE_REAL_DESKTOP_APP_DATA');
     await requireDirectory(appData, 'CAPTURE_REAL_DESKTOP_APP_DATA');
+    assertHostOwnedAppData(appData);
   }
   await requireRegularFile(desktopExecutable, 'CAPTURE_REAL_DESKTOP_EXECUTABLE');
-  assertConfiguredHostAppData(appData, acceptance);
 
   const sourceBytes = await readFile(sourcePath);
   if (sourceBytes.length === 0 || sourceBytes.length > maxSourceBytes) {
@@ -973,30 +1008,37 @@ export async function main(options: {
     });
   }
 
-  const runtimePreflight = await resolveDesktopRuntimePreflight({
-    acceptance: acceptance !== undefined,
-    readStrictStagedRuntime: async () => await observe(assertStagedRuntime('release')) as { digest: string },
-    readOptionalStagedRuntime: async () => await observe(assertStagedRuntime('release')) as { digest: string },
-    resolveInstalledRuntime: async (sourceStagedRuntimeSha256) => {
-      if (!candidateRoot || !candidateId) {
-        throw new Error('Local candidate identity inputs were unavailable.');
-      }
-      return resolveLocalInstalledRuntimeIdentity({
-        installedExecutablePath: desktopExecutable,
-        candidateRoot,
-        candidateId,
-        installerProvenance: await readLocalInstalledRuntimeProvenance(
-          requiredPath('CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE'),
-        ),
-        sourceStagedRuntimeSha256,
+  // A baseline review starts the packaged build's own runtime, which must be
+  // the one of the local release whose worker archives the review serves.
+  const reviewRelease = review
+    ? await readReviewRelease(desktopExecutable, resolveReviewReleaseDirectory(workspaceRoot, process.env))
+    : undefined;
+  const runtimePreflight = review
+    ? undefined
+    : await resolveDesktopRuntimePreflight({
+        acceptance: acceptance !== undefined,
+        readStrictStagedRuntime: async () => await observe(assertStagedRuntime('release')) as { digest: string },
+        readOptionalStagedRuntime: async () => await observe(assertStagedRuntime('release')) as { digest: string },
+        resolveInstalledRuntime: async (sourceStagedRuntimeSha256) => {
+          if (!candidateRoot || !candidateId) {
+            throw new Error('Local candidate identity inputs were unavailable.');
+          }
+          return resolveLocalInstalledRuntimeIdentity({
+            installedExecutablePath: desktopExecutable,
+            candidateRoot,
+            candidateId,
+            installerProvenance: await readLocalInstalledRuntimeProvenance(
+              requiredPath('CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE'),
+            ),
+            sourceStagedRuntimeSha256,
+          });
+        },
       });
-    },
-  });
-  const localInstalledRuntime = runtimePreflight.localInstalledRuntime;
-  const expectedRuntimeSha256 = runtimePreflight.expectedRuntimeSha256;
+  const localInstalledRuntime = runtimePreflight?.localInstalledRuntime;
+  const expectedRuntimeSha256 = reviewRelease?.runtimeSha256 ?? runtimePreflight?.expectedRuntimeSha256 ?? '';
   await mkdir(outputDirectory, { recursive: true });
-  if (acceptance) {
-    await mkdir(acceptance.artifactRoot, { recursive: true });
+  if (journeyRun) {
+    await mkdir(journeyRun.artifactRoot, { recursive: true });
   }
 
   let cdpPort = 0;
@@ -1023,17 +1065,23 @@ export async function main(options: {
       requirementId: 'text-recognition',
     });
   }
-  const mirrorBaseUrl = workerMirror?.baseUrl;
+  if (reviewRelease) {
+    reviewMirror = await startReleaseWorkerMirror({
+      releaseDirectory: reviewRelease.directory,
+      requirementIds: ['text-recognition'],
+    });
+  }
+  const mirrorBaseUrl = workerMirror?.baseUrl ?? reviewMirror?.baseUrl;
+  if (isolated) {
+    runData = await prepareRunDataRoot(runDataParent, runDataVariable);
+  }
   const runId = randomUUID();
   webViewData = join(outputDirectory, `webview2-${runId}`);
-  if (acceptance) {
+  if (acceptance && runData) {
     const scopePath = process.env.E2E_ACCEPTANCE_SCOPE_PATH?.trim();
     const scopePaths: AcceptanceScopePaths = {
       modelPaths: [join(acceptance.artifactRoot, 'model-staging')],
-      appDataPaths: [
-        resolve(acceptance.artifactRoot, 'app-data'),
-        resolve(acceptance.artifactRoot, 'local-app-data'),
-      ],
+      appDataPaths: [runData.appData, runData.localAppData],
       sessionPaths: [webViewData],
     };
     if (scopePath) {
@@ -1047,7 +1095,7 @@ export async function main(options: {
       await localScopeOwner.setPaths(scopePaths);
     }
   }
-  // Exact-artifact acceptance must exercise the user-provided file itself.
+  // Acceptance and baseline review exercise the user-provided file itself.
   // The local smoke keeps its isolated copy so it cannot accidentally import
   // or delete a user's existing library source.
   const sourceName = isolated
@@ -1069,12 +1117,7 @@ export async function main(options: {
       env: {
         ...scrubLocalModelEnvironment(process.env),
         WEBVIEW2_USER_DATA_FOLDER: webViewData,
-        ...(acceptance ? {
-          APPDATA: resolve(acceptance.artifactRoot, 'app-data'),
-          LOCALAPPDATA: resolve(acceptance.artifactRoot, 'local-app-data'),
-          CAPTURE_REAL_DESKTOP_APP_DATA: appData,
-          CAPTURE_ACCEPTANCE_APP_DATA_ROOT: appData,
-        } : {}),
+        ...(runData ? runDataEnvironment(runData) : {}),
         ...(mirrorBaseUrl ? {
           CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
           CAPTURE_SMOKE_WORKER_MIRROR_URL: mirrorBaseUrl,
@@ -1086,6 +1129,8 @@ export async function main(options: {
           CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT: acceptance.artifactRoot,
           CAPTURE_OCR_EXECUTION_RUNTIME_SHA256: expectedRuntimeSha256,
         } : {}),
+        // A review shows the same pages acceptance does, so its screenshots
+        // are the ones acceptance compares.
         ...(isolated && sourceKind === 'pdf'
           ? { CAPTURE_ACCEPTANCE_PDF_PAGE_SCOPE: 'page-1' }
           : {}),
@@ -1117,8 +1162,8 @@ export async function main(options: {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
     page.on('pageerror', (error) => pageErrors.push(error.message));
-    if (acceptance?.recordVideo) {
-      videoPath = join(acceptance.artifactRoot, 'capture-workbench-golden-journey.webm');
+    if (journeyRun?.recordVideo) {
+      videoPath = join(journeyRun.artifactRoot, 'capture-workbench-golden-journey.webm');
       await page.screencast.start({
         path: videoPath,
         size: viewport,
@@ -1223,7 +1268,7 @@ export async function main(options: {
     acceptanceStage('before-runtime-ready-screenshot');
     await ocrCheckpoint(page, '01-runtime-ready');
     acceptanceStage('after-runtime-ready-screenshot');
-    await acceptanceResponsiveLayout(page, acceptance);
+    await assertViewportDoesNotOverflow(page, isolated);
     acceptanceStage('after-responsive-layout');
     await deleteCompletedOwnedSmokeDocuments(page);
     const intake = page.getByTestId('ocr-choose-files');
@@ -1340,17 +1385,19 @@ export async function main(options: {
       );
     }
     const ocrVerification = assertRealOcrOnlyResult(uiResult, ocrExpectation, sourceFixtureName);
-    if (acceptance) {
+    if (isolated) {
       importedSourceSha256 = readImportedSourceSha256(durableLibraryDetail);
       assert.equal(
         importedSourceSha256,
         sourceSha256,
         'Packaged desktop runtime imported bytes must match the supplied source digest.',
       );
-      acceptanceEvidence = {
-        ...acceptanceEvidence,
-        importedSourceSha256,
-      };
+      if (acceptance) {
+        acceptanceEvidence = {
+          ...acceptanceEvidence,
+          importedSourceSha256,
+        };
+      }
       if (sourceKind !== 'pdf' && sourceKind !== 'image') {
         throw new Error('Installed OCR semantic evidence requires an image or PDF fixture.');
       }
@@ -1364,6 +1411,7 @@ export async function main(options: {
 
     const ocr = await assertDiagnosticsMatchesDurableOcr(page, durableLibraryDetail, importedDocumentId);
     assertExpectedOcrDevice(ocr.device, expectedOcrDevice);
+    observedProvenance = { engine: ocr.engine, model: ocr.model, device: ocr.device };
     if (acceptance) {
       if (sourceKind !== 'image' && sourceKind !== 'pdf') {
         throw new Error('Installed OCR semantic evidence requires an image or PDF fixture.');
@@ -1470,7 +1518,6 @@ export async function main(options: {
     await writeFile(evidencePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
     await ocrCheckpoint(page, '04-review-complete');
     acceptanceStatus = 'completed';
-    process.stdout.write('Real standalone desktop OCR smoke completed.\n');
   } catch (error) {
     await checkpointJournal?.failActive().catch(() => undefined);
     if (acceptance && isRealOcrWorkerFailure(error)) {
@@ -1518,7 +1565,7 @@ export async function main(options: {
         acceptanceErrors.push(`video stop failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
-    if (acceptance && videoPath && videoStarted) {
+    if (journeyRun && videoPath && videoStarted) {
       try {
         await assertWebmArtifact(videoPath);
       } catch (error) {
@@ -1539,27 +1586,33 @@ export async function main(options: {
       teardownMode,
       runtimeSidecarPid,
       sidecarObserved,
+      earlierInventories,
       browserClients,
       cdpPort,
       webViewData,
-      workerMirror,
+      workerMirror: workerMirror ?? reviewMirror,
       removeRunData: async () => {
-        if (!acceptance) {
+        if (!runData) {
           return rm(pickerSourcePath, { force: true }).then(() => true, () => false);
         }
-        // Keeping the app data is a diagnostic: its cleanup stays unproven.
-        if (keepRunData) return false;
-        let removed = true;
-        for (const directory of ['app-data', 'local-app-data']) {
-          await rm(resolve(acceptance.artifactRoot, directory), { recursive: true, force: true }).catch(() => {
-            removed = false;
-          });
-        }
-        return removed && !(await stat(appData).then(() => true).catch(() => false));
+        // Keeping the run's data is a diagnostic: its cleanup stays unproven.
+        return keepRunData ? false : removeRunDataRoot(runData);
       },
-      report: (message) => acceptanceErrors.push(message),
+      // A baseline review writes no acceptance manifest, so the reason a
+      // cleanup check failed is printed as well (as the ASR journey does).
+      report: (message) => {
+        acceptanceErrors.push(message);
+        process.stderr.write(`${message}\n`);
+      },
     });
     browser = undefined;
+    if (journeyRun) {
+      const verdict = packagedJourneyVerdict(acceptanceStatus, expectedComparisons, comparisons, packagedCleanup());
+      if (acceptanceStatus === 'completed' && verdict === 'failed') {
+        acceptanceArtifactFailure = new Error('The packaged OCR journey did not prove all screenshot comparisons and cleanup.');
+      }
+      acceptanceStatus = verdict;
+    }
     if (acceptance) {
       const artifacts = [
         ...checkpointScreenshots.map((path) => ({ path, kind: 'screenshot' as const })),
@@ -1605,8 +1658,9 @@ export async function main(options: {
             temporaryAppData: sessionCleanup.runData,
             ownedPids: sessionCleanup.app && sessionCleanup.sidecar,
             ownedListeners: sessionCleanup.cdpPort && sessionCleanup.workerMirrorReleased,
-            ownedWorkers: sessionCleanup.sidecar && sessionCleanup.workerMirrorReleased &&
-              (!workerDownloadRequired || (workerMirror !== undefined && workerMirror.requests > 0)),
+            ownedWorkers: sessionCleanup.sidecar && packagedWorkerMirrorCleanedUp(
+              sessionCleanup.workerMirrorReleased, workerDownloadRequired, workerMirror ?? reviewMirror,
+            ),
           },
           fixture: {
             name: sourceFixtureName,
@@ -1640,41 +1694,93 @@ export async function main(options: {
     }
   }
   if (acceptanceArtifactFailure) throw acceptanceArtifactFailure;
+  } catch (error) {
+    acceptanceStatus = 'failed';
+    throw error;
   } finally {
-    if (launchedApp && !await closeOwnedDesktopRoot(launchedApp)) {
-      acceptanceErrors.push('Exact packaged-app root close remained unproven after the outer retry.');
+    const appClosed = launchedApp !== undefined && await closeOwnedDesktopRoot(launchedApp);
+    if (launchedApp && !appClosed) {
+      const message = 'Exact packaged-app root close remained unproven after the outer retry.';
+      acceptanceErrors.push(message);
+      process.stderr.write(`${message}\n`);
     }
-    if (!sessionCleanup && workerMirror) {
-      await workerMirror.close().catch(() => undefined);
+    if (!sessionCleanup && (workerMirror ?? reviewMirror)) {
+      await (workerMirror ?? reviewMirror)?.close().catch(() => undefined);
     }
     if (webViewData) await rm(webViewData, { recursive: true, force: true }).catch(() => undefined);
     if (cdpPort) await waitForPortClosed(cdpPort).catch(() => undefined);
     if (!isolated && pickerSourcePathForCleanup) await rm(pickerSourcePathForCleanup, { force: true }).catch(() => undefined);
+    // A run that failed before its session started still leaves nothing behind.
+    if (runData && !sessionCleanup && process.env.E2E_ACCEPTANCE_KEEP_APP_DATA !== '1') {
+      await removeRunDataRoot(runData).catch(() => false);
+    }
+    if (journeyRun) {
+      const cleanup = { ...packagedCleanup(), app: appClosed && sessionCleanup?.app === true };
+      const verdict = packagedJourneyVerdict(acceptanceStatus, expectedComparisons, comparisons, cleanup);
+      await writePackagedJourneyEvidence(journeyRun.artifactRoot, {
+        evidenceKind: 'packaged-real-engine-journey',
+        journey: 'ocr',
+        mode: journeyRun.mode,
+        runId: journeyRun.runId,
+        status: verdict,
+        runtimeSha256: expectedRuntimeSha256,
+        ...(candidateId === undefined ? {} : { candidateId }),
+        sourceSha256,
+        screenshots: checkpointScreenshots.map((path) => checkpointNameOf(journeyRun.artifactRoot, path)),
+        comparisons,
+        ...(observedProvenance === undefined ? {} : { provenance: observedProvenance }),
+        cleanup,
+      });
+      if (verdict === 'failed' && acceptanceStatus === 'completed') {
+        journeyVerdictFailure = new Error(
+          'The packaged OCR journey did not prove all screenshot comparisons and cleanup.',
+        );
+      }
+    }
+  }
+  if (journeyVerdictFailure) throw journeyVerdictFailure;
+  process.stdout.write('Real standalone desktop OCR smoke completed.\n');
+
+  function packagedCleanup() {
+    return {
+      app: sessionCleanup?.app === true,
+      sidecar: sessionCleanup?.sidecar === true,
+      cdpPort: sessionCleanup?.cdpPort === true,
+      runData: sessionCleanup?.runData === true,
+      workerMirror: packagedWorkerMirrorCleanedUp(
+        sessionCleanup?.workerMirrorReleased === true, workerDownloadRequired, workerMirror ?? reviewMirror,
+      ),
+    };
   }
 
-  async function ocrCheckpoint(checkpointPage: Page, name: DesktopOcrAcceptanceCheckpointName): Promise<void> {
-    await checkpointScreenshot(checkpointPage, acceptance?.artifactRoot, checkpointScreenshots, name, options.checkpoint);
+  async function ocrCheckpoint(checkpointPage: Page, name: DesktopOcrCheckpointName): Promise<void> {
+    await checkpointScreenshot(checkpointPage, journeyRun?.artifactRoot, checkpointScreenshots, name, options.comparison?.capture);
   }
 }
 
-export const DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS = [
-  '01-consent-required',
-  '01-core-install-started',
-  '01-core-install-retry',
-  '01-runtime-ready',
-  '02-document-processing',
-  '03-ocr-checkpoint',
-  '04-review-complete',
+/**
+ * The OCR journey's screenshots, in order. A compared checkpoint is matched
+ * with its approved baseline; the others show moving progress and are saved
+ * for the reviewer only.
+ */
+export const DESKTOP_OCR_CHECKPOINTS = [
+  { name: '01-consent-required', compared: true },
+  { name: '01-core-install-started', compared: false },
+  { name: '01-core-install-retry', compared: false },
+  { name: '01-runtime-ready', compared: true },
+  { name: '02-document-processing', compared: false },
+  { name: '03-ocr-checkpoint', compared: true },
+  { name: '04-review-complete', compared: true },
 ] as const;
 
-export type DesktopOcrAcceptanceCheckpointName =
-  (typeof DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS)[number];
+export type DesktopOcrCheckpointName =
+  (typeof DESKTOP_OCR_CHECKPOINTS)[number]['name'];
 
-async function acceptanceResponsiveLayout(
+async function assertViewportDoesNotOverflow(
   page: Page,
-  acceptance: AcceptanceRun | undefined,
+  enabled: boolean,
 ): Promise<void> {
-  if (!acceptance) return;
+  if (!enabled) return;
   // A packaged Tauri WebView is not a Playwright-owned browser context:
   // setViewportSize() emulates a CSS viewport and can block WebView2 instead
   // of resizing the native window. Keep the acceptance proof programmatic and
@@ -2281,14 +2387,7 @@ export async function waitForDesktopOcrCompletion(
   throw new Error('Standalone desktop OCR did not reach completion.');
 }
 
-function assertConfiguredHostAppData(appData: string, acceptance?: AcceptanceRun): void {
-  if (acceptance) {
-    const expected = resolve(acceptance.artifactRoot, 'app-data');
-    if (resolve(appData).toLowerCase() !== expected.toLowerCase()) {
-      throw new Error('Acceptance Capture app-data must be the run-owned product directory.');
-    }
-    return;
-  }
+function assertHostOwnedAppData(appData: string): void {
   const roaming = process.env.APPDATA;
   if (!roaming) {
     throw new Error('APPDATA is required to verify the Tauri host-owned app-data location.');
@@ -2790,7 +2889,11 @@ export async function runtimeSetupDiagnostics(page: Page): Promise<string> {
       status: element.getAttribute('data-status'),
       text: element.textContent?.trim(),
     }))).catch(() => []);
-    const runtimeError = await page.getByTestId('diagnostics-runtime-error').textContent().catch(() => undefined);
+    // The error element is normally absent, and the callers build their
+    // messages before they wait, so this read must be bounded.
+    const runtimeError = await page.getByTestId('diagnostics-runtime-error')
+      .textContent({ timeout: diagnosticsTextTimeoutMs })
+      .catch(() => undefined);
     let url = 'unknown';
     try {
       url = page.url();

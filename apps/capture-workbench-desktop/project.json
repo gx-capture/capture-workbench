@@ -403,6 +403,34 @@
         "parallel": false
       }
     },
+    "review-packaged-real-screenshots": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck-scripts"],
+      "metadata": {
+        "description": "Manual baseline review, never release evidence and no release requires it: the real-engine OCR and ASR journeys on the packaged Desktop App (the non-installed build-acceptance binary) with a local release runtime and no runtime candidate. It stages and serves workers from the same release directory, builds build-acceptance, opens the app's window, drives the native picker and installs real engines. Failed comparisons and missing baselines yield approval images. Pass --journey ocr or --journey asr to run one journey. Excluded from CI."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/playwright/capture-workbench-review"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/packaged-real-journeys.ts --mode baseline-review"
+      }
+    },
+    "acceptance-packaged-real-asr": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck-scripts"],
+      "metadata": {
+        "description": "Manual release acceptance (#163): the real-engine ASR journey on the packaged Desktop App (the non-installed build-acceptance binary, built with the runtime candidate's runtime staged) bound to a runtime candidate: speech installed through the loopback worker mirror, a recording done and shown with its provenance, Cancel and Start again, removal on Settings › Engines, deletion in History and cleanup proof, with compared screenshots. It opens the app's window and drives the native picker. Excluded from CI."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/playwright/capture-workbench"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/packaged-real-journeys.ts --mode acceptance --journey asr"
+      }
+    },
     "build-practical-installer": {
       "cache": false,
       "executor": "nx:run-commands",

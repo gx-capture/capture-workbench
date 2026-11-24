@@ -217,7 +217,7 @@
           data-testid="history-delete-dialog"
         >
           <h2 brnAlertDialogTitle class="text-lg font-semibold">{{ m().confirmDelete }}</h2>
-          <p brnAlertDialogDescription class="mt-2 text-sm text-muted-foreground">{{ pending.fileName }}</p>
+          <p brnAlertDialogDescription class="mt-2 text-sm text-muted-foreground" data-testid="history-delete-filename">{{ pending.fileName }}</p>
           <div class="mt-6 flex justify-end gap-2">
             <button
               hlmBtn

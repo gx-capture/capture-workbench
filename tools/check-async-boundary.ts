@@ -195,7 +195,17 @@ function exceptionReason(relativePath) {
     // they share: Playwright page steps, the owned app process, the loopback
     // worker mirror and the run's files.
     relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-desktop-asr-journey.ts' ||
+    relativePath ===
       'apps/capture-workbench-desktop/scripts/packaged-workbench-session.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-journey-run.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-checkpoint-comparison.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/packaged-real-journeys.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/release-worker-mirror.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts' ||
     relativePath ===

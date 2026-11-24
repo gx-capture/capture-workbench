@@ -36,7 +36,6 @@ import {
   resolveLocalInstalledRuntimeIdentity,
   runOcrFirstRunSetup,
   runtimeSetupDiagnostics,
-  scrubLocalModelEnvironment,
   safeTerminalDesktopOcrFailure,
   verifyInstalledOcrExecutionProof,
   waitForDesktopOcrCompletion,
@@ -52,6 +51,7 @@ import {
   requestDesktopTeardown,
   realDesktopTeardownTimeoutMs,
   resolveDesktopTeardownMode,
+  scrubLocalModelEnvironment,
   visibleRuntimeError,
 } from './packaged-workbench-session.ts';
 
@@ -1824,7 +1824,7 @@ test('real desktop teardown rejects unknown modes instead of selecting a PID fal
   );
 });
 
-test('OCR screenshot evidence masks whole privacy-sensitive result panes and metadata', async () => {
+test('checkpoint screenshots mask private OCR and ASR content and values that change between runs', async () => {
   const selectors: string[] = [];
   const testIds: string[] = [];
   let capturedOptions: { mask?: unknown[] } | undefined;
@@ -1872,8 +1872,19 @@ test('OCR screenshot evidence masks whole privacy-sensitive result panes and met
       { kind: 'testId', testId: 'diagnostics-document-filename' },
       { kind: 'locator', selector: '[data-testid="ocr-queue-row"] td:first-child' },
       { kind: 'locator', selector: '[data-testid="history-row"] td:nth-child(2)' },
+      { kind: 'locator', selector: '[data-testid="history-row"] td:nth-child(5)' },
       { kind: 'testId', testId: 'result-source-pane' },
       { kind: 'testId', testId: 'result-text-pane' },
+      { kind: 'locator', selector: '[data-testid="asr-queue-row"] td:first-child' },
+      { kind: 'testId', testId: 'asr-row-duration' },
+      { kind: 'locator', selector: '[data-testid="asr-live-card"] h2' },
+      { kind: 'testId', testId: 'asr-live-heard' },
+      { kind: 'testId', testId: 'streaming-partial' },
+      { kind: 'testId', testId: 'asr-live-line' },
+      { kind: 'testId', testId: 'result-player' },
+      { kind: 'testId', testId: 'result-transcript-table' },
+      { kind: 'testId', testId: 'result-speaker-name' },
+      { kind: 'testId', testId: 'result-speaker-input' },
     ],
   );
   assert.deepEqual(screenshots, [join('C:\\artifacts', '01-consent-required.png')]);
@@ -2451,6 +2462,58 @@ test('runtime error and diagnostics helpers inspect runtime-status and engine ro
   } as unknown as Page;
   assert.equal(await visibleRuntimeError(brokenPage), undefined);
   assert.equal(await runtimeSetupDiagnostics(brokenPage), 'diagnostics-unavailable');
+});
+
+test('reading the runtime error text is bounded when no error element exists', async () => {
+  // Like Playwright Test without an action timeout: textContent on an absent
+  // element waits until its own timeout, and forever without one (0 included).
+  const requestedTimeouts: Array<number | undefined> = [];
+  const absentText = (options?: { timeout?: number }) => {
+    requestedTimeouts.push(options?.timeout);
+    return !options?.timeout
+      ? new Promise<never>(() => undefined)
+      : Promise.reject(new Error(`locator.textContent: Timeout ${options.timeout}ms exceeded.`));
+  };
+  const page = (runtimeState: string) => ({
+    url: () => 'http://tauri.localhost/ocr',
+    getByTestId: (id: string) => {
+      if (id === 'diagnostics-runtime-error') {
+        return {
+          waitFor: async () => { throw new Error('not visible'); },
+          isVisible: async () => false,
+          textContent: absentText,
+        };
+      }
+      if (id === 'runtime-status') {
+        return { getAttribute: async () => runtimeState, click: async () => undefined };
+      }
+      if (id === 'engine-row') return { evaluateAll: async () => [] };
+      return { isVisible: async () => false };
+    },
+  } as unknown as Page);
+  const settled = async <T>(work: Promise<T>): Promise<T | 'unbounded'> => {
+    let guard: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<'unbounded'>((resolve) => { guard = setTimeout(() => resolve('unbounded'), 2_000); }),
+      ]);
+    } finally {
+      clearTimeout(guard);
+    }
+  };
+
+  const diagnostics = await settled(runtimeSetupDiagnostics(page('starting')));
+  assert.notEqual(diagnostics, 'unbounded');
+  assert.equal((JSON.parse(diagnostics as string) as { runtimeError?: string }).runtimeError, undefined);
+  assert.equal(
+    await settled(visibleRuntimeError(page('error'))),
+    'Capture Workbench runtime entered an error state: no detail was rendered.',
+  );
+  assert.ok(requestedTimeouts.length > 0);
+  for (const timeout of requestedTimeouts) {
+    assert.ok(timeout !== undefined && timeout > 0 && timeout <= 1_000, `text read timeout ${timeout} is not a short bound`);
+  }
 });
 
 test('the viewport is pinned to the size the native window really has', async () => {
