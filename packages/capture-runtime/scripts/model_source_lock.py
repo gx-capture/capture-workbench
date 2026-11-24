@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-TEXT_RECOGNITION_SOURCE_COMMIT = "d714256fc188df67702f0e7d027d2098d4e91054"
+TEXT_RECOGNITION_SOURCE_COMMIT = "76e8df09f2d6a69b31c11a9466bc8326aee32440"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Release CI invokes this script with --no-project before installing the runtime.
 # Read the repository's declared owner without importing the runtime package.
