@@ -87,7 +87,7 @@ def record_worker_failure(
         **{
             "class": _allowed(failure_class, _FAILURE_CLASSES),
             "exit": "none" if exit_code is None else _integer(exit_code),
-            "cause": _matching(type(cause).__name__, _EXCEPTION_TYPE),
+            "cause": "none" if cause is None else _matching(type(cause).__name__, _EXCEPTION_TYPE),
             "stages": _worker_stages(stages),
             "elapsedMs": _integer(elapsed_ms),
         },

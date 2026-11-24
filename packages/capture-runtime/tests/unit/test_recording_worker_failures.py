@@ -145,24 +145,6 @@ def test_a_worker_failure_fails_the_capture_without_retry_and_logs_only_safe_nam
     assert "private-user" not in log
 
 
-def test_progressive_worker_exit_records_diagnostics(tmp_path: Path) -> None:
-    failure = CaptureProcessingError("Worker stopped.", code="progressive_worker_exit")
-    failure.__cause__ = _worker_error("speech-model-load-cpu-failed-unknown")
-    handler = configure_diagnostic_log(tmp_path)
-    assert handler is not None
-    try:
-        error = _persisted_failure(tmp_path, failure)
-    finally:
-        handler.close()
-    assert error.code == "progressive_worker_exit"
-    log = Path(handler.baseFilename).read_text(encoding="utf-8")
-    assert (
-        "worker-failure requirement=speech-recognition code=progressive_worker_exit "
-        "class=worker exit=none cause=WorkerExecutionError "
-        "stages=speech-model-load-cpu-failed-unknown elapsedMs=0"
-    ) in log
-
-
 def test_an_unexpected_extraction_error_is_extraction_failed_and_logs_its_class(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

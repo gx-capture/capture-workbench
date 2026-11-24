@@ -332,7 +332,7 @@ def test_session_worker_close_preserves_audio_if_process_does_not_exit(tmp_path:
     async def scenario() -> None:
         process = Process()
         worker = _SessionWorker(
-            process, asyncio.create_task(asyncio.sleep(0, result="")), temp_dir=directory
+            process, asyncio.create_task(asyncio.sleep(0, result=())), temp_dir=directory
         )
         await worker.close()
         assert process.terminated and process.killed
@@ -662,6 +662,111 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
     log = Path(handler.baseFilename).read_text(encoding="utf-8")
     assert log.count(" capture-ended ") == 1
     assert "capture-ended kind=recording outcome=completed code=none stage=none elapsedMs=0" in log
+
+
+@pytest.mark.parametrize("exit_code", [7, 0xC0000005])
+def test_progressive_worker_exit_records_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int
+) -> None:
+    class Decoder:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode = None
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] == SessionFrameType.FINISH.value.encode():
+                self.stderr.feed_data(
+                    b"capture-worker-stage:speech-model-load-cpu-failed-unknown\n"
+                    b"capture-worker-stage:speech-output-empty\n"
+                    b"Bearer fixture-secret-token\n"
+                )
+                self.stderr.feed_eof()
+                self.stdout.feed_eof()
+
+        async def drain(self) -> None:
+            pass
+
+        async def wait(self) -> int:
+            self.returncode = exit_code
+            return exit_code
+
+    async def spawn(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        operation = service.start_capture_use_case.execute(
+            StartCapture(
+                client_request_id="progressive-worker-exit",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+            )
+        )
+        try:
+            await service._tasks[operation.capture_id]
+            failed = service.get_capture(operation.capture_id)
+            assert failed.error is not None
+            assert failed.error.code == "progressive_worker_finish_failed"
+            assert failed.error.message == (
+                "Progressive speech recognition worker failed while finishing the session."
+            )
+            assert failed.error.retryable
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" worker-failure ") == 1
+    assert (
+        "worker-failure requirement=speech-recognition code=progressive_worker_finish_failed "
+        f"class=exit-before-response exit={exit_code} cause=IncompleteReadError "
+        "stages=speech-model-load-cpu-failed-unknown>speech-output-empty elapsedMs=0"
+    ) in log
+    assert "fixture-secret-token" not in log
 
 
 def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> None:

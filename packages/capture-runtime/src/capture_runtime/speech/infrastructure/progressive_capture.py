@@ -66,7 +66,11 @@ from capture_runtime.speech.infrastructure.speech_session import (
     encode_credit,
 )
 from capture_runtime.worker_client import InstalledEngine
-from capture_runtime.worker_process import subprocess_path
+from capture_runtime.worker_process import (
+    WorkerFailureClass,
+    WorkerFailureDiagnostics,
+    subprocess_path,
+)
 from capture_runtime.worker_stage_policy import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WORKER_STAGE_PATTERN,
@@ -74,6 +78,32 @@ from capture_runtime.worker_stage_policy import (
 )
 
 EventSink = Callable[[tuple[ProgressiveSessionEvent, ...], PartialCapture | None], Awaitable[None]]
+
+_WORKER_FAILURE_CLASSES: dict[str, WorkerFailureClass] = {
+    "progressive_stall": "timeout",
+    "progressive_worker_event_invalid": "protocol",
+    "progressive_worker_exit": "exit-before-response",
+    "progressive_worker_finish_failed": "worker",
+    "progressive_worker_frame_read_failed": "protocol",
+    "progressive_worker_input_failed": "worker",
+    "progressive_worker_start_failed": "worker",
+    "session_failed": "worker",
+}
+
+
+class ProgressiveWorkerFailure(CaptureProcessingError):
+    """A capture failure with private diagnostics from its progressive worker."""
+
+    def __init__(
+        self, failure: CaptureProcessingError, diagnostics: WorkerFailureDiagnostics
+    ) -> None:
+        super().__init__(
+            failure.args[0],
+            code=failure.code,
+            retryable=failure.retryable,
+            stage=failure.stage,
+        )
+        self.diagnostics = diagnostics
 
 
 @dataclass(slots=True)
@@ -313,9 +343,12 @@ class ProgressiveCaptureProcessor:
         except CaptureProcessingError:
             raise
         except Exception as error:
-            raise CaptureProcessingError(
+            startup_failure = CaptureProcessingError(
                 "Progressive speech recognition worker could not be started.",
                 code="progressive_worker_start_failed",
+            )
+            raise ProgressiveWorkerFailure(
+                startup_failure, WorkerFailureDiagnostics(stage_sequence=(), failure_class="worker")
             ) from error
         reusable = False
         try:
@@ -394,6 +427,18 @@ class ProgressiveCaptureProcessor:
             raw = state.raw()
             reusable = not cancellation.is_set()
             return raw
+        except CaptureProcessingError as failure:
+            cause = failure.__cause__
+            worker_error = cause if isinstance(cause, CaptureProcessingError) else failure
+            failure_class = _WORKER_FAILURE_CLASSES.get(
+                worker_error.code, _WORKER_FAILURE_CLASSES.get(failure.code)
+            )
+            if failure_class is None:
+                raise
+            if isinstance(cause, asyncio.IncompleteReadError):
+                failure_class = "exit-before-response"
+            diagnostics = await worker.failure_diagnostics(failure_class)
+            raise ProgressiveWorkerFailure(failure, diagnostics) from cause
         finally:
             if reusable:
                 await self._park(_worker_key(engine, self.config), worker)
@@ -464,9 +509,10 @@ class _SessionWorker:
     def __init__(
         self,
         process: asyncio.subprocess.Process,
-        stderr_task: asyncio.Task[str],
+        stderr_task: asyncio.Task[tuple[str, ...]],
         *,
         temp_dir: Path | None = None,
+        stderr_tail: bytearray | None = None,
     ) -> None:
         self.process = process
         assert process.stdin is not None
@@ -474,6 +520,7 @@ class _SessionWorker:
         self.stdin = process.stdin
         self.stdout = process.stdout
         self._stderr_task = stderr_task
+        self._stderr_tail = stderr_tail
         self._temp_dir = temp_dir
         self._closed = False
         # The worker's last stage; the runtime's own heartbeats repeat it.
@@ -531,7 +578,13 @@ class _SessionWorker:
             await asyncio.to_thread(_remove_session_temp_dir, temp_dir)
             raise
         assert process.stderr is not None
-        return cls(process, asyncio.create_task(_drain_stderr(process.stderr)), temp_dir=temp_dir)
+        stderr_tail = bytearray()
+        return cls(
+            process,
+            asyncio.create_task(_drain_stderr(process.stderr, stderr_tail)),
+            temp_dir=temp_dir,
+            stderr_tail=stderr_tail,
+        )
 
     async def begin(
         self, *, capture_id: str, source: CaptureSource, spoken_language: str | None = None
@@ -663,7 +716,7 @@ class _SessionWorker:
                     try:
                         event = _failure_event(payload)
                         if event.error is not None and event.error.code == "session_failed":
-                            stage_sequence = await self._worker_stage_sequence()
+                            stage_sequence = ">".join(await self._worker_stage_sequence())
                             if stage_sequence:
                                 event = ProgressiveSessionEvent(
                                     event.event_type,
@@ -715,7 +768,7 @@ class _SessionWorker:
             self.stdin.write(payload)
             await self.stdin.drain()
         except (BrokenPipeError, ConnectionError, OSError) as error:
-            stage_sequence = await self._worker_stage_sequence()
+            stage_sequence = ">".join(await self._worker_stage_sequence())
             message = (
                 "Source extraction worker failed."
                 if not stage_sequence
@@ -727,15 +780,31 @@ class _SessionWorker:
                 stage="extraction",
             ) from error
 
-    async def _worker_stage_sequence(self) -> str:
+    async def failure_diagnostics(
+        self, failure_class: WorkerFailureClass
+    ) -> WorkerFailureDiagnostics:
+        stages = await self._worker_stage_sequence()
+        if not stages and self._stderr_tail:
+            stages = _stderr_stages(self._stderr_tail)
+        if failure_class == "exit-before-response" and self.process.returncode is None:
+            # Pipe EOF may arrive before the subprocess transport reports exit.
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self.process.wait(), timeout=0.2)
+        return WorkerFailureDiagnostics(
+            stage_sequence=stages,
+            failure_class=failure_class,
+            exit_code=self.process.returncode,
+        )
+
+    async def _worker_stage_sequence(self) -> tuple[str, ...]:
         if not self._stderr_task.done():
             with suppress(asyncio.TimeoutError, asyncio.CancelledError):
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=0.2)
         if not self._stderr_task.done() or self._stderr_task.cancelled():
-            return ""
+            return ()
         with suppress(Exception):
             return self._stderr_task.result()
-        return ""
+        return ()
 
     async def close(self) -> None:
         if self._closed:
@@ -759,17 +828,24 @@ class _SessionWorker:
             await asyncio.to_thread(_remove_session_temp_dir, self._temp_dir)
 
 
-async def _drain_stderr(stream: asyncio.StreamReader) -> str:
-    captured = bytearray()
+async def _drain_stderr(
+    stream: asyncio.StreamReader, captured: bytearray | None = None
+) -> tuple[str, ...]:
+    if captured is None:
+        captured = bytearray()
     while chunk := await stream.read(16 * 1024):
         captured.extend(chunk)
         if len(captured) > 64 * 1024:
             del captured[: -64 * 1024]
+    return _stderr_stages(captured)
+
+
+def _stderr_stages(captured: bytearray) -> tuple[str, ...]:
     stages = sanitize_worker_stage_sequence(
         WORKER_STAGE_PATTERN.findall(captured.decode("utf-8", errors="replace")),
         reject_unknown=False,
     )
-    return ">".join(stages[-MAX_WORKER_DIAGNOSTIC_STAGES:])
+    return stages[-MAX_WORKER_DIAGNOSTIC_STAGES:]
 
 
 def _segment_event(payload: bytes) -> ProgressiveSessionEvent:

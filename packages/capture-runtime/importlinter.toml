@@ -235,6 +235,7 @@ ignore_imports = [
 name = "Worker kernel does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
+  "capture_runtime.diagnostic_log",
   "capture_runtime.worker_contracts",
   "capture_runtime.worker_process",
   "capture_runtime.worker_stage_policy",
@@ -755,6 +756,7 @@ name = "Only the web layer imports FastAPI"
 type = "forbidden"
 # List the non-web structuring layers so structuring.api can import FastAPI.
 source_modules = [
+  "capture_runtime.diagnostic_log",
   "capture_runtime.config",
   "capture_runtime.constants",
   "capture_runtime.clock",

@@ -14,13 +14,13 @@ from capture_runtime.diagnostic_log import (
 from capture_runtime.worker_process import WorkerFailureClass
 
 
-def _worker_failure() -> None:
+def _worker_failure(cause: BaseException | None = None) -> None:
     record_worker_failure(
         requirement="speech-recognition",
         code="speech_recognition_worker_failed",
         failure_class="exit-nonzero",
         exit_code=7,
-        cause=RuntimeError(r"C:\Users\example\private.wav Bearer fixture-secret-token"),
+        cause=cause,
         stages=("speech-model-load-cpu-failed-unknown",),
         elapsed_ms=310,
     )
@@ -30,7 +30,7 @@ def test_worker_failure_is_one_allowlisted_line(tmp_path: Path) -> None:
     handler = configure_diagnostic_log(tmp_path)
     assert handler is not None
     try:
-        _worker_failure()
+        _worker_failure(RuntimeError(r"C:\Users\example\private.wav Bearer fixture-secret-token"))
     finally:
         handler.close()
     text = Path(handler.baseFilename).read_text(encoding="utf-8")
@@ -109,9 +109,12 @@ def test_configuration_is_idempotent(tmp_path: Path) -> None:
     try:
         assert configure_diagnostic_log(tmp_path) is handler
         assert logging.getLogger("capture_runtime.diagnostics").handlers == [handler]
+        _worker_failure()
     finally:
         handler.close()
-    assert Path(handler.baseFilename).read_text(encoding="utf-8").count(" runtime-start ") == 1
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" runtime-start ") == 1
+    assert " cause=none " in log
 
 
 def test_write_error_is_silent(tmp_path: Path, capsys) -> None:

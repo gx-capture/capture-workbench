@@ -287,4 +287,4 @@ def test_progressive_stage_drain_uses_the_shared_policy_without_leaking_markers(
         async def read(self, _size: int) -> bytes:
             return self._chunks.pop(0)
 
-    assert asyncio.run(_drain_stderr(Stderr())) == "speech-output-empty"
+    assert asyncio.run(_drain_stderr(Stderr())) == ("speech-output-empty",)

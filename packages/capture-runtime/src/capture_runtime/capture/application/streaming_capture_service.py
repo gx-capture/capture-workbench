@@ -85,6 +85,7 @@ from capture_runtime.speech.infrastructure.progressive_audio import (
 )
 from capture_runtime.speech.infrastructure.progressive_capture import (
     ProgressiveCaptureProcessor,
+    ProgressiveWorkerFailure,
 )
 from capture_runtime.speech.infrastructure.progressive_decoder import (
     ProgressiveDecoderError,
@@ -98,24 +99,9 @@ from capture_runtime.structuring.infrastructure.structuring import (
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
 )
-from capture_runtime.worker_process import (
-    WorkerExecutionError,
-    WorkerFailureClass,
-    complete_worker_cleanup,
-)
+from capture_runtime.worker_process import complete_worker_cleanup
 
 _LOGGER = logging.getLogger(__name__)
-
-_PROGRESSIVE_WORKER_FAILURE_CLASSES: dict[str, WorkerFailureClass] = {
-    "progressive_stall": "timeout",
-    "progressive_worker_event_invalid": "protocol",
-    "progressive_worker_exit": "exit-before-response",
-    "progressive_worker_finish_failed": "worker",
-    "progressive_worker_frame_read_failed": "protocol",
-    "progressive_worker_input_failed": "worker",
-    "progressive_worker_start_failed": "worker",
-    "session_failed": "worker",
-}
 
 MAX_EVENT_SEGMENTS = 1_000
 # Advertised in the readiness capabilities: the event stream sends a heartbeat
@@ -614,9 +600,8 @@ class StreamingCaptureService:
                     "The capture was interrupted.",
                 )
         except CaptureProcessingError as error:
-            failure_class = _PROGRESSIVE_WORKER_FAILURE_CLASSES.get(error.code)
-            if failure_class is not None and not cancellation.is_set():
-                self._record_progressive_worker_failure(operation, error, failure_class)
+            if isinstance(error, ProgressiveWorkerFailure) and not cancellation.is_set():
+                self._record_progressive_worker_failure(operation, error)
             self._fail(
                 capture_id,
                 error.code,
@@ -946,20 +931,16 @@ class StreamingCaptureService:
         self._execution_evidence_sink.record(capture_id, source_role, proof)
 
     def _record_progressive_worker_failure(
-        self,
-        operation: CaptureOperation,
-        error: CaptureProcessingError,
-        failure_class: WorkerFailureClass,
+        self, operation: CaptureOperation, error: ProgressiveWorkerFailure
     ) -> None:
-        cause = error.__cause__
-        diagnostics = cause.diagnostics if isinstance(cause, WorkerExecutionError) else None
+        diagnostics = error.diagnostics
         record_worker_failure(
             requirement=SPEECH_RECOGNITION_REQUIREMENT_ID,
             code=error.code,
-            failure_class=diagnostics.failure_class if diagnostics else failure_class,
-            exit_code=diagnostics.exit_code if diagnostics else None,
-            cause=cause or error,
-            stages=diagnostics.stage_sequence if diagnostics else (),
+            failure_class=diagnostics.failure_class,
+            exit_code=diagnostics.exit_code,
+            cause=error.__cause__,
+            stages=diagnostics.stage_sequence,
             elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
         )
 
