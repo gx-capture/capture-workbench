@@ -34,10 +34,11 @@ interface ClippyFinding {
 }
 
 // Paths whose change can alter Clippy's findings: Rust sources, manifests and
-// lockfiles, Clippy or toolchain configuration, the gate itself, and the CI
+// lockfiles, Cargo, Clippy or toolchain configuration (Cargo's config sets the
+// rustflags and wrapper of the Clippy run), the gate itself, and the CI
 // workflow that decides when Clippy runs.
 const RUST_FINDING_INPUT =
-  /\.rs$|(^|\/)(Cargo\.toml|Cargo\.lock|\.?clippy\.toml|rust-toolchain[^/]*)$|^tools\/code-complexity-[^/]*\.ts$|^tools\/quality\/code-complexity[^/]*\.json$|^\.github\/workflows\/ci\.yml$/iu;
+  /\.rs$|(^|\/)(Cargo\.toml|Cargo\.lock|\.cargo\/config(\.toml)?|\.?clippy\.toml|rust-toolchain[^/]*)$|^tools\/code-complexity-[^/]*\.ts$|^tools\/quality\/code-complexity[^/]*\.json$|^\.github\/workflows\/ci\.yml$/iu;
 
 /** Whether a change to these repository paths can alter the Clippy findings. */
 export function changesRustFindings(paths: string[]): boolean {
@@ -112,15 +113,23 @@ interface Scope {
   end: number;
 }
 
+// In a header's angle brackets, a `{` after one of these opens a const-generic
+// argument (`Foo<{ N }>`, `Foo<A, { N }>`, `Trait<C = { N }>`); any other `{` is the body.
+const GENERIC_ARGUMENT_START = new Set(['<', ',', '=']);
+
 // Resolve names only. Clippy remains the source of every measurement.
 // Skip literals, comments and parenthesized/bracketed signature contents
-// when associating a declaration with its body.
+// when associating a declaration with its body. Comments, literals, `->` and
+// `=>` are single tokens, so only a header's own `<` and `>` count as angles.
 function rustScopes(source: string): Scope[] {
-  const tokens = /\/\/[^\n]*|\/\*|(?:br|cr|r)(#*)"(?:[\s\S]*?)"\1|"(?:\\[\s\S]|[^"\\])*"|'(?:\\(?:u\{[\da-f_]+\}|x[\da-f]{2}|.)|[^'\\\r\n])'|(?:r#)?[a-zA-Z_]\w*|[{}()[\];]/giu;
+  const tokens = /\/\/[^\n]*|\/\*|(?:br|cr|r)(#*)"(?:[\s\S]*?)"\1|"(?:\\[\s\S]|[^"\\])*"|'(?:\\(?:u\{[\da-f_]+\}|x[\da-f]{2}|.)|[^'\\\r\n])'|(?:r#)?[a-zA-Z_]\w*|->|=>|[{}()[\];<>,=]/giu;
   const scopes: Scope[] = [];
   const braces: (Scope | undefined)[] = [];
   const brackets: string[] = [];
-  let pending: { kind: string; start: number; header: number; depth: number } | undefined;
+  let pending: { kind: string; start: number; header: number; depth: number; angles: number } | undefined;
+  // Open braces of the const-generic argument being skipped as a unit.
+  let constArgument = 0;
+  let previous = '';
   for (let token = tokens.exec(source); token; token = tokens.exec(source)) {
     const text = token[0];
     if (text === '/*') {
@@ -135,6 +144,16 @@ function rustScopes(source: string): Scope[] {
       tokens.lastIndex = depth === 0 ? commentTokens.lastIndex : source.length;
       continue;
     }
+    if (text.startsWith('//')) continue;
+    const before = previous;
+    previous = text;
+    // A const-generic argument is an expression: its operators, closures and
+    // keywords are not part of the header's structure.
+    if (constArgument > 0) {
+      if (text === '{') constArgument += 1;
+      if (text === '}') constArgument -= 1;
+      continue;
+    }
     if (text === '(' || text === '[') brackets.push(text);
     if (text === ')' || text === ']') brackets.pop();
     if (brackets.length > 0) continue;
@@ -142,14 +161,19 @@ function rustScopes(source: string): Scope[] {
     if (text === 'fn' || text === 'impl' || text === 'mod' || text === 'trait') {
       // While a header is pending, these keywords sit in its types (function
       // pointers, `impl Trait` in a return type or a bound) and belong to it.
-      pending ??= { kind: text, start: token.index, header: token.index + text.length, depth: braces.length };
+      pending ??= { kind: text, start: token.index, header: token.index + text.length, depth: braces.length, angles: 0 };
+    }
+    if (pending?.depth === braces.length) {
+      if (text === '<') pending.angles += 1;
+      if (text === '>') pending.angles = Math.max(0, pending.angles - 1);
+      if (text === '{' && pending.angles > 0 && GENERIC_ARGUMENT_START.has(before)) {
+        constArgument = 1;
+        continue;
+      }
     }
     if (text === '{' || text === ';') {
       let scope: Scope | undefined;
-      // A `{` inside the header's generics opens a const-generic argument, not the body.
-      const genericArgument = text === '{' && pending !== undefined &&
-        insideGenerics(source.slice(pending.header, token.index));
-      if (pending?.depth === braces.length && !genericArgument) {
+      if (pending?.depth === braces.length) {
         const header = source.slice(pending.header, token.index).trim();
         // An impl is named by its header as written, from the keyword (so `impl<T>`
         // keeps its generics attached) up to any where clause.
@@ -168,17 +192,14 @@ function rustScopes(source: string): Scope[] {
     if (text === '}') {
       const scope = braces.pop();
       if (scope) scope.end = token.index + 1;
-      // A header still pending inside the closed block was a type, such as a
-      // function-pointer field, not an item.
-      if (pending && pending.depth > braces.length) pending = undefined;
+      // A header still pending when a block closes back to its depth or out of
+      // it was a type, such as a function-pointer field, not an item; dropping
+      // it lets the next keyword start a new item whatever came before. (A
+      // const-generic argument is skipped above, so its `}` never gets here.)
+      if (pending && pending.depth >= braces.length) pending = undefined;
     }
   }
   return scopes;
-}
-
-function insideGenerics(header: string): boolean {
-  const angles = header.replace(/[-=]>/gu, '');
-  return (angles.match(/</gu)?.length ?? 0) > (angles.match(/>/gu)?.length ?? 0);
 }
 
 export function clippyFindings(

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Linter } from 'eslint';
 import tseslint from 'typescript-eslint';
 import {
+  changedPaths,
   checkRatchet,
   type Ratchet,
   readHookPayload,
@@ -270,12 +271,14 @@ function workspaceFiles(root: string): string[] {
 
 function git(root: string, args: string[]): string {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+  if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`git ${args[0]} failed (${result.status}):\n${result.stderr}`);
   return result.stdout;
 }
 
 // Staged, unstaged and untracked paths (every file of a new directory, both
-// sides of a rename), so the hook sees what the turn changed.
+// sides of a rename, unquoted). The hook adds them to `changedPaths`, whose
+// `git status --porcelain` lines name a new directory only as `dir/`.
 function uncommittedPaths(root: string): string[] {
   const entries = git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']).split('\0');
   const paths: string[] = [];
@@ -326,21 +329,46 @@ export function clippyBaseRef(argv: string[]): string | undefined {
   return ref;
 }
 
+/** The paths in NUL-separated `git diff --name-only -z` output, as git stores them (never quoted). */
+export function nulSeparatedPaths(output: string): string[] {
+  return output.split('\0').filter(Boolean);
+}
+
+/**
+ * The Stop hook's exit code for a check that returns the gate's status: 2 for
+ * findings, which the model sees and works on; 1 when the check itself fails
+ * (a git error, a missing tool, an unreadable diagnostic), with the error on
+ * stderr, which the user sees and which does not block the turn.
+ */
+export function stopHookExit(check: () => number): number {
+  try {
+    return check() === 0 ? 0 : 2;
+  } catch (error) {
+    process.stderr.write(`code-complexity gate: ${(error as Error).message}\n`);
+    return 1;
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const readSource = (file: string) => readFileSync(join(root, file), 'utf8');
   if (argv.includes('--hook')) {
     const payload = await readHookPayload();
-    const config = parseComplexityConfig(readSource(POLICY));
-    const run = stopHookRun(Boolean(payload.stop_hook_active), uncommittedPaths(root), config);
-    if (!run) return 0;
-    // Not --ci: a finding that went away must not block the turn.
-    const leftOut = run.leftOut.length ? ['--without', run.leftOut.join(',')] : [];
-    return runGate(root, readSource, leftOut) === 0 ? 0 : 2;
+    return stopHookExit(() => {
+      const config = parseComplexityConfig(readSource(POLICY));
+      // What the other Stop hooks see (uncommitted, or in commits not on the
+      // upstream), so a turn that committed its work is still checked.
+      const changed = [...changedPaths(root), ...uncommittedPaths(root)];
+      const run = stopHookRun(Boolean(payload.stop_hook_active), changed, config);
+      if (!run) return 0;
+      // Not --ci: a finding that went away must not block the turn.
+      return runGate(root, readSource, run.leftOut.length ? ['--without', run.leftOut.join(',')] : []);
+    });
   }
   const since = clippyBaseRef(argv);
   if (since !== undefined) {
-    const changed = git(root, ['diff', '--name-only', `${since}...HEAD`]).split(/\r?\n/u).filter(Boolean);
+    // -z: no quoting of unusual paths; --no-renames: a rename lists its old path too.
+    const changed = nulSeparatedPaths(git(root, ['diff', '--name-only', '-z', '--no-renames', `${since}...HEAD`]));
     if (!changesRustFindings(changed)) {
       console.log(`code-complexity gate: no change since ${since} can alter the Clippy findings; Clippy is left out.`);
       return runGate(root, readSource, [...argv, '--without', 'clippy']);

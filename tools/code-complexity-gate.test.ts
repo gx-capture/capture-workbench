@@ -7,7 +7,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   clippyBaseRef,
+  nulSeparatedPaths,
   runComplexityRatchet as runRatchet,
+  stopHookExit,
   stopHookRun,
   toolsLeftOut,
 } from './code-complexity-gate.ts';
@@ -102,7 +104,7 @@ test('a run without Clippy ignores its baseline rows and never rewrites the base
   assert.throws(() => toolsLeftOut(['--without']), /needs a tool name/);
 });
 
-test('Rust sources, manifests, lockfiles, Clippy and toolchain configuration, the gate and CI can change Clippy findings', () => {
+test('Rust sources, manifests, lockfiles, Cargo, Clippy and toolchain configuration, the gate and CI can change Clippy findings', () => {
   for (const path of [
     'apps/capture-workbench-desktop/src-tauri/src/state.rs',
     'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/src/main.rs',
@@ -112,6 +114,8 @@ test('Rust sources, manifests, lockfiles, Clippy and toolchain configuration, th
     'packages/capture-sidecar-launcher/.clippy.toml',
     'rust-toolchain.toml',
     'rust-toolchain',
+    '.cargo/config.toml',
+    'packages/capture-sidecar-launcher/.cargo/config',
     'tools/code-complexity-rust.ts',
     'tools/quality/code-complexity-baseline.json',
     'tools/quality/code-complexity.json',
@@ -126,6 +130,8 @@ test('Rust sources, manifests, lockfiles, Clippy and toolchain configuration, th
     '.github/workflows/wiki-overview.yml',
     'packages/capture-sidecar-launcher/Cargo.toml.orig',
     'src/rust.rsx',
+    'packages/capture-sidecar-launcher/cargo/config.toml',
+    '.cargo/config.toml.orig',
   ]) assert.equal(changesRustFindings([path]), false, path);
   assert.equal(changesRustFindings([]), false);
 });
@@ -140,7 +146,26 @@ test('the Stop hook runs only for measured changes, and Clippy only for Rust cha
   assert.deepEqual(stopHookRun(false, ['packages\\capture-runtime\\src\\capture_runtime\\app.py'], config), { leftOut: ['clippy'] });
   assert.deepEqual(stopHookRun(false, [typescript, rust], config), { leftOut: [] });
   assert.deepEqual(stopHookRun(false, ['tools/quality/code-complexity.json'], config), { leftOut: [] });
+  assert.deepEqual(stopHookRun(false, ['.cargo/config.toml'], config), { leftOut: [] });
   assert.equal(stopHookRun(true, [typescript, rust], config), undefined);
+  // The hook's list joins `changedPaths` (porcelain lines, then the commits
+  // ahead of the upstream) with the unquoted uncommitted listing: a committed
+  // path counts on a clean tree, and the porcelain forms of a new directory
+  // and a rename neither start nor stop a run on their own.
+  assert.deepEqual(stopHookRun(false, [rust], config), { leftOut: [] });
+  assert.equal(stopHookRun(false, ['packages/capture-workbench-ui/src/new-dir/', 'docs/a.md -> docs/b.md'], config), undefined);
+  assert.deepEqual(stopHookRun(false, ['packages/capture-workbench-ui/src/new-dir/', typescript], config), { leftOut: ['clippy'] });
+});
+
+test('the Stop hook exits 2 for findings and 1, with the error on stderr, when its check fails', (t) => {
+  const stderr = t.mock.method(process.stderr, 'write', () => true);
+  assert.equal(stopHookExit(() => 0), 0);
+  assert.equal(stopHookExit(() => 1), 2);
+  assert.equal(stderr.mock.callCount(), 0);
+  assert.equal(stopHookExit(() => {
+    throw new Error('git status failed (128)');
+  }), 1);
+  assert.match(String(stderr.mock.calls.at(-1)?.arguments[0]), /^code-complexity gate: git status failed \(128\)/);
 });
 
 test('--clippy-when-changed-since takes the ref Clippy decides against', () => {
@@ -148,6 +173,18 @@ test('--clippy-when-changed-since takes the ref Clippy decides against', () => {
   assert.equal(clippyBaseRef(['--ci', '--clippy-when-changed-since', 'origin/main']), 'origin/main');
   assert.throws(() => clippyBaseRef(['--clippy-when-changed-since']), /needs a git ref/);
   assert.throws(() => clippyBaseRef(['--clippy-when-changed-since', '--ci']), /needs a git ref/);
+});
+
+test('the changed-since diff is read as NUL-separated paths, so an unusual Rust path still counts', () => {
+  // `git diff --name-only -z --no-renames`: unquoted paths, and both sides of
+  // a rename from a Rust file to another name.
+  const output = 'docs/domain/speech.md\0packages/capture-sidecar-launcher/src/名稱 process.rs\0';
+  const paths = nulSeparatedPaths(output);
+  assert.deepEqual(paths, ['docs/domain/speech.md', 'packages/capture-sidecar-launcher/src/名稱 process.rs']);
+  assert.equal(changesRustFindings(paths), true);
+  assert.equal(changesRustFindings(nulSeparatedPaths('src/old.rs\0src/old.md\0')), true);
+  assert.equal(changesRustFindings(nulSeparatedPaths('docs/domain/speech.md\0')), false);
+  assert.deepEqual(nulSeparatedPaths(''), []);
 });
 
 test('a failed cargo run reports its compiler errors past output that only looks like JSON', () => {
@@ -408,9 +445,10 @@ test('a Clippy finding that only moved lines compares as unchanged', () => {
   unchanged(after, before);
 });
 
-// The symbol Clippy's over-nested `{ work(); }` block is attributed to.
-function nestedBlockSymbol(source: string): string {
-  const start = source.indexOf('{ work');
+// The symbol Clippy's over-nested block (`{ work(); }` by default) is attributed to.
+function nestedBlockSymbol(source: string, block = '{ work'): string {
+  const start = source.indexOf(block);
+  assert.ok(start >= 0, block);
   const [named] = clippyFindings(
     [{ file: 'src/lib.rs', rule: 'excessive_nesting', start, end: source.indexOf('}', start) + 1, value: 6 }],
     () => source,
@@ -431,4 +469,42 @@ test('Rust function-pointer and const-generic types do not end or replace a pend
     nestedBlockSymbol('impl<const N: usize> Foo<{ N + 1 }> {\n    fn bar() { { work(); } }\n}\n'),
     'impl<const N: usize> Foo<{ N + 1 }>::bar',
   );
+});
+
+// An odd header, then an ordinary item: both must be named by their own header.
+function namesAroundOddHeader(header: string): [string, string] {
+  const source = `${header} {\n    fn a() { { inner(); } }\n}\nfn after() {\n    { later(); }\n}\n`;
+  return [nestedBlockSymbol(source, '{ inner'), nestedBlockSymbol(source, '{ later')];
+}
+
+test('a comparison or shift inside a const-generic block does not move the end of a Rust header', () => {
+  assert.deepEqual(
+    namesAroundOddHeader('impl<const N: usize> Foo<{ N < 1 }>'),
+    ['impl<const N: usize> Foo<{ N < 1 }>::a', 'after'],
+  );
+  assert.deepEqual(
+    namesAroundOddHeader('impl<const N: usize, const M: usize> Bar for Foo<{ N >> 1 }, { M }>'),
+    ['impl<const N: usize, const M: usize> Bar for Foo<{ N >> 1 }, { M }>::a', 'after'],
+  );
+  assert.deepEqual(
+    namesAroundOddHeader('impl Foo<{ let small = |x: usize| x < 2; small(1) as usize }>'),
+    ['impl Foo<{ let small = |x: usize| x < 2; small(1) as usize }>::a', 'after'],
+  );
+});
+
+test('a `<` in a comment, string or character literal of a Rust signature does not open its generics', () => {
+  const source = (signature: string) =>
+    `${signature}\n{\n    { inner(); }\n}\nfn after() {\n    { later(); }\n}\n`;
+  for (const [signature, name] of [
+    ['fn compare(a: u8, b: u8) -> bool // a < b', 'compare'],
+    ['fn tagged(#[cfg_attr(any(), doc = "a < b")] value: u8)', 'tagged'],
+    ["fn sized<T>() where [(); \"<\".len() + '<' as usize]: Sized", 'sized'],
+    ['fn shifted() -> [u8; 1 << 3]', 'shifted'],
+  ]) {
+    assert.deepEqual(
+      [nestedBlockSymbol(source(signature), '{ inner'), nestedBlockSymbol(source(signature), '{ later')],
+      [name, 'after'],
+      signature,
+    );
+  }
 });

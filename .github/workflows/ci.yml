@@ -138,10 +138,10 @@ jobs:
 
       # Clippy needs the Tauri crate's dependencies compiled, which this job
       # does not cache, so it runs only when the pull request can change Rust
-      # findings: Rust sources, manifests, lockfiles, Clippy or toolchain
-      # configuration, the gate itself or this workflow. ESLint and Ruff always
-      # run. The gate decides from `git diff origin/main...HEAD`, the base of
-      # the `nx affected` lines above.
+      # findings: Rust sources, manifests, lockfiles, Cargo (`.cargo/config.toml`,
+      # `.cargo/config`), Clippy or toolchain configuration, the gate itself or
+      # this workflow. ESLint and Ruff always run. The gate decides from
+      # `git diff origin/main...HEAD`, the base of the `nx affected` lines above.
       - name: Code size and complexity gate
         shell: pwsh
         run: node tools/code-complexity-gate.ts --ci --clippy-when-changed-since origin/main
