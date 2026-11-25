@@ -33,9 +33,9 @@ source of truth for inputs.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
-- Cert Prep and LAW still pin 0.10.0 on their `main` branches; Cert Prep's
-  adoption of 0.11.0 is `WodenWang820118/cert-prep#159`, and LAW's follows after
-  2026-12-01.
+- Cert Prep's `main` pins 0.11.0 (`WodenWang820118/cert-prep#159` and
+  `WodenWang820118/cert-prep#160`, merged 2026-11-25). LAW still pins 0.10.0 on its `main` branch; its adoption
+  follows after 2026-12-01.
 - The workspace runs Nx 24 with task-based affected. The pull request `checks`
   job and `pnpm run verify:affected` lint, type-check, and unit-test only the
   projects a change affects. Push CI on `main` still verifies every project.
@@ -93,7 +93,17 @@ source of truth for inputs.
   only in download-size digits, because the worker archives built locally and
   by CI differ in size; the product owner accepted the run, and masking those
   values is #497.
-- Consumers: Cert Prep `WodenWang820118/cert-prep#159` (open); LAW after
+- Consumers: Cert Prep adopted 0.11.0 on 2026-11-25
+  (`WodenWang820118/cert-prep#159`). Its first real-engine run on the dev
+  server found that Cert's capture event decoder rejected the progress and
+  speaker fields the runtime always sends (`pagesDone`, `pagesTotal`,
+  `durationMs`, `speaker`, `speakerOverlap`, null included), which its
+  `ci:local` fixtures did not carry; `WodenWang820118/cert-prep#160` fixed it
+  and added that journey (`cert-prep-e2e:smoke-real-engines-dev-server`). Both
+  layers then passed: the dev-server journey (OCR on DirectML, speech
+  `tea-asr-1.1-mini` / `cuda`, questions on the Cert-owned Ollama on CUDA) and
+  the packaged Capture Workbench smoke on an installed Cert Prep (OCR on
+  DirectML, uninstall clean); #476 is closed. LAW after
   2026-12-01.
 
 ## Published through Route A: 0.10.0 (minor)
