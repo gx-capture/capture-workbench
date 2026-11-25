@@ -268,8 +268,10 @@ export function checkpointScreenshotMasks(page: Page) {
     page.getByTestId('first-run-install'),
     page.getByTestId('asr-install-speakers'),
     page.getByTestId('engine-card-size'),
+    page.getByTestId('engine-card-install'),
     page.getByTestId('engine-row-size'),
     page.getByTestId('engine-row-install'),
+    page.getByTestId('ocr-row-install'),
   ];
 }
 

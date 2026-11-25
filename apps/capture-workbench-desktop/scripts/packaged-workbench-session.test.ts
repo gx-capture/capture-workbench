@@ -132,13 +132,19 @@ test('the WebView2 debugging endpoint listens on loopback only', () => {
 });
 
 test('a wait fails on a probe slower than its budget and passes when the wait allows a longer one', async () => {
+  const probeTimedOut = { message: 'The install did not finish. (single UI probe timed out)' };
+  // A probe whose answer never arrives, like an IPC call to a wedged host.
+  const unansweredProbe = () => new Promise<boolean | undefined>(() => undefined);
+  await assert.rejects(waitUntil(unansweredProbe, 1_000, 'The install did not finish.', 20), probeTimedOut);
+
   const slowProbe = async () => {
     await new Promise((resolveProbe) => setTimeout(resolveProbe, 60));
     return true;
   };
-  await assert.rejects(
-    waitUntil(slowProbe, 1_000, 'The install did not finish.', 20),
-    { message: 'The install did not finish. (single UI probe timed out)' },
-  );
   assert.equal(await waitUntil(slowProbe, 1_000, 'The install did not finish.', 500), true);
+
+  // A probe never gets more than the time left in the wait.
+  const started = Date.now();
+  await assert.rejects(waitUntil(unansweredProbe, 50, 'The install did not finish.', 60_000), probeTimedOut);
+  assert.ok(Date.now() - started < 10_000, 'the probe budget exceeded the wait');
 });

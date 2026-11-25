@@ -128,10 +128,10 @@ const runtimeReadyTimeoutMs = 3 * 60_000;
 const speechInstallTimeoutMs = 90 * 60_000;
 // When the speech install activates, one requirements read can verify the
 // whole engine inside the request (13.8 s measured, #501). The host's own HTTP
-// timeout is 60 s, so a probe of this wait may take that long; a probe slower
-// than the usual 5 s is printed.
+// timeout is 60 s, so a probe of this wait may take that long; a requirements
+// read slower than the usual 5 s probe budget is printed.
 const speechInstallProbeBudgetMs = 60_000;
-const slowProbeMs = 5_000;
+const slowRequirementsReadMs = 5_000;
 const structuringModelInstallTimeoutMs = 45 * 60_000;
 const recordingTimeoutMs = 30 * 60_000;
 const cancelTimeoutMs = 2 * 60_000;
@@ -566,7 +566,7 @@ async function installSpeechRecognition(page: Page): Promise<void> {
       const readStarted = Date.now();
       const speechStatus = await readRequirementStatus(page, 'speech-recognition');
       const readMs = Date.now() - readStarted;
-      if (readMs > slowProbeMs) {
+      if (readMs > slowRequirementsReadMs) {
         process.stdout.write(`Slow requirements read during the speech install: ${readMs} ms (status ${speechStatus ?? 'none'}).\n`);
       }
       if (speechStatus === 'ready'

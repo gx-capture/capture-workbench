@@ -1889,8 +1889,10 @@ test('checkpoint screenshots mask private OCR and ASR content and values that ch
       { kind: 'testId', testId: 'first-run-install' },
       { kind: 'testId', testId: 'asr-install-speakers' },
       { kind: 'testId', testId: 'engine-card-size' },
+      { kind: 'testId', testId: 'engine-card-install' },
       { kind: 'testId', testId: 'engine-row-size' },
       { kind: 'testId', testId: 'engine-row-install' },
+      { kind: 'testId', testId: 'ocr-row-install' },
     ],
   );
   assert.deepEqual(screenshots, [join('C:\\artifacts', '01-consent-required.png')]);
