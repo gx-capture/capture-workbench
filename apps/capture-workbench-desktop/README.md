@@ -61,7 +61,10 @@ engines and compare checkpoint screenshots with approved baselines (#163):
 
 Masks (`checkpointScreenshotMasks`) cover file names, recognized text, the
 transcript, the live transcript lines and partial text, the player, speaker
-names, recording durations and History's "updated" column. The continuous
+names, recording durations, History's "updated" column and download sizes
+(first-run choices, engine cards, Settings › Engines rows and the install
+buttons whose label carries one), because a CI-built worker archive and a
+local one differ in bytes. The continuous
 privacy CSS also hides the file name in History's delete dialog. Both journeys
 end by proving the app, its runtime and workers, the CDP port and the run's data
 are gone.
