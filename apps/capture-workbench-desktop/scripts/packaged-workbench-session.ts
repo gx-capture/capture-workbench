@@ -382,10 +382,20 @@ export function reservePort(): Promise<number> {
   });
 }
 
-export async function waitUntil<T>(check: () => Promise<T | undefined>, timeoutMs: number, message: string): Promise<T> {
+/**
+ * Polls `check` until it returns a value. Each probe gets at most
+ * `probeBudgetMs` (5 s unless a wait needs more), so a wedged WebView or host
+ * fails the wait instead of hanging it.
+ */
+export async function waitUntil<T>(
+  check: () => Promise<T | undefined>,
+  timeoutMs: number,
+  message: string,
+  probeBudgetMs = 5_000,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const probeBudget = Math.min(5_000, Math.max(1, deadline - Date.now()));
+    const probeBudget = Math.min(probeBudgetMs, Math.max(1, deadline - Date.now()));
     const value = await withTimeout(check(), probeBudget, `${message} (single UI probe timed out)`);
     if (value !== undefined) {
       return value;

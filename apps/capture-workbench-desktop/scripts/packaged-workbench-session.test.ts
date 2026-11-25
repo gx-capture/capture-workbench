@@ -15,6 +15,7 @@ import {
   removeRunDataRoot,
   runDataEnvironment,
   runDataRootMaxCharacters,
+  waitUntil,
 } from './packaged-workbench-session.ts';
 
 const temporaryRoots: string[] = [];
@@ -128,4 +129,16 @@ test('the WebView2 debugging endpoint listens on loopback only', () => {
     desktopCdpArguments(41_234),
     '--remote-debugging-address=127.0.0.1 --remote-debugging-port=41234 --remote-allow-origins=*',
   );
+});
+
+test('a wait fails on a probe slower than its budget and passes when the wait allows a longer one', async () => {
+  const slowProbe = async () => {
+    await new Promise((resolveProbe) => setTimeout(resolveProbe, 60));
+    return true;
+  };
+  await assert.rejects(
+    waitUntil(slowProbe, 1_000, 'The install did not finish.', 20),
+    { message: 'The install did not finish. (single UI probe timed out)' },
+  );
+  assert.equal(await waitUntil(slowProbe, 1_000, 'The install did not finish.', 500), true);
 });

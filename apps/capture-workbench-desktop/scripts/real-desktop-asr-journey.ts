@@ -126,6 +126,12 @@ const defaultStructuringModelOptionId = 'qwen3.5-0.8b-v1';
 const runtimeReadyTimeoutMs = 3 * 60_000;
 // The cuda pack downloads about 10.5 GB of models on a cold cache.
 const speechInstallTimeoutMs = 90 * 60_000;
+// When the speech install activates, one requirements read can verify the
+// whole engine inside the request (13.8 s measured, #501). The host's own HTTP
+// timeout is 60 s, so a probe of this wait may take that long; a probe slower
+// than the usual 5 s is printed.
+const speechInstallProbeBudgetMs = 60_000;
+const slowProbeMs = 5_000;
 const structuringModelInstallTimeoutMs = 45 * 60_000;
 const recordingTimeoutMs = 30 * 60_000;
 const cancelTimeoutMs = 2 * 60_000;
@@ -383,7 +389,7 @@ export async function main(options: {
       // The file button is enabled while the requirements reload after the
       // installs (the first review captured 尚未就緒), so the compared screen
       // waits for the ready status too. One locator wait, not waitUntil: a
-      // single probe slower than 5 s would fail that, as one install wait did.
+      // single probe slower than 5 s would fail that (#501).
       await current.locator('[data-testid="runtime-status"][data-state="ready"]')
         .waitFor({ state: 'attached', timeout: runtimeReadyTimeoutMs });
       await checkpoint(current, 'asr-ready');
@@ -557,7 +563,13 @@ async function installSpeechRecognition(page: Page): Promise<void> {
     async () => {
       const runtimeError = await visibleRuntimeError(page);
       if (runtimeError) throw new Error(runtimeError);
-      if ((await readRequirementStatus(page, 'speech-recognition')) === 'ready'
+      const readStarted = Date.now();
+      const speechStatus = await readRequirementStatus(page, 'speech-recognition');
+      const readMs = Date.now() - readStarted;
+      if (readMs > slowProbeMs) {
+        process.stdout.write(`Slow requirements read during the speech install: ${readMs} ms (status ${speechStatus ?? 'none'}).\n`);
+      }
+      if (speechStatus === 'ready'
         && (await page.getByTestId('asr-choose-files').isVisible().catch(() => false))) {
         return true;
       }
@@ -581,6 +593,7 @@ async function installSpeechRecognition(page: Page): Promise<void> {
     },
     speechInstallTimeoutMs,
     'Speech recognition installation did not finish.',
+    speechInstallProbeBudgetMs,
   );
 }
 
