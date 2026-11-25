@@ -744,13 +744,6 @@
   {
     "tool": "ruff",
     "rule": "C901",
-    "file": "packages/capture-runtime/src/capture_runtime/capture/api/streaming.py",
-    "symbol": "register_streaming_routes",
-    "value": 90
-  },
-  {
-    "tool": "ruff",
-    "rule": "C901",
     "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
     "symbol": "StreamingCaptureService._extract_finalized_source",
     "value": 20
@@ -1482,13 +1475,6 @@
     "file": "packages/capture-runtime/src/capture_runtime/app.py",
     "symbol": "create_app",
     "value": 91
-  },
-  {
-    "tool": "ruff",
-    "rule": "PLR0915",
-    "file": "packages/capture-runtime/src/capture_runtime/capture/api/streaming.py",
-    "symbol": "register_streaming_routes",
-    "value": 231
   },
   {
     "tool": "ruff",
