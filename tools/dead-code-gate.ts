@@ -225,15 +225,16 @@ export function parseRustAllows(gitGrepOutput: string): string[] {
   return numbered(keys).sort();
 }
 
-export interface RatchetResult {
-  added: string[];
-  stale: string[];
+export interface RatchetResult<Entry = string> {
+  added: Entry[];
+  stale: Entry[];
+  worsened?: { current: Entry; previous: Entry }[];
 }
 
-export function compareWithBaseline(
-  current: string[],
-  baseline: string[],
-): RatchetResult {
+export function compareWithBaseline<Entry>(
+  current: Entry[],
+  baseline: Entry[],
+): RatchetResult<Entry> {
   const baselineSet = new Set(baseline);
   const currentSet = new Set(current);
   return {
@@ -372,7 +373,7 @@ function git(repoRoot: string, args: string[]): string[] {
 }
 
 /** One ratchet: a collector of stable keys and the baseline that freezes them. */
-export interface Ratchet {
+export interface Ratchet<Entry = string> {
   /** Message prefix: `<label> gate:` and `<label> baseline written`. */
   label: string;
   /** Singular noun for one key, such as `finding`. */
@@ -381,15 +382,17 @@ export interface Ratchet {
   baseline: string;
   /** Script that owns the baseline, relative to the repo root (for the `--update` hint). */
   script: string;
-  collect: (repoRoot: string) => string[];
-  formatKey: (key: string) => string;
+  collect: (repoRoot: string) => Entry[];
+  formatKey: (key: Entry) => string;
+  compare?: (current: Entry[], baseline: Entry[]) => RatchetResult<Entry>;
+  formatWorsened?: (current: Entry, previous: Entry) => string;
   /** Printed after the list of new keys: how to fix them. */
   fixHint: string[];
 }
 
-export function writeRatchetBaseline(
+export function writeRatchetBaseline<Entry>(
   repoRoot: string,
-  ratchet: Ratchet,
+  ratchet: Ratchet<Entry>,
 ): number {
   const current = ratchet.collect(repoRoot);
   writeFileSync(
@@ -402,18 +405,21 @@ export function writeRatchetBaseline(
   return 0;
 }
 
-export function checkRatchet(
+export function checkRatchet<Entry>(
   repoRoot: string,
-  ratchet: Ratchet,
+  ratchet: Ratchet<Entry>,
   ci: boolean,
 ): number {
   const { label, noun } = ratchet;
   const baselinePath = join(repoRoot, ratchet.baseline);
   const current = ratchet.collect(repoRoot);
   const baseline = existsSync(baselinePath)
-    ? (JSON.parse(readFileSync(baselinePath, 'utf8')) as string[])
+    ? (JSON.parse(readFileSync(baselinePath, 'utf8')) as Entry[])
     : [];
-  const { added, stale } = compareWithBaseline(current, baseline);
+  const { added, stale, worsened = [] } = (ratchet.compare ?? compareWithBaseline)(
+    current,
+    baseline,
+  );
 
   if (added.length > 0) {
     console.error(
@@ -434,7 +440,19 @@ export function checkRatchet(
       ].join('\n'),
     );
   }
-  if (added.length > 0) return 1;
+  if (worsened.length > 0) {
+    console.error(
+      [
+        `${label} gate: ${worsened.length} baseline ${noun}(s) worsened:`,
+        ...worsened.map(({ current, previous }) =>
+          ratchet.formatWorsened?.(current, previous) ?? ratchet.formatKey(current),
+        ),
+        '',
+        ...ratchet.fixHint,
+      ].join('\n'),
+    );
+  }
+  if (added.length > 0 || worsened.length > 0) return 1;
   if (stale.length > 0 && ci) return 1;
   console.log(`${label} gate: OK (${current.length} known ${noun}s, none new)`);
   return 0;
