@@ -1,22 +1,24 @@
 # Capture Workbench release runbook
 
-Current as of 2026-11-24. This is the operational procedure for publishing a
+Current as of 2026-11-25. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
 ## Current state
 
-- **0.11.0** (minor, changes the contract) is being prepared on the
-  integration branch `feat/contract-0.11.0`. Its release conditions, the
-  issues it closes and the remaining steps are tracked in
-  [#491](https://github.com/gx-capture/capture-workbench/issues/491); it is
-  published only after the packaged acceptance
-  ([#163](https://github.com/gx-capture/capture-workbench/issues/163)) passes.
-- **0.9.0** is the latest published release (2026-11-03): Route A first, then
-  the full route (release candidate 41649253900, consumer gates 41659676388,
-  release promotion 41666190542), so `v0.9.0` carries
-  `capture-release-manifest-v1.json` and the desktop installer, and the stable
-  pointer names it. Route A publishes npm (`@gx-capture/capture-workbench-ui`,
+- **0.11.0** (minor, changes the contract) is published through Route A
+  (2026-11-25): npm, PyPI, crates.io and the `v0.11.0` runtime release carry
+  it. The full route is under way: its release candidate passed (run
+  45521214727), and the consumer gates and the release promotion follow once
+  both consumers have adopted 0.11.0 (LAW's gate runs in its private repository
+  after its Actions quota renews on 2026-12-01). Until then the stable pointer
+  still names 0.9.0. Remaining steps are tracked in
+  [#491](https://github.com/gx-capture/capture-workbench/issues/491).
+- **0.9.0** (2026-11-03) is the last release that took the full route and the
+  one the stable pointer names: Route A first, then the full route (release
+  candidate 41649253900, consumer gates 41659676388, release promotion
+  41666190542), so `v0.9.0` carries `capture-release-manifest-v1.json` and the
+  desktop installer. Route A publishes npm (`@gx-capture/capture-workbench-ui`,
   `@gx-capture/capture-runtime-client` on GitHub Packages), PyPI
   (`capture-runtime-client`), crates.io (`capture-sidecar-launcher`), and the
   GitHub release (runtime exe, OCR, speech recognition and diarization
@@ -27,12 +29,13 @@ source of truth for inputs.
   desktop installer, no `capture-release-manifest-v1.json` and the stable
   pointer still names 0.9.0, because its release candidate cannot pass
   `verify-windows-install` (see "Published through Route A: 0.10.0" below).
-  The next release takes the full route.
+  0.11.0 takes the full route.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
-- Consumers on their `main` branches pin 0.10.0: Cert Prep
-  (`WodenWang820118/cert-prep#142`) and LAW (`WodenWang820118/gx.law-prep#382`).
+- Cert Prep and LAW still pin 0.10.0 on their `main` branches; Cert Prep's
+  adoption of 0.11.0 is `WodenWang820118/cert-prep#159`, and LAW's follows after
+  2026-12-01.
 - The workspace runs Nx 24 with task-based affected. The pull request `checks`
   job and `pnpm run verify:affected` lint, type-check, and unit-test only the
   projects a change affects. Push CI on `main` still verifies every project.
@@ -56,6 +59,42 @@ source of truth for inputs.
   `build-release-artifacts` also runs `verify-speech-recognition-cpu-boundary`.
   Push CI on `main` builds and probes it too. Size budgets still cover only
   the runtime executable and the NSIS installer.
+
+## Published through Route A: 0.11.0 (minor, changes the contract)
+
+- Published on 2026-11-25 through Route A. Runs: package candidate 45410358031
+  (candidate `c47dba7e…`, manifest `e2f712a8…`), runtime candidate 45410943505
+  (`model-enabled`; candidate `a3412ba6…`, manifest `71c094bb…`), package promote
+  45518586680, runtime promote 45518938013 (`registries`). Source commit
+  `29b948d` (merge of PR #495, a merge commit so that the model-source commit
+  `76e8df09` stays in `main`'s history).
+- Full route: release candidate 45521214727 (candidate `163a11d0…`, manifest
+  `8d70d92d…`) passed every job, `verify-windows-install` included. It was
+  dispatched right after Route A, while `main` still pointed at the source
+  commit, so `main` could take other changes again; its artifacts expire on
+  2026-12-09, which bounds when the consumer gates and `release-promote.yml`
+  must run.
+- Compatibility: the contract set changes (`7802e8b8…`, was `91ff5ff5…`), so
+  `resolve-capture-release` in `route-a` mode reports `manual-review` and
+  consumers migrate by hand; see the 0.11.0 entry of `CHANGELOG.md` for the
+  changes.
+- Model-source snapshot: annotated tag `capture-runtime-model-sources-v0.11.0`
+  on `76e8df09`, pushed before the candidates.
+- `cpu` speech pack evidence: manual transcription on 2026-11-24 (Windows 11)
+  against runtime candidate 45410943505; with
+  `CAPTURE_SPEECH_RECOGNITION_VARIANT=cpu` and the model left on `auto`, speech
+  showed `installable` with `downloadBytes` 3,744,998,183; the installation
+  completed in 287.5 s and `active.json` names `contentId` `cpu`. A 75 s `zh`
+  excerpt transcribed in 26.4 s end to end: provenance `tea-asr-1.1-mini` /
+  `cpu`, 4 ordered, time-located segments, no warnings.
+- Packaged acceptance (#163) against the runtime candidate: OCR and speech
+  journeys passed with provenance `pp-ocrv6-medium` / `directml` and
+  `tea-asr-1.1` / `cuda`, and cleanup passed. Five pixel comparisons differed
+  only in download-size digits, because the worker archives built locally and
+  by CI differ in size; the product owner accepted the run, and masking those
+  values is #497.
+- Consumers: Cert Prep `WodenWang820118/cert-prep#159` (open); LAW after
+  2026-12-01.
 
 ## Published through Route A: 0.10.0 (minor)
 
@@ -621,7 +660,10 @@ Candidate checksums stay inside the candidate artifact and are not release asset
    `release_mode` recorded in the runtime candidate manifest
    (`model-enabled` for every release since 0.5.0). Record the run ID, `candidateId`, and the
    `candidate-manifest.json` hash from artifact
-   `capture-candidate-<version>-<run>`.
+   `capture-candidate-<version>-<run>`. Dispatch it right after Route A while
+   the head of `main` is still the release-source commit (the release
+   promotion checks the candidate run's head commit), so `main` can take other
+   changes while the consumers migrate; its artifacts are kept 14 days.
 6. Pre-run both consumer gates locally against the downloaded release
    candidate before dispatching (see below), then dispatch
    `consumer-gates.yml`.
@@ -848,3 +890,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   release candidate built from a commit before this rule (0.10.0's `b0924a8`)
   fails `verify-windows-install` on every run; the checks run from the source
   commit, so the fix needs a new release-source commit.
+- A pixel baseline must not contain values that depend on the build, such as
+  download sizes, which differ between a local release build and the CI
+  candidate (#497); check every compared screen for numbers that come from
+  artifacts.
