@@ -125,7 +125,11 @@ def activate_version(
             replace_with_retry(new_version, version)
         except OSError as error:
             raise ActivationFilesystemError("move_new_version", error) from error
-        write_state(active_state_path, state.to_dict())
+        try:
+            write_state(active_state_path, state.to_dict())
+        except BaseException:
+            discard_verification_record(version / VERIFICATION_RECORD_NAME)
+            raise
     except BaseException:
         shutil.rmtree(version, ignore_errors=True)
         if previous_version.exists():
@@ -145,6 +149,8 @@ def cleanup_install_attempt(
 ) -> None:
     shutil.rmtree(staging, ignore_errors=True)
     if not activated:
+        # An open worker handle can prevent removing the rest of the tree.
+        discard_verification_record(new_version / VERIFICATION_RECORD_NAME)
         shutil.rmtree(new_version, ignore_errors=True)
         if previous_version.exists() and not version.exists():
             replace_with_retry(previous_version, version)

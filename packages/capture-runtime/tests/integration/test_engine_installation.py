@@ -9,7 +9,8 @@ import subprocess
 import sys
 import threading
 import zipfile
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -72,6 +73,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationError,
     EngineInstallationManager,
     EngineInstallBusyError,
+    EngineResolutionTimeoutError,
     ModelFileDownloader,
 )
 from capture_runtime.provisioning.infrastructure.system_requirement_installer import (
@@ -811,9 +813,11 @@ def test_cold_active_engine_verification_does_not_block_the_event_loop(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("probe", [False, True])
 def test_active_engine_resolution_times_out_when_verification_never_returns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    probe: bool,
 ) -> None:
     catalog, _sources = _catalog(tmp_path)
     manager = EngineInstallationManager(
@@ -832,8 +836,11 @@ def test_active_engine_resolution_times_out_when_verification_never_returns(
 
     async def run() -> None:
         try:
-            with pytest.raises(TimeoutError):
-                await manager.resolve_active_engine("text-recognition")
+            if probe:
+                assert await manager.probe("text-recognition") is None
+            else:
+                with pytest.raises(EngineResolutionTimeoutError):
+                    await manager.resolve_active_engine("text-recognition")
         finally:
             release.set()
 
@@ -3643,6 +3650,7 @@ def test_cancel_during_activation_or_cleanup_matches_disk_state(
             # Force a reinstall of the same version to exercise the directory swap.
             monkeypatch.setattr(manager, "active_engine", lambda requirement_id: None)
         prior_state = (root / "active.json").read_bytes() if upgrade else None
+        prior_records = {path: path.read_bytes() for path in root.rglob("verified-files.json")}
         started = asyncio.Event()
         release = threading.Event()
         loop = asyncio.get_running_loop()
@@ -3691,6 +3699,9 @@ def test_cancel_during_activation_or_cleanup_matches_disk_state(
             if phase == "failing_activation":
                 assert result.status.value == "cancelled"
                 assert previous == [False]
+                assert {
+                    path: path.read_bytes() for path in root.rglob("verified-files.json")
+                } == prior_records
                 if upgrade:
                     assert state_path.read_bytes() == prior_state
                     assert (
@@ -4062,6 +4073,230 @@ def _record_test_manager(tmp_path, catalog, sources, worker=None):
         downloader=CopyDownloader(sources),
         model_downloader=CopyModelDownloader(sources),
     )
+
+
+@pytest.mark.parametrize("previous_install", ["none", "damaged", "missing tree"])
+def test_activation_publishes_verification_before_requirements_can_read_new_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_install: str
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = _record_test_manager(tmp_path, catalog, sources)
+    fresh = _record_test_manager(tmp_path, catalog, sources)
+    requirement_id = "text-recognition"
+    version = tmp_path / "engines" / requirement_id / "versions" / "engine-1"
+    executable = version / "worker" / "capture-engine-test.exe"
+    record = version / "verified-files.json"
+    original_write = engine_installation_module._atomic_write_json
+    reads = []
+
+    def fail_verification(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("activation-time requirements read performed full verification")
+
+    def fail_record_lookup(*_args: object, **_kwargs: object) -> bool:
+        pytest.fail("activation-time requirements read missed the in-memory cache")
+
+    def write_state(path: Path, payload: object) -> None:
+        assert record.is_file()
+        original_write(path, payload)
+        with monkeypatch.context() as checks:
+            checks.setattr(
+                engine_installation_module, "verify_extracted_artifact", fail_verification
+            )
+            checks.setattr(
+                engine_installation_module, "verify_direct_model_files", fail_verification
+            )
+            with monkeypatch.context() as cache_check:
+                cache_check.setattr(
+                    engine_installation_module, "matches_verification_record", fail_record_lookup
+                )
+                engine = manager.active_engine(requirement_id)
+            assert engine is not None
+            assert engine.executable == executable.resolve()
+            assert engine.executable.read_bytes() == b"worker-engine-1"
+            assert fresh.active_engine(requirement_id) == engine
+            reads.append(engine)
+
+    async def install() -> None:
+        await manager.install(
+            requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+
+    if previous_install != "none":
+        asyncio.run(install())
+        if previous_install == "damaged":
+            executable.write_bytes(b"damaged worker")
+        else:
+            shutil.rmtree(version)
+    monkeypatch.setattr(engine_installation_module, "_atomic_write_json", write_state)
+    asyncio.run(install())
+    assert len(reads) == 1
+
+
+def test_same_version_activation_serializes_concurrent_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capture_runtime.provisioning.infrastructure import (
+        _engine_installation_activation as activation,
+    )
+
+    catalog, sources = _catalog(tmp_path)
+    manager = _record_test_manager(tmp_path, catalog, sources)
+    requirement_id = "text-recognition"
+    version = tmp_path / "engines" / requirement_id / "versions" / "engine-1"
+    executable = version / "worker" / "capture-engine-test.exe"
+    original_move = activation.replace_with_retry
+    lock = threading.RLock()
+    manager._activation_locks[requirement_id] = lock
+
+    def fail_verification(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("concurrent requirements read performed full verification")
+
+    async def install() -> None:
+        await manager.install(
+            requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+
+    async def scenario() -> None:
+        await install()
+        executable.write_bytes(b"damaged worker")
+        loop = asyncio.get_running_loop()
+        old_version_moved = asyncio.Event()
+        reader_waiting = asyncio.Event()
+        release_swap = threading.Event()
+
+        def move(source: Path, target: Path) -> None:
+            original_move(source, target)
+            if source == version:
+                loop.call_soon_threadsafe(old_version_moved.set)
+                assert release_swap.wait(timeout=5)
+
+        @contextmanager
+        def observe_reader_lock(_requirement_id: str) -> Iterator[None]:
+            acquired = lock.acquire(blocking=False)
+            if acquired:
+                lock.release()
+            loop.call_soon_threadsafe(reader_waiting.set)
+            assert not acquired, "the directory swap did not hold the reader's lock"
+            with lock:
+                yield
+
+        monkeypatch.setattr(activation, "replace_with_retry", move)
+        installation = asyncio.create_task(install())
+        reader: asyncio.Task[InstalledEngine | None] | None = None
+        try:
+            await asyncio.wait_for(old_version_moved.wait(), timeout=5)
+            assert not version.exists()
+            monkeypatch.setattr(manager, "_activation_lock", observe_reader_lock)
+            monkeypatch.setattr(
+                engine_installation_module, "verify_extracted_artifact", fail_verification
+            )
+            monkeypatch.setattr(
+                engine_installation_module, "verify_direct_model_files", fail_verification
+            )
+            reader = asyncio.create_task(asyncio.to_thread(manager.active_engine, requirement_id))
+            await asyncio.wait_for(reader_waiting.wait(), timeout=5)
+            assert not reader.done()
+        finally:
+            release_swap.set()
+            await asyncio.wait_for(installation, timeout=5)
+        assert reader is not None
+        engine = await asyncio.wait_for(reader, timeout=5)
+        assert engine is not None
+        assert engine.executable == executable.resolve()
+        assert engine.executable.read_bytes() == b"worker-engine-1"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("inside_lock", [False, True])
+def test_cancel_after_preparing_verification_record_leaves_no_active_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inside_lock: bool
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = _record_test_manager(tmp_path, catalog, sources)
+    requirement_id = "text-recognition"
+    root = tmp_path / "engines" / requirement_id
+    original_write = engine_installation_module.write_verification_record
+    original_lock = manager._activation_lock
+    record_written = threading.Event()
+    cancelled_in_lock = threading.Event()
+
+    async def install() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def write_record(path: Path, payload: dict[str, object]) -> None:
+            original_write(path, payload)
+            assert path.is_file()
+            record_written.set()
+            if not inside_lock:
+                loop.call_soon_threadsafe(stop.set)
+
+        def cancel_in_lock() -> None:
+            stop.set()
+            cancelled_in_lock.set()
+
+        @contextmanager
+        def pause_at_lock(requirement_id: str) -> Iterator[None]:
+            with original_lock(requirement_id):
+                if record_written.is_set():
+                    loop.call_soon_threadsafe(cancel_in_lock)
+                    assert cancelled_in_lock.wait(timeout=5)
+                yield
+
+        with monkeypatch.context() as checks:
+            checks.setattr(engine_installation_module, "write_verification_record", write_record)
+            if inside_lock:
+                checks.setattr(manager, "_activation_lock", pause_at_lock)
+            await manager.install(requirement_id, cancel_event=stop, report_progress=lambda _: None)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(install())
+    assert record_written.is_set()
+    assert cancelled_in_lock.is_set() == inside_lock
+    assert not list(root.rglob("verified-files.json"))
+    assert manager.active_engine(requirement_id) is None
+
+
+def test_failed_same_version_activation_restores_previous_verified_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = _record_test_manager(tmp_path, catalog, sources)
+    requirement_id = "text-recognition"
+    root = tmp_path / "engines" / requirement_id
+    record = root / "versions" / "engine-1" / "verified-files.json"
+
+    async def install() -> None:
+        await manager.install(
+            requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+
+    asyncio.run(install())
+    previous_engine = manager.active_engine(requirement_id)
+    assert previous_engine is not None
+    previous_record = record.read_bytes()
+
+    def fail_state_write(_path: Path, _payload: object) -> None:
+        assert record.is_file()
+        raise OSError("state write failed")
+
+    def fail_record_lookup(*_args: object, **_kwargs: object) -> bool:
+        pytest.fail("the previous engine was not restored to the in-memory cache")
+
+    with monkeypatch.context() as reinstall:
+        # Force a reinstall while retaining the old cache entry for rollback.
+        reinstall.setattr(manager, "active_engine", lambda _requirement_id: None)
+        reinstall.setattr(engine_installation_module, "_atomic_write_json", fail_state_write)
+        with pytest.raises(OSError, match="state write failed"):
+            asyncio.run(install())
+
+    monkeypatch.setattr(
+        engine_installation_module, "matches_verification_record", fail_record_lookup
+    )
+    assert manager.active_engine(requirement_id) is previous_engine
+    assert list(root.rglob("verified-files.json")) == [record]
+    assert record.read_bytes() == previous_record
 
 
 @pytest.mark.parametrize("models_only", [False, True])

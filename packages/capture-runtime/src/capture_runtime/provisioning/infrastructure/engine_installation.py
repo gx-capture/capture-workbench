@@ -6,9 +6,10 @@ import asyncio
 import json
 import sys
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from uuid import uuid4
 
 from capture_runtime._worker_payloads import WorkerProbeResult
@@ -355,6 +356,7 @@ class EngineInstallationManager:
         self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._pdf_ocr_e2e_local_worker_url = _pdf_ocr_e2e_local_worker_url()
         self._locks: dict[str, asyncio.Lock] = {}
+        self._activation_locks: dict[str, AbstractContextManager[object]] = {}
         self._verified_active_engines: dict[str, _VerifiedActiveEngine] = {}
         self._verified_model_units: dict[str, tuple[ModelUnitSnapshot, str]] = {}
         self._verified_active_engines_lock = Lock()
@@ -477,6 +479,17 @@ class EngineInstallationManager:
 
     def active_engine(self, requirement_id: str) -> InstalledEngine | None:
         requirement = self.requirement(requirement_id)
+        with self._activation_lock(requirement_id):
+            return self._read_verified_active_engine(requirement)
+
+    def _activation_lock(self, requirement_id: str) -> AbstractContextManager[object]:
+        with self._verified_active_engines_lock:
+            return self._activation_locks.setdefault(requirement_id, RLock())
+
+    def _read_verified_active_engine(
+        self, requirement: EngineRequirementDescriptor
+    ) -> InstalledEngine | None:
+        requirement_id = requirement.requirement_id
         if requirement.model_only or not (requirement.complete or requirement.contents):
             return None
         state = self._read_active_state(requirement_id)
@@ -581,7 +594,10 @@ class EngineInstallationManager:
         *,
         probe_options: dict[str, object] | None = None,
     ) -> WorkerProbeResult | None:
-        engine = self.active_engine(requirement_id)
+        try:
+            engine = await self.resolve_active_engine(requirement_id)
+        except EngineResolutionTimeoutError:
+            return None
         if engine is None:
             return None
         try:
@@ -769,15 +785,18 @@ class EngineInstallationManager:
         stop = InstallStop(cancel_event)
         staging = requirement_root / ".staging" / uuid4().hex
         version = requirement_root / "versions" / artifact_version
+        active_state = self._read_active_state(requirement.requirement_id)
+        version_is_referenced = (
+            active_state is not None and active_state.artifact_version == artifact_version
+        )
         # On a first install there is no active version to preserve. Probe the
         # candidate at its final path and activate by writing active.json only;
         # this avoids a transient Windows directory rename denial when a native
         # worker or endpoint scanner still holds a handle in the candidate tree.
-        # Upgrades retain the hidden-directory swap so the previous version can
-        # be rolled back atomically.
+        # Stage away from an existing pointer even if its version tree is missing.
         new_version = (
             version
-            if not version.exists()
+            if not version_is_referenced and not version.exists()
             else requirement_root / "versions" / f".{artifact_version}.{uuid4().hex}"
         )
         previous_version = requirement_root / f".previous-{uuid4().hex}"
@@ -974,19 +993,70 @@ class EngineInstallationManager:
                 ),
                 content_id=content_id,
             )
+            if verified_files is not None:
+                await _file_operation(
+                    write_verification_record,
+                    new_version / VERIFICATION_RECORD_NAME,
+                    verification_record(
+                        {
+                            **state.to_dict(),
+                            "workerDescriptor": worker_descriptor.to_dict(),
+                            "modelDelivery": model_descriptor.to_dict(),
+                        },
+                        verified_files,
+                    ),
+                )
+            requirement_id = requirement.requirement_id
+
+            def activate_verified_version() -> None:
+                # A same-version swap changes the tree behind the existing pointer.
+                # Readers must see a consistent pointer, tree, and cache entry.
+                with self._activation_lock(requirement_id):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    candidate_root = new_version.resolve()
+                    final_root = version.parent.resolve() / version.name
+                    active_engine = replace(
+                        engine,
+                        executable=final_root / engine.executable.relative_to(candidate_root),
+                        model_dir=final_root / engine.model_dir.relative_to(candidate_root),
+                    )
+                    with self._verified_active_engines_lock:
+                        previous_cache = self._verified_active_engines.pop(requirement_id, None)
+                        if verified_files is not None:
+                            self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
+                                state=state,
+                                engine=active_engine,
+                                files=verified_files,
+                            )
+                    try:
+                        _activate_version(
+                            version=version,
+                            new_version=new_version,
+                            previous_version=previous_version,
+                            active_state_path=requirement_root / "active.json",
+                            state=state,
+                        )
+                    except BaseException:
+                        with self._verified_active_engines_lock:
+                            self._verified_active_engines.pop(requirement_id, None)
+                            if previous_cache is not None:
+                                self._verified_active_engines[requirement_id] = previous_cache
+                        raise
+                    installed_files = _installed_engine_snapshot(
+                        version / "worker", version / "model"
+                    )
+                    if installed_files is None or installed_files != verified_files:
+                        discard_verification_record(version / VERIFICATION_RECORD_NAME)
+                        with self._verified_active_engines_lock:
+                            self._verified_active_engines.pop(requirement_id, None)
+
             activation_error: OSError | None = None
             for activation_attempt in range(3):
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
                 try:
-                    await _commit_operation(
-                        _activate_version,
-                        version=version,
-                        new_version=new_version,
-                        previous_version=previous_version,
-                        active_state_path=requirement_root / "active.json",
-                        state=state,
-                    )
+                    await _commit_operation(activate_verified_version)
                     activation_error = None
                     break
                 except OSError as error:
@@ -1005,42 +1075,6 @@ class EngineInstallationManager:
             # is too late, and reporting it would leave a cancelled job with an
             # installed engine.
             activated = True
-            active_executable = self._resolved_child(
-                version / "worker", worker_descriptor.entry_point
-            )
-            # Committed operations: a cancel that arrives during them is too late.
-            active_engine = InstalledEngine(
-                requirement_id=requirement.requirement_id,
-                artifact_version=artifact_version,
-                executable=active_executable,
-                model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
-                worker_sha256=await _commit_operation(sha256_file, active_executable),
-                content_id=content_id,
-            )
-            installed_files = await _commit_operation(
-                _installed_engine_snapshot, version / "worker", version / "model"
-            )
-            if installed_files is not None and installed_files == verified_files:
-                await _commit_operation(
-                    write_verification_record,
-                    version / VERIFICATION_RECORD_NAME,
-                    verification_record(
-                        {
-                            **state.to_dict(),
-                            "workerDescriptor": worker_descriptor.to_dict(),
-                            "modelDelivery": model_descriptor.to_dict(),
-                        },
-                        installed_files,
-                    ),
-                )
-                with self._verified_active_engines_lock:
-                    self._verified_active_engines[requirement.requirement_id] = (
-                        _VerifiedActiveEngine(
-                            state=state,
-                            engine=active_engine,
-                            files=installed_files,
-                        )
-                    )
             report_progress(1)
             await _commit_operation(
                 self._remove_inactive_versions, requirement_root, artifact_version
