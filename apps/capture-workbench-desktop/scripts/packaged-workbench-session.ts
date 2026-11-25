@@ -233,9 +233,9 @@ export async function checkpointScreenshot(
 /**
  * What a checkpoint screenshot must neither show nor compare: private file
  * names, recognized text, transcripts, speaker names and the player, and
- * values that differ between runs or inputs (times, recording durations, the
- * History "updated" column). The OCR and ASR journeys share one list; a mask
- * whose element is absent changes nothing.
+ * values that differ between runs, inputs or builds (times, recording
+ * durations, the History "updated" column, download sizes). The OCR and ASR
+ * journeys share one list; a mask whose element is absent changes nothing.
  */
 export function checkpointScreenshotMasks(page: Page) {
   return [
@@ -260,6 +260,16 @@ export function checkpointScreenshotMasks(page: Page) {
     page.getByTestId('result-transcript-table'),
     page.getByTestId('result-speaker-name'),
     page.getByTestId('result-speaker-input'),
+    // A download size is the byte count of that build's worker archive, so a
+    // CI-built candidate and a local build show different MB values (#497).
+    // Buttons whose label carries a size are masked whole; their position and
+    // size still compare.
+    page.locator('[data-testid^="first-run-size-"]'),
+    page.getByTestId('first-run-install'),
+    page.getByTestId('asr-install-speakers'),
+    page.getByTestId('engine-card-size'),
+    page.getByTestId('engine-row-size'),
+    page.getByTestId('engine-row-install'),
   ];
 }
 

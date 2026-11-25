@@ -1824,7 +1824,7 @@ test('real desktop teardown rejects unknown modes instead of selecting a PID fal
   );
 });
 
-test('checkpoint screenshots mask private OCR and ASR content and values that change between runs', async () => {
+test('checkpoint screenshots mask private OCR and ASR content and values that change between runs or builds', async () => {
   const selectors: string[] = [];
   const testIds: string[] = [];
   let capturedOptions: { mask?: unknown[] } | undefined;
@@ -1885,6 +1885,12 @@ test('checkpoint screenshots mask private OCR and ASR content and values that ch
       { kind: 'testId', testId: 'result-transcript-table' },
       { kind: 'testId', testId: 'result-speaker-name' },
       { kind: 'testId', testId: 'result-speaker-input' },
+      { kind: 'locator', selector: '[data-testid^="first-run-size-"]' },
+      { kind: 'testId', testId: 'first-run-install' },
+      { kind: 'testId', testId: 'asr-install-speakers' },
+      { kind: 'testId', testId: 'engine-card-size' },
+      { kind: 'testId', testId: 'engine-row-size' },
+      { kind: 'testId', testId: 'engine-row-install' },
     ],
   );
   assert.deepEqual(screenshots, [join('C:\\artifacts', '01-consent-required.png')]);
