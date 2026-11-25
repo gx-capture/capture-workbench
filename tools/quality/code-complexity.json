@@ -1,0 +1,55 @@
+{
+  "thresholds": {
+    "eslint": {
+      "max-lines-per-function": 60,
+      "complexity": 15,
+      "max-params": 4,
+      "max-depth": 3,
+      "max-lines": 421
+    },
+    "ruff": {
+      "C901": 15,
+      "PLR0915": 60,
+      "PLR0913": 5,
+      "PLR1702": 3
+    },
+    "clippy": {
+      "too_many_lines": 60,
+      "too_many_arguments": 5,
+      "excessive_nesting": 5
+    }
+  },
+  "exclude": [
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".github/**",
+    ".opencode/**",
+    "docs/**",
+    "tools/**",
+    "**/scripts/**",
+    "**/*.{spec,test,e2e}.{js,jsx,mjs,cjs,ts,tsx,mts,cts}",
+    "**/{test,tests,testing,__fixtures__}/**",
+    "**/{test_*,*_test,*_tests,conftest}.py",
+    "**/{test,tests,*_test,*_tests,build}.rs",
+    "**/*.config.{js,mjs,cjs,ts,mts,cts}",
+    "**/vitest.workspace.{ts,mts,cts}",
+    "**/*.d.ts",
+    "apps/*-e2e/**",
+    "packages/capture-runtime/pyinstaller/**",
+    "apps/capture-workbench-desktop/src-tauri/src/dev_host/**",
+    "apps/capture-workbench-desktop/src-tauri/src/bin/capture-workbench-dev-host.rs",
+    "apps/capture-workbench/src/app/ui/**",
+    "**/_vendor/**",
+    "packages/capture-runtime-client/src/private/{generated-contracts,capture-document-schema}.ts",
+    "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+    "packages/capture-runtime/src/capture_runtime/_generated_worker_stage_policy.py",
+    "packages/capture-runtime/src/capture_runtime/speech/infrastructure/japanese_kanji/__init__.py"
+  ],
+  "fastApiRoutes": [
+    "packages/capture-runtime/src/capture_runtime/capture/api/streaming.py",
+    "packages/capture-runtime/src/capture_runtime/provisioning/api/runtime.py",
+    "packages/capture-runtime/src/capture_runtime/routes/meta.py",
+    "packages/capture-runtime/src/capture_runtime/structuring/api/model_routes.py"
+  ]
+}

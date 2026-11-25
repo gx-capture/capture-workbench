@@ -1,0 +1,2718 @@
+[
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+    "symbol": "impl LibraryEdits::validate",
+    "value": 7
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+    "symbol": "impl LibraryEdits::validate",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+    "symbol": "impl LibraryEdits::validate",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+    "symbol": "impl LibraryEdits::validate",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/export.rs",
+    "symbol": "render",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/export.rs",
+    "symbol": "render",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/export.rs",
+    "symbol": "render_recording",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/export.rs",
+    "symbol": "render_recording",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/source_selection.rs",
+    "symbol": "impl SourceSelections::inspect_batch",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/state.rs",
+    "symbol": "impl DesktopState::fail_launch",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "excessive_nesting",
+    "file": "packages/capture-sidecar-launcher/src/process/native/job.rs",
+    "symbol": "impl WindowsJob::owned_processes",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_arguments",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/export.rs",
+    "symbol": "render",
+    "value": 7
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_arguments",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs",
+    "symbol": "request_classified",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_arguments",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs",
+    "symbol": "request_with_headers",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_arguments",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs",
+    "symbol": "request_with_retry",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_arguments",
+    "file": "packages/capture-sidecar-launcher/src/launcher/launch.rs",
+    "symbol": "wait_until_ready",
+    "value": 6
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+    "symbol": "impl OcrEvidenceV1::validate",
+    "value": 67
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/launch_policy.rs",
+    "symbol": "impl LaunchPolicy::environment_with",
+    "value": 91
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/lib.rs",
+    "symbol": "run",
+    "value": 83
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/export.rs",
+    "symbol": "render_recording",
+    "value": 106
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+    "symbol": "impl LibraryStore::update_capture",
+    "value": 155
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "apps/capture-workbench-desktop/src-tauri/src/source_selection/inspect.rs",
+    "symbol": "inspect",
+    "value": 77
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "packages/capture-sidecar-launcher/src/launcher/launch.rs",
+    "symbol": "launch_sidecar_with_observer",
+    "value": 74
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "packages/capture-sidecar-launcher/src/process/native/job.rs",
+    "symbol": "impl WindowsJob::owned_processes",
+    "value": 73
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "packages/capture-sidecar-launcher/src/process/native/tree.rs",
+    "symbol": "open_suspended_primary_thread",
+    "value": 67
+  },
+  {
+    "tool": "clippy",
+    "rule": "too_many_lines",
+    "file": "packages/capture-sidecar-launcher/src/process/sidecar_process.rs",
+    "symbol": "impl OwnedSidecarProcess::terminate_and_prove",
+    "value": 134
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+    "symbol": "validatePage",
+    "value": 44
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+    "symbol": "validateProjection",
+    "value": 30
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "apps/capture-workbench/src/app/services/asr-queue.ts",
+    "symbol": "describeAsrDocument",
+    "value": 18
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "apps/capture-workbench/src/app/services/diagnostics.ts",
+    "symbol": "buildDiagnosticsRuntimeView",
+    "value": 16
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "apps/capture-workbench/src/app/services/result-review.ts",
+    "symbol": "applyResultEdit",
+    "value": 22
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/client.ts",
+    "symbol": "CaptureRuntimeClient.constructor",
+    "value": 17
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "assertCaptureProgress",
+    "value": 16
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "assertStructuringBatchSubmission",
+    "value": 23
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "decodeError",
+    "value": 27
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "decodeSse",
+    "value": 22
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateCaptureOcrProjection",
+    "value": 41
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateModelShape",
+    "value": 32
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateOcrBox",
+    "value": 21
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateOcrPage",
+    "value": 47
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateOcrProvenance",
+    "value": 21
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateRuntimeReady",
+    "value": 32
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateStructuringSession",
+    "value": 20
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/private/discovery.ts",
+    "symbol": "negotiateRuntime",
+    "value": 30
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/private/discovery.ts",
+    "symbol": "validateContractBundle",
+    "value": 51
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/private/streaming.ts",
+    "symbol": "captureEvents",
+    "value": 18
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-runtime-client/src/private/transport-retry.ts",
+    "symbol": "requestWithRetry",
+    "value": 19
+  },
+  {
+    "tool": "eslint",
+    "rule": "complexity",
+    "file": "packages/capture-workbench-ui/src/lib/capture-helpers.ts",
+    "symbol": "validateStructuringCandidateImpl",
+    "value": 42
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-depth",
+    "file": "apps/capture-workbench/src/app/services/ocr-queue.ts",
+    "symbol": "parsePdfPageList",
+    "value": 4
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-depth",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "decodeSse",
+    "value": 4
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-depth",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "decodeSse",
+    "value": 4
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-depth",
+    "file": "packages/capture-runtime-client/src/private/streaming.ts",
+    "symbol": "captureEvents",
+    "value": 4
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-depth",
+    "file": "packages/capture-runtime-client/src/private/streaming.ts",
+    "symbol": "captureEvents",
+    "value": 4
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-depth",
+    "file": "packages/capture-runtime-client/src/private/transport-retry.ts",
+    "symbol": "requestWithRetry",
+    "value": 4
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+    "symbol": "<file>",
+    "value": 469
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "apps/capture-workbench/src/app/i18n/desktop-messages.ts",
+    "symbol": "<file>",
+    "value": 943
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "apps/capture-workbench/src/app/services/desktop-capture.service.ts",
+    "symbol": "<file>",
+    "value": 677
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "apps/capture-workbench/src/app/services/result-review.store.ts",
+    "symbol": "<file>",
+    "value": 629
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "packages/capture-runtime-client/src/client.ts",
+    "symbol": "<file>",
+    "value": 493
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "<file>",
+    "value": 924
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-reconciliation.service.ts",
+    "symbol": "<file>",
+    "value": 527
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workbench-store.ts",
+    "symbol": "<file>",
+    "value": 427
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "<file>",
+    "value": 958
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+    "symbol": "validateProjection",
+    "value": 64
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "apps/capture-workbench/src/app/services/pdf-page-renderer.service.ts",
+    "symbol": "createDocumentHandle",
+    "value": 107
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "apps/capture-workbench/src/app/services/pdf-page-renderer.service.ts",
+    "symbol": "createDocumentHandle.renderPage",
+    "value": 87
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "apps/capture-workbench/src/app/services/pdf-page-renderer.service.ts",
+    "symbol": "createDocumentHandle.renderPage.<anonymous>",
+    "value": 81
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateCaptureOcrProjection",
+    "value": 128
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateModelShape",
+    "value": 65
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateOcrPage",
+    "value": 92
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/codec.ts",
+    "symbol": "validateRuntimeReady",
+    "value": 80
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/private/discovery.ts",
+    "symbol": "negotiateRuntime",
+    "value": 108
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/private/discovery.ts",
+    "symbol": "validateContractBundle",
+    "value": 174
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-runtime-client/src/private/streaming.ts",
+    "symbol": "startCapture",
+    "value": 107
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-helpers.ts",
+    "symbol": "validateStructuringCandidateImpl",
+    "value": 133
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-reconciliation.service.ts",
+    "symbol": "CaptureReconciliationService.settleConfirmedOperation",
+    "value": 73
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.processStreamingHostStructuring",
+    "value": 100
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.processStreamingHostStructuring.<anonymous>",
+    "value": 89
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.processStreamingTask",
+    "value": 72
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.processTask",
+    "value": 66
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.settleStreaming",
+    "value": 66
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.waitForStreamingOperation",
+    "value": 63
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/element/capture-workbench-element.ts",
+    "symbol": "CaptureWorkbenchElementRegistrationService.register",
+    "value": 89
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/installation/capture-runtime-installation.service.ts",
+    "symbol": "CaptureRuntimeInstallationService.install",
+    "value": 113
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/installation/capture-runtime-installation.service.ts",
+    "symbol": "CaptureRuntimeInstallationService.install.installNext",
+    "value": 65
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-lines-per-function",
+    "file": "packages/capture-workbench-ui/src/lib/installation/capture-runtime-installation.service.ts",
+    "symbol": "CaptureRuntimeInstallationService.install.installNext.<anonymous>",
+    "value": 64
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-runtime-client/src/client.ts",
+    "symbol": "CaptureRuntimeClient.reportStructuringFailure",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-runtime-client/src/client.ts",
+    "symbol": "CaptureRuntimeClient.submitStructuringBatch",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-runtime-client/src/errors.ts",
+    "symbol": "CaptureRemoteError.constructor",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-runtime-client/src/errors.ts",
+    "symbol": "CaptureRuntimeError.constructor",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-reconciliation.service.ts",
+    "symbol": "CaptureReconciliationService.failTask",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-reconciliation.service.ts",
+    "symbol": "CaptureReconciliationService.reloadStreamingSnapshot$",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-reconciliation.service.ts",
+    "symbol": "CaptureReconciliationService.waitForTerminal",
+    "value": 6
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.configure.failTask",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.failTask",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.handleProcessError",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.processStreamingHostStructuring",
+    "value": 6
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.processStreamingTask",
+    "value": 8
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.reloadStreamingSnapshot$",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.settleStreaming",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/capture-workflow.service.ts",
+    "symbol": "CaptureWorkflowService.waitForStreamingOperation",
+    "value": 6
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/capture-workflow/internal-contracts.ts",
+    "symbol": "CaptureReconciliationContext.failTask",
+    "value": 5
+  },
+  {
+    "tool": "eslint",
+    "rule": "max-params",
+    "file": "packages/capture-workbench-ui/src/lib/installation/capture-runtime-installation.service.ts",
+    "symbol": "pollInstallation",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/_discovery.py",
+    "symbol": "validate_contract_bundle",
+    "value": 17
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 18
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/app.py",
+    "symbol": "create_app",
+    "value": 18
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/api/streaming.py",
+    "symbol": "register_streaming_routes",
+    "value": 90
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
+    "symbol": "StreamingCaptureService._extract_finalized_source",
+    "value": 20
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
+    "symbol": "StreamingCaptureService._process",
+    "value": 34
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
+    "symbol": "StreamingCaptureService.structure",
+    "value": 17
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor._extract_with_workers",
+    "value": 20
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/source_sniffing.py",
+    "symbol": "_recording_media_type",
+    "value": 16
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/config.py",
+    "symbol": "RuntimeSettings.from_env",
+    "value": 26
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+    "symbol": "CaptureDocument.validate_document",
+    "value": 17
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/domain/page/reading_order.py",
+    "symbol": "_front_matter_signature",
+    "value": 19
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/domain/page/reading_order.py",
+    "symbol": "plan_reading_order",
+    "value": 26
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_alignment.py",
+    "symbol": "AlignmentCollector.__enter__",
+    "value": 49
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter._relocate_ort_profile",
+    "value": 20
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.finalize",
+    "value": 16
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 21
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_onnx_adapter.py",
+    "symbol": "OnnxOcrAdapter._extract_png_locked",
+    "value": 19
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_onnx_adapter.py",
+    "symbol": "OnnxOcrAdapter._get_pipeline",
+    "value": 20
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_preflight.py",
+    "symbol": "OcrExecutionPlan.__post_init__",
+    "value": 16
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_profile.py",
+    "symbol": "_validate_document",
+    "value": 24
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._execute",
+    "value": 20
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 23
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_region_lineage.py",
+    "symbol": "validate_region_sources",
+    "value": 18
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_worker_result.py",
+    "symbol": "_parse_ocr_page",
+    "value": 31
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_worker_run.py",
+    "symbol": "OcrWorkerMethods.run_ocr",
+    "value": 25
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/api/runtime.py",
+    "symbol": "register_runtime_routes",
+    "value": 21
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 26
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 40
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 21
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 29
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 24
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "TeaAsrAdapter._attempt",
+    "value": 22
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_worker_result.py",
+    "symbol": "parse_run_result",
+    "value": 16
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/server_log.py",
+    "symbol": "parse_log_line",
+    "value": 17
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+    "symbol": "StructuringSessionRepository._load",
+    "value": 25
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 18
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 31
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_PaddlePageOcrEngine.recognize",
+    "value": 20
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_run",
+    "value": 27
+  },
+  {
+    "tool": "ruff",
+    "rule": "C901",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/server.py",
+    "symbol": "serve",
+    "value": 17
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.__init__",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.upload_path",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/errors.py",
+    "symbol": "CaptureRemoteError.__init__",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/errors.py",
+    "symbol": "CaptureRuntimeError.__init__",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/app.py",
+    "symbol": "create_app",
+    "value": 11
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/ports.py",
+    "symbol": "CaptureRepository.append_chunk",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
+    "symbol": "StreamingCaptureService.__init__",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
+    "symbol": "StreamingCaptureService._fail",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/use_cases.py",
+    "symbol": "AppendChunk.execute",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "CaptureExtractor.extract",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor.__init__",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor._extract_with_workers",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor._run_ocr_worker",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor._run_speech_recognition_worker",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor._run_worker",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor.extract",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "_EngineWorkerClient.diarize",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "_EngineWorkerClient.run",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "_EngineWorkerClient.run_ocr",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_worker_client.py",
+    "symbol": "WorkerClient.run",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+    "symbol": "StreamingRepository.append_chunk",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+    "symbol": "StreamingRepository.append_event",
+    "value": 10
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/contract_set.py",
+    "symbol": "_operation",
+    "value": 13
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/dependencies.py",
+    "symbol": "build_runtime_dependencies",
+    "value": 10
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/diagnostic_log.py",
+    "symbol": "record_worker_failure",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/diarization/application/use_cases.py",
+    "symbol": "DiarizationClient.diarize",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/diarization/application/use_cases.py",
+    "symbol": "DiarizeAudio.execute",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/diarization/infrastructure/speaker_diarization.py",
+    "symbol": "NemotronDiarizationAdapter.__init__",
+    "value": 10
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/diarization/infrastructure/speaker_worker_result.py",
+    "symbol": "SpeakerWorkerMethods.diarize",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_proof.py",
+    "symbol": "AcceptanceOcrExecutionEvidenceSink.__init__",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_onnx_adapter.py",
+    "symbol": "OnnxOcrAdapter.__init__",
+    "value": 17
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline.build",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline.failed",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "_OcrProjectionBuilder.build",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "_OcrProjectionBuilder.failed",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "_OcrProjectionBuilder.failed_from_completed_pages",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "_OcrProjectionBuilder.worker_failure",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_worker_run.py",
+    "symbol": "OcrWorkerMethods.run_ocr",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_activation.py",
+    "symbol": "activate_version",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_Plan.__init__",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_fill_closed_ranges",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_fill_open_ended",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_fill_segment",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_receive",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_model_units.py",
+    "symbol": "install_model_unit",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager.__init__",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_decoder.py",
+    "symbol": "PyAVFileDecoder.__init__",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "TeaAsrAdapter.__init__",
+    "value": 16
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "TeaAsrAdapter._attempt",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_worker_result.py",
+    "symbol": "SpeechWorkerMethods.run",
+    "value": 9
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/application/ports.py",
+    "symbol": "SessionRepository.create_or_get",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/application/ports.py",
+    "symbol": "SessionRepository.submit",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/application/structuring_session_service.py",
+    "symbol": "StructuringSessionService.__init__",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/application/use_cases.py",
+    "symbol": "SubmitStructuringBatch.__init__",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/coordinator.py",
+    "symbol": "StructuringCoordinator.structure",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/external_provider.py",
+    "symbol": "ExternalOllamaCaptureStructuringProvider.__init__",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/lifecycle_impl.py",
+    "symbol": "IsolatedOllamaLifecycle.__init__",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+    "symbol": "OllamaCaptureStructuringProvider.__init__",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring.py",
+    "symbol": "structure_capture",
+    "value": 8
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+    "symbol": "StructuringSessionRepository.create_or_get",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+    "symbol": "StructuringSessionRepository.submit",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+    "symbol": "_request_fingerprint",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request_warm",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/speech_session_server.py",
+    "symbol": "_handle_with_heartbeats",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0913",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/speech_session_server.py",
+    "symbol": "serve_session",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/app.py",
+    "symbol": "create_app",
+    "value": 91
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/api/streaming.py",
+    "symbol": "register_streaming_routes",
+    "value": 231
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py",
+    "symbol": "StreamingCaptureService._process",
+    "value": 87
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "StandaloneRuntimeCaptureExtractor._extract_with_workers",
+    "value": 92
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/config.py",
+    "symbol": "RuntimeSettings.from_env",
+    "value": 72
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/domain/page/reading_order.py",
+    "symbol": "plan_reading_order",
+    "value": 70
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_alignment.py",
+    "symbol": "AlignmentCollector.__enter__",
+    "value": 169
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 73
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_onnx_adapter.py",
+    "symbol": "OnnxOcrAdapter._extract_png_locked",
+    "value": 86
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 67
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_worker_result.py",
+    "symbol": "_parse_ocr_page",
+    "value": 83
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_worker_run.py",
+    "symbol": "OcrWorkerMethods.run_ocr",
+    "value": 71
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 76
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 156
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 106
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 84
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "TeaAsrAdapter._attempt",
+    "value": 109
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/lifecycle_impl.py",
+    "symbol": "IsolatedOllamaLifecycle.start",
+    "value": 61
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+    "symbol": "StructuringSessionRepository._load",
+    "value": 72
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 67
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 116
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_PaddlePageOcrEngine.recognize",
+    "value": 63
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR0915",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_run",
+    "value": 94
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime-client-python/src/capture_runtime_client/client.py",
+    "symbol": "CaptureRuntimeClient.capture_events",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/_pdf_source.py",
+    "symbol": "pdf_page_raster_dimensions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/_pdf_source.py",
+    "symbol": "render_pdf_page",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/app.py",
+    "symbol": "_remove_abandoned_worker_files",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/artifact_parts.py",
+    "symbol": "split_archive",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "_SyncOcrEngineAdapter.recognize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/capture_extraction.py",
+    "symbol": "_SyncOcrEngineAdapter.recognize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+    "symbol": "StreamingRepository.initialize",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+    "symbol": "StreamingRepository.initialize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+    "symbol": "StreamingRepository.read_events",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+    "symbol": "StreamingRepository.read_events",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/diarization/infrastructure/speaker_diarization.py",
+    "symbol": "_activity_turns",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/diarization/infrastructure/speaker_diarization.py",
+    "symbol": "decode_mono_16k",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/gpu_inventory.py",
+    "symbol": "_native_enumerate_adapters",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/gpu_inventory.py",
+    "symbol": "read_gpu_inventory",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/domain/page/reading_order.py",
+    "symbol": "_attach_regions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/image_normalization.py",
+    "symbol": "normalize_image_content",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/image_normalization.py",
+    "symbol": "normalize_image_content",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/image_normalization.py",
+    "symbol": "normalize_image_content",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/image_normalization.py",
+    "symbol": "normalize_image_content",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_composite_regions.py",
+    "symbol": "_raster_gaps",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.finalize",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.finalize",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.finalize",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.finalize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.finalize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 7
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_execution_evidence.py",
+    "symbol": "PaddleOcrExecutionEvidenceAdapter.prepare",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_onnx_adapter.py",
+    "symbol": "OnnxOcrAdapter._reuse_pipeline",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_paddle_normalization.py",
+    "symbol": "_paddle_payload",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py",
+    "symbol": "OcrPipeline._normalize_observation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+    "symbol": "CachingDownloader._entry_lock",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+    "symbol": "CachingDownloader.download",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+    "symbol": "VerifiedDownloadCache.publish",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+    "symbol": "VerifiedDownloadCache.restore",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+    "symbol": "VerifiedDownloadCache.restore",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_download_cache.py",
+    "symbol": "VerifiedDownloadCache.store",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_activation.py",
+    "symbol": "installed_engine_snapshot",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_activation.py",
+    "symbol": "installed_engine_snapshot",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_artifacts.py",
+    "symbol": "safe_extract_artifact",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "LocalModelFileDownloader.download",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "LocalModelFileDownloader.download",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_fill_open_ended",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_fill_open_ended",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_fill_open_ended",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_receive",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_receive",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_receive",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_receive",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_download.py",
+    "symbol": "_receive",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_residue.py",
+    "symbol": "remove_inactive_versions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_residue.py",
+    "symbol": "remove_retired_ocr_installation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_residue.py",
+    "symbol": "remove_retired_ocr_installation",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_model_units.py",
+    "symbol": "remove_inactive_model_unit_versions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_model_units.py",
+    "symbol": "remove_inactive_model_unit_versions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_model_units.py",
+    "symbol": "remove_inactive_model_unit_versions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_model_units.py",
+    "symbol": "remove_inactive_model_unit_versions",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_catalog.py",
+    "symbol": "_model_paths_of_other_units",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager._install_locked",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_installation.py",
+    "symbol": "EngineInstallationManager.uninstall",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/release.py",
+    "symbol": "_validated_engine_release_files",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "ProgressiveCaptureProcessor.process",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py",
+    "symbol": "_SessionWorker._read_batch",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_decoder.py",
+    "symbol": "PyAVFileDecoder.windows",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_decoder.py",
+    "symbol": "PyAVFileDecoder.windows",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_decoder.py",
+    "symbol": "PyAVFileDecoder.windows",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_decoder.py",
+    "symbol": "PyAVFileDecoder.windows",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "TeaAsrAdapter._attempt",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "TeaAsrAdapter._attempt",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py",
+    "symbol": "decode_audio",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/device_policy.py",
+    "symbol": "_find_cuda_uuid",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/external_provider.py",
+    "symbol": "ExternalOllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/external_provider.py",
+    "symbol": "ExternalOllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/external_provider.py",
+    "symbol": "ExternalOllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/external_provider.py",
+    "symbol": "ExternalOllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/lifecycle_impl.py",
+    "symbol": "IsolatedOllamaLifecycle.start",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/lifecycle_impl.py",
+    "symbol": "IsolatedOllamaLifecycle.start",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/lifecycle_impl.py",
+    "symbol": "IsolatedOllamaLifecycle.start",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/lifecycle_impl.py",
+    "symbol": "IsolatedOllamaLifecycle.start",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/listener_owner.py",
+    "symbol": "_proc_listener_pid",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/listener_owner.py",
+    "symbol": "_proc_listener_pid",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+    "symbol": "OllamaCaptureStructuringProvider._structure_exclusive",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+    "symbol": "OllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+    "symbol": "OllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+    "symbol": "OllamaCaptureStructuringProvider._wait_until_ready",
+    "value": 6
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/server_log.py",
+    "symbol": "OllamaLogParser.feed",
+    "value": 5
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess._exchange",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/worker_process.py",
+    "symbol": "WorkerProcess.request",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_PaddlePageOcrEngine.recognize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_PaddlePageOcrEngine.recognize",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_normalized_png",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_normalized_png",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_normalized_png",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_normalized_png",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_normalized_png",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/ocr_main.py",
+    "symbol": "_pdf_page_images",
+    "value": 4
+  },
+  {
+    "tool": "ruff",
+    "rule": "PLR1702",
+    "file": "packages/capture-runtime/src/capture_runtime/workers/speech_session_server.py",
+    "symbol": "serve_session",
+    "value": 5
+  }
+]

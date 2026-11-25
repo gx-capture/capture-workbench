@@ -181,6 +181,10 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/retired-names-gate.ts') {
     return 'retired names Stop hook stdin boundary';
   }
+  if (relativePath === 'tools/code-complexity-gate.ts') {
+    // Its --hook mode reads the same Stop hook payload (readHookPayload).
+    return 'code complexity gate Stop hook stdin boundary';
+  }
   if (relativePath === 'tools/architecture-graph.ts') {
     // Its --hook mode reads the same Stop hook payload (readHookPayload).
     return 'architecture graph Stop hook stdin boundary';

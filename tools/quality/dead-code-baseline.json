@@ -1,7 +1,6 @@
 [
   "default|devDependencies|package.json|angular-eslint",
   "default|devDependencies|package.json|prettier",
-  "default|devDependencies|package.json|typescript-eslint",
   "default|duplicates|packages/capture-runtime-client/src/private/generated-contracts.ts|API_VERSION+CAPTURE_API_VERSION",
   "default|duplicates|packages/capture-runtime-client/src/private/generated-contracts.ts|CAPTURE_RUNTIME_VERSION+RUNTIME_VERSION",
   "default|exports|tools/generated-worker-stage-policy.ts|WORKER_STAGE_EXCEPTION_NAMES",

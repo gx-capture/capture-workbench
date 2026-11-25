@@ -18,6 +18,10 @@
     "./resolve-capture-release.ts",
     "./resolve-capture-release.test.ts",
     "./kept-run-trees.ts",
-    "./kept-run-trees.test.ts"
+    "./kept-run-trees.test.ts",
+    "./code-complexity-gate.ts",
+    "./code-complexity-findings.ts",
+    "./code-complexity-rust.ts",
+    "./code-complexity-gate.test.ts"
   ]
 }

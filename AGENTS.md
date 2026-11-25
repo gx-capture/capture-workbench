@@ -16,6 +16,13 @@
 - When a design or release channel is replaced, delete the old path, its config, CI and release steps, and its docs in the same change. Do not keep it "for compatibility" unless a named consumer still needs it. When a tool cannot see a real use (a CLI entry, a framework callback), add a `knip.json` entry or a vulture decorator ignore in `tools/dead-code-gate.ts`; never add new dead code to the baseline.
 - `.claude/settings.json` runs the check as a Claude Code Stop hook before a turn that changed code ends.
 
+# Code size and complexity
+
+- ESLint, Ruff and Clippy measure hand-written production code. The thresholds and exclusions live in `tools/quality/code-complexity.json`. The baseline in `tools/quality/code-complexity-baseline.json` freezes existing violations and their measured values.
+- `pnpm run code-complexity:check` fails on new or worsened findings; locally it always runs all three tools and also sees new files not yet added to git. The pull-request `checks` job runs it with `--ci`, which also fails when an entry has vanished. That job passes `--clippy-when-changed-since origin/main`, so Clippy runs only when the pull request changes a Rust input (any `*.rs`, `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml`, `.cargo/config`, `clippy.toml`, `rust-toolchain*`, `tools/code-complexity-*.ts`, `tools/quality/code-complexity*.json` or `.github/workflows/ci.yml`); otherwise the Clippy baseline rows stay unchecked, as with `--without clippy`. Run `pnpm run code-complexity:update` (always all three tools; it refuses a run that leaves one out) after reducing or removing known violations.
+- Split code where responsibility and coupling justify a boundary. Line count can locate code to inspect. A new suppression comment does not replace a refactor.
+- `.claude/settings.json` runs the check as a Claude Code Stop hook when the checkout has changes the gate measures (uncommitted, or in commits not on the upstream, as the other Stop hooks see them), with Clippy only when one of them is a Rust input. Findings exit 2 and keep the turn working; a failure of the hook itself (git, a missing tool, an unreadable diagnostic) exits 1 with the error, which the user sees and which does not block the turn.
+
 # Pinned values
 
 - Tests, doubles and fixtures must not copy the current release version or generated artifact hashes. Import `RELEASE_VERSION` / the generated constant (or read its recorded asset), or use an obviously synthetic value for a self-consistent fake. Arbitrary older versions used as scenario data are allowed.

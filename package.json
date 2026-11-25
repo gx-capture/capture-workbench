@@ -19,6 +19,8 @@
     "retired-names:update": "node tools/retired-names-gate.ts --update",
     "dead-code:check": "node tools/dead-code-gate.ts",
     "dead-code:update": "node tools/dead-code-gate.ts --update",
+    "code-complexity:check": "node tools/code-complexity-gate.ts",
+    "code-complexity:update": "node tools/code-complexity-gate.ts --update",
     "architecture:update": "node tools/architecture-graph.ts --write",
     "architecture:check": "node tools/architecture-graph.ts --check",
     "architecture-exceptions:check": "node tools/architecture-exceptions-gate.ts",

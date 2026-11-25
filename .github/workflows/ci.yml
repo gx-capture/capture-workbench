@@ -67,10 +67,11 @@ jobs:
   # Pull requests: lint, type checks, and unit tests of the projects a change
   # affects, and the Workbench production bundle check (with the Workbench
   # build it needs, about 20 s) when the Workbench is affected; the installer
-  # build runs the same check. No other builds, packaging, engine workers, the
-  # installer, the desktop product, or the reference flow. Contract,
-  # architecture, and dead-code gates still cover the whole workspace. A
-  # failure only the push jobs catch shows on main's push run.
+  # build runs the same check. Contract, architecture, dead-code and complexity
+  # gates cover the whole workspace; the complexity gate's Clippy part runs
+  # only when the pull request changes a Rust input (see its step), without
+  # building the installer. Packaging, engine workers, the desktop product
+  # and the reference flow run on main, where failures in those jobs surface.
   checks:
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
@@ -99,7 +100,10 @@ jobs:
 
       - name: Prepare Rust target
         shell: pwsh
-        run: rustup target add x86_64-pc-windows-msvc
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup target add x86_64-pc-windows-msvc
+          rustup component add clippy
 
       - name: Install workspace dependencies
         shell: pwsh
@@ -131,6 +135,16 @@ jobs:
       - name: Dead-code gate
         shell: pwsh
         run: node tools/dead-code-gate.ts --ci
+
+      # Clippy needs the Tauri crate's dependencies compiled, which this job
+      # does not cache, so it runs only when the pull request can change Rust
+      # findings: Rust sources, manifests, lockfiles, Cargo (`.cargo/config.toml`,
+      # `.cargo/config`), Clippy or toolchain configuration, the gate itself or
+      # this workflow. ESLint and Ruff always run. The gate decides from
+      # `git diff origin/main...HEAD`, the base of the `nx affected` lines above.
+      - name: Code size and complexity gate
+        shell: pwsh
+        run: node tools/code-complexity-gate.ts --ci --clippy-when-changed-since origin/main
 
       - name: Pinned values ratchet
         run: pnpm run pinned-values:check -- --ci
