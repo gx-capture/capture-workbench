@@ -366,8 +366,10 @@ async function installSpeechRecognition(
       const message = typeof error?.['message'] === 'string' ? error['message'].toLowerCase() : '';
       const progress = typeof current['progress'] === 'number' ? current['progress'] : -1;
       const progressBand = progress >= 0.8 ? 'late' : progress >= 0.35 ? 'download' : 'early';
-      const reason = message.includes('direct model download exhausted')
-        ? 'direct-model-retries-exhausted'
+      // An I/O failure, including a download that outlasted the network-outage
+      // wait, carries only a generic message, so its code names the reason.
+      const reason = errorCode === 'installation_io_failed'
+        ? 'installation-io'
         : message.includes('worker code probe')
           ? 'worker-code-probe'
           : message.includes('post-install probe')

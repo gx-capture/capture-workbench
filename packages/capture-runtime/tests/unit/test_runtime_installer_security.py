@@ -13,6 +13,9 @@ import pytest
 
 import capture_runtime.provisioning.infrastructure.engine_installation as engine_installation
 from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.provisioning.infrastructure._engine_installation_download import (
+    NetworkOutageRetry,
+)
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineCatalogError,
@@ -484,14 +487,14 @@ def test_direct_model_catalog_rejects_case_colliding_paths() -> None:
 
 
 @pytest.mark.parametrize(
-    "retry_delays",
-    [(), (-1,), (31,), (0, 0, 0, 0, 0, 0)],
+    "backoff_seconds",
+    [(-1,), (61,), (True,), (0,) * 9, (30,) * 5],
 )
-def test_direct_model_retry_schedule_is_bounded(
-    retry_delays: tuple[float, ...],
+def test_network_outage_backoff_is_a_short_bounded_wait(
+    backoff_seconds: tuple[object, ...],
 ) -> None:
-    with pytest.raises(ValueError, match="retry schedule"):
-        HttpModelFileDownloader(retry_delays=retry_delays)
+    with pytest.raises(ValueError, match="network outage backoff"):
+        NetworkOutageRetry(backoff_seconds)  # type: ignore[arg-type]
 
 
 def test_direct_model_download_validates_allowlisted_signed_redirect_before_streaming(
@@ -526,7 +529,7 @@ def test_direct_model_download_validates_allowlisted_signed_redirect_before_stre
             transport=httpx.MockTransport(handler),
             follow_redirects=True,
         ),
-        retry_delays=(0,),
+        retry=NetworkOutageRetry(()),
     )
     destination = tmp_path / "model.bin"
     asyncio.run(
@@ -576,7 +579,7 @@ def test_direct_model_rejects_redirect_before_contacting_unapproved_target(
 
     downloader = HttpModelFileDownloader(
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-        retry_delays=(0,),
+        retry=NetworkOutageRetry(()),
     )
     with pytest.raises(EngineInstallationError, match="redirect"):
         asyncio.run(
@@ -615,7 +618,7 @@ def test_direct_model_rejects_tamper_and_partial_download(
                 )
             )
         ),
-        retry_delays=(0,),
+        retry=NetworkOutageRetry(()),
     )
     destination = tmp_path / "drift.bin"
     with pytest.raises(EngineInstallationError, match=expected_message):
@@ -651,7 +654,7 @@ def test_direct_model_retries_bare_oserror_from_windows_transport(
 
     downloader = HttpModelFileDownloader(
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-        retry_delays=(0, 0, 0),
+        retry=NetworkOutageRetry((0, 0)),
     )
     destination = tmp_path / "recovered.bin"
     asyncio.run(
@@ -666,7 +669,9 @@ def test_direct_model_retries_bare_oserror_from_windows_transport(
     assert destination.read_bytes() == content
 
 
-def test_direct_model_cancellation_removes_partial_file(tmp_path: Path) -> None:
+def test_direct_model_cancellation_keeps_the_partial_file_and_its_resume_record(
+    tmp_path: Path,
+) -> None:
     content = b"expected byte"
     descriptor = _direct_model_file(content)
     cancelled = asyncio.Event()
@@ -680,7 +685,7 @@ def test_direct_model_cancellation_removes_partial_file(tmp_path: Path) -> None:
                 )
             )
         ),
-        retry_delays=(0,),
+        retry=NetworkOutageRetry(()),
     )
     destination = tmp_path / "cancelled.bin"
     with pytest.raises(asyncio.CancelledError):
@@ -692,7 +697,14 @@ def test_direct_model_cancellation_removes_partial_file(tmp_path: Path) -> None:
                 progress=lambda _copied: cancelled.set(),
             )
         )
+    # The next download resumes after the bytes that arrived before the cancel.
     assert not destination.exists()
+    partial = destination.with_name(destination.name + ".part")
+    record = destination.with_name(destination.name + ".part.json")
+    assert partial.read_bytes() == b"expected"
+    resume = json.loads(record.read_text(encoding="utf-8"))
+    assert resume["sha256"] == descriptor.sha256
+    assert resume["parts"][0]["segments"][0]["received"] == len(b"expected")
 
 
 def test_local_model_downloader_copies_only_locked_root_file(

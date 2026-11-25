@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from itertools import pairwise
 from pathlib import Path
 from typing import BinaryIO
 
@@ -168,6 +170,9 @@ def _run(downloader, descriptor, destination: Path, **kwargs: object) -> None:
 
 
 def _artifact_downloader(handler, **kwargs: object) -> HttpArtifactDownloader:
+    # One attempt, so a test can observe the interrupted partial. Production
+    # uses the default outage wait; tests that exercise it pass `retry`.
+    kwargs.setdefault("retry", download_module.NetworkOutageRetry(()))
     return HttpArtifactDownloader(
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         **kwargs,  # type: ignore[arg-type]
@@ -219,6 +224,96 @@ def test_a_ranged_download_resumes_each_segment_from_its_first_missing_byte(
     part_path, sidecar_path = _partial(destination)
     assert not part_path.exists()
     assert not sidecar_path.exists()
+
+
+def test_a_ranged_download_retries_each_segment_from_its_first_missing_byte(
+    tmp_path: Path,
+) -> None:
+    payload = bytes(range(200))
+    descriptor = _artifact(payload)
+    destination = tmp_path / "download.zip"
+    ranges: list[str] = []
+    arrived = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        byte_range = request.headers["range"]
+        ranges.append(byte_range)
+        start_text, end_text = byte_range.removeprefix("bytes=").split("-")
+        start, end = int(start_text), int(end_text)
+        headers = {"content-range": f"bytes {start}-{end}/{len(payload)}"}
+        if arrived[0] < 2 and end - start + 1 > 40:
+            return httpx.Response(
+                206,
+                headers=headers,
+                stream=_Barrier(payload[start : start + 40], arrived, 2),
+                request=request,
+            )
+        return httpx.Response(
+            206, headers=headers, content=payload[start : end + 1], request=request
+        )
+
+    downloader = _artifact_downloader(
+        handler, parallel_min_bytes=1, parallel_segments=2, retry=_outage(0)
+    )
+    _run(downloader, descriptor, destination)
+
+    assert ranges[0] == "bytes=0-0"
+    assert sorted(ranges[1:3]) == ["bytes=0-99", "bytes=100-199"]
+    # One download call: the retry continues both segments without probing again.
+    assert sorted(ranges[3:]) == ["bytes=140-199", "bytes=40-99"]
+    assert destination.read_bytes() == payload
+    part_path, sidecar_path = _partial(destination)
+    assert not part_path.exists()
+    assert not sidecar_path.exists()
+
+
+@pytest.mark.parametrize("status", [404, 503])
+def test_a_failed_range_probe_is_not_taken_for_a_server_without_ranges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A 404 fails at once; a 503 waits, probes again, and then uses ranges."""
+
+    payload = bytes(range(200))
+    descriptor = _artifact(payload)
+    destination = tmp_path / "download.zip"
+    events: list[str] = []
+    original_pause = download_module._pause_for_network_outage
+
+    async def pause(seconds: float, cancel_event: asyncio.Event) -> None:
+        events.append("wait")
+        await original_pause(seconds, cancel_event)
+
+    monkeypatch.setattr(download_module, "_pause_for_network_outage", pause)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        byte_range = request.headers.get("range")
+        events.append(f"GET {byte_range}")
+        if byte_range == "bytes=0-0" and events.count("GET bytes=0-0") == 1:
+            return httpx.Response(status, request=request)
+        assert byte_range is not None, "a failed probe must not select the single stream"
+        start_text, end_text = byte_range.removeprefix("bytes=").split("-")
+        start, end = int(start_text), int(end_text)
+        return httpx.Response(
+            206,
+            headers={"content-range": f"bytes {start}-{end}/{len(payload)}"},
+            content=payload[start : end + 1],
+            request=request,
+        )
+
+    downloader = _artifact_downloader(
+        handler, parallel_min_bytes=1, parallel_segments=2, retry=_outage(0, 0, 0)
+    )
+    if status == 404:
+        with pytest.raises(httpx.HTTPStatusError):
+            _run(downloader, descriptor, destination)
+        assert events == ["GET bytes=0-0"]
+        assert not destination.exists()
+        return
+    _run(downloader, descriptor, destination)
+
+    assert events[:3] == ["GET bytes=0-0", "wait", "GET bytes=0-0"]
+    assert sorted(events[3:]) == ["GET bytes=0-99", "GET bytes=100-199"]
+    assert destination.read_bytes() == payload
 
 
 def test_a_stream_download_resumes_with_an_open_range(tmp_path: Path) -> None:
@@ -553,7 +648,7 @@ def test_a_direct_model_retry_resumes_the_partial_file(tmp_path: Path) -> None:
 
     downloader = HttpModelFileDownloader(
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True),
-        retry_delays=(0, 0),
+        retry=download_module.NetworkOutageRetry((0,)),
     )
     _run(downloader, descriptor, destination, progress=reported.append)
 
@@ -1068,21 +1163,27 @@ def test_rewind_invalidates_stale_progress_or_fails_before_rewriting(
             raise PermissionError("progress removal failed")
         original_unlink(path, *args, **kwargs)
 
+    requested = []
+
     def ignore_range(request):
+        requested.append(request.headers.get("range"))
         assert request.headers["range"] == "bytes=5-"
         return httpx.Response(200, stream=_Interrupt(payload[:3]))
 
     monkeypatch.setattr(download_module, "_atomic_write", write)
     monkeypatch.setattr(Path, "unlink", unlink)
-    downloader = _artifact_downloader(ignore_range)
     if removal_fails:
+        # With the outage wait on: a local failure ends the download at once,
+        # before a retry could write over bytes the old record still names.
+        downloader = _artifact_downloader(ignore_range, retry=_outage(0, 0, 0))
         with pytest.raises(PermissionError, match="progress removal failed"):
             _run(downloader, descriptor, destination)
+        assert requested == ["bytes=5-"]
         assert sidecar.read_bytes() == old_progress
         assert partial.read_bytes() == payload[:5]
     else:
         with pytest.raises(httpx.ReadError):
-            _run(downloader, descriptor, destination)
+            _run(_artifact_downloader(ignore_range), descriptor, destination)
         assert not sidecar.exists()
         assert partial.read_bytes() == payload[:3]
         monkeypatch.setattr(download_module, "_atomic_write", original_write)
@@ -1095,3 +1196,542 @@ def test_rewind_invalidates_stale_progress_or_fails_before_rewriting(
         _run(_artifact_downloader(restart), descriptor, destination)
         assert requests == [None]
         assert destination.read_bytes() == payload
+
+
+def _range_start(request: httpx.Request) -> int:
+    byte_range = request.headers.get("range")
+    if byte_range is None:
+        return 0
+    return int(byte_range.removeprefix("bytes=").split("-", 1)[0])
+
+
+def _served(payload: bytes, request: httpx.Request, *, deliver: int | None) -> httpx.Response:
+    """Serve `payload` from the request's Range, or `deliver` bytes and then drop."""
+
+    start = _range_start(request)
+    if deliver is None:
+        body = payload[start:]
+        if start == 0:
+            return httpx.Response(200, content=body, request=request)
+        return httpx.Response(
+            206,
+            headers={
+                "content-range": f"bytes {start}-{len(payload) - 1}/{len(payload)}",
+                "content-length": str(len(body)),
+            },
+            content=body,
+            request=request,
+        )
+    chunk = payload[start : start + deliver]
+    if start == 0:
+        return httpx.Response(200, stream=_Interrupt(chunk), request=request)
+    return httpx.Response(
+        206,
+        headers={"content-range": f"bytes {start}-{len(payload) - 1}/{len(payload)}"},
+        stream=_Interrupt(chunk),
+        request=request,
+    )
+
+
+def _outage(*waits: float) -> download_module.NetworkOutageRetry:
+    return download_module.NetworkOutageRetry(waits)
+
+
+def _kind_downloader(kind: str, handler, retry: download_module.NetworkOutageRetry):
+    if kind == "archive":
+        return _artifact_downloader(handler, retry=retry)
+    return HttpModelFileDownloader(
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        retry=retry,
+    )
+
+
+def _kind_descriptor(kind: str, payload: bytes):
+    if kind == "archive":
+        return _artifact(payload)
+    return _model(payload)
+
+
+def test_the_default_network_outage_wait_is_about_a_minute() -> None:
+    waits = download_module.NetworkOutageRetry().backoff_seconds
+    assert 60 <= sum(waits) <= 90
+    assert all(later == earlier * 2 for earlier, later in pairwise(waits))
+
+
+def test_a_worker_archive_resumes_after_the_connection_drops(tmp_path: Path) -> None:
+    payload = bytes(range(80))
+    destination = tmp_path / "download.zip"
+    ranges: list[str | None] = []
+    drops_remaining = 3
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal drops_remaining
+        ranges.append(request.headers.get("range"))
+        if drops_remaining:
+            drops_remaining -= 1
+            return _served(payload, request, deliver=10)
+        return _served(payload, request, deliver=None)
+
+    _run(
+        _artifact_downloader(handler, retry=_outage(0, 0, 0)),
+        _artifact(payload),
+        destination,
+    )
+
+    assert destination.read_bytes() == payload
+    assert ranges == [None, "bytes=10-", "bytes=20-", "bytes=30-"]
+    part_path, sidecar_path = _partial(destination)
+    assert not part_path.exists()
+    assert not sidecar_path.exists()
+
+
+def test_a_parted_worker_archive_resumes_after_the_connection_drops(tmp_path: Path) -> None:
+    whole = bytes(range(90))
+    pieces = [whole[:40], whole[40:]]
+    destination = tmp_path / "download.zip"
+    requested: list[tuple[str, str | None]] = []
+    drops_remaining = 2
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal drops_remaining
+        name = request.url.path.rsplit("/", 1)[-1]
+        requested.append((name, request.headers.get("range")))
+        content = pieces[0] if name.endswith(".001") else pieces[1]
+        if name.endswith(".002") and drops_remaining:
+            drops_remaining -= 1
+            return _served(content, request, deliver=12)
+        return _served(content, request, deliver=None)
+
+    _run(
+        _artifact_downloader(handler, retry=_outage(0, 0)),
+        _artifact(whole, parts=pieces),
+        destination,
+    )
+
+    assert destination.read_bytes() == whole
+    assert [item for item in requested if item[0].endswith(".001")] == [(f"{NAME}.001", None)]
+    second = [item for item in requested if item[0].endswith(".002")]
+    assert second == [
+        (f"{NAME}.002", None),
+        (f"{NAME}.002", "bytes=12-"),
+        (f"{NAME}.002", "bytes=24-"),
+    ]
+    part_path, sidecar_path = _partial(destination)
+    assert not part_path.exists()
+    assert not sidecar_path.exists()
+
+
+def test_a_model_file_resumes_after_the_connection_drops(tmp_path: Path) -> None:
+    content = b"m" * 70
+    destination = tmp_path / "model.bin"
+    ranges: list[str | None] = []
+    drops_remaining = 3
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal drops_remaining
+        ranges.append(request.headers.get("range"))
+        if drops_remaining:
+            drops_remaining -= 1
+            return _served(content, request, deliver=10)
+        return _served(content, request, deliver=None)
+
+    _run(
+        HttpModelFileDownloader(
+            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            retry=_outage(0, 0, 0),
+        ),
+        _model(content),
+        destination,
+    )
+
+    assert destination.read_bytes() == content
+    assert ranges == [None, "bytes=10-", "bytes=20-", "bytes=30-"]
+    part_path, sidecar_path = _partial(destination)
+    assert not part_path.exists()
+    assert not sidecar_path.exists()
+
+
+def test_bytes_already_received_restart_the_outage_wait(tmp_path: Path) -> None:
+    """One wait is the whole budget for a stretch that stores nothing.
+
+    Each dropped attempt stores new bytes, so the download still finishes.
+    """
+
+    payload = bytes(range(50))
+    destination = tmp_path / "download.zip"
+    ranges: list[str | None] = []
+    drops_remaining = 4
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal drops_remaining
+        ranges.append(request.headers.get("range"))
+        if drops_remaining:
+            drops_remaining -= 1
+            return _served(payload, request, deliver=10)
+        return _served(payload, request, deliver=None)
+
+    _run(
+        _artifact_downloader(handler, retry=_outage(0)),
+        _artifact(payload),
+        destination,
+    )
+
+    # Each attempt continues where the last one stopped; a restart from byte 0
+    # would store nothing new and use up the single wait.
+    assert ranges == [None, "bytes=10-", "bytes=20-", "bytes=30-", "bytes=40-"]
+    assert destination.read_bytes() == payload
+
+
+def test_a_server_that_rewinds_to_shorter_bodies_does_not_restart_the_outage_wait(
+    tmp_path: Path,
+) -> None:
+    """Refilling bytes held before is not progress, so the wait still runs out.
+
+    The server ignores Range and answers each attempt from byte 0, alternating
+    10 and 2 bytes before it drops. Every 10-byte attempt grows the partial
+    from 2 to 10, but never past the 10 bytes it already held once.
+    """
+
+    payload = bytes(range(60))
+    destination = tmp_path / "download.zip"
+    ranges: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ranges.append(request.headers.get("range"))
+        deliver = 10 if len(ranges) % 2 else 2
+        return httpx.Response(200, stream=_Interrupt(payload[:deliver]), request=request)
+
+    with pytest.raises(download_module.NetworkOutageExceeded):
+        _run(
+            _artifact_downloader(handler, retry=_outage(0, 0, 0)),
+            _artifact(payload),
+            destination,
+        )
+
+    # The first attempt stores bytes; three waits and the attempt that finds
+    # the budget used up are four more.
+    assert ranges == [None, "bytes=10-", "bytes=2-", "bytes=10-", "bytes=2-"]
+
+
+@pytest.mark.parametrize("kind", ["archive", "model"])
+def test_a_network_outage_that_does_not_recover_is_installation_io_failed(
+    tmp_path: Path, kind: str
+) -> None:
+    from capture_runtime.provisioning.application.installation_service import (
+        installation_failure_code,
+    )
+
+    payload = bytes(range(60))
+    destination = tmp_path / ("download.zip" if kind == "archive" else "model.bin")
+    ranges: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ranges.append(request.headers.get("range"))
+        if request.headers.get("range") is None:
+            return _served(payload, request, deliver=20)
+        return _served(payload, request, deliver=0)
+
+    downloader = _kind_downloader(kind, handler, _outage(0, 0, 0))
+    descriptor = _kind_descriptor(kind, payload)
+    with pytest.raises(OSError) as caught:
+        _run(downloader, descriptor, destination)
+
+    assert installation_failure_code(caught.value) == "installation_io_failed"
+    assert not isinstance(caught.value, TimeoutError)
+    # The first attempt stores bytes and restarts the wait. Three waits and the
+    # attempt that finds the budget used up are four more requests.
+    assert ranges == [None, "bytes=20-", "bytes=20-", "bytes=20-", "bytes=20-"]
+    part_path, sidecar_path = _partial(destination)
+    assert part_path.read_bytes() == payload[:20]
+    saved = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert saved["parts"][0]["segments"][0]["received"] == 20
+
+    resumed: list[str | None] = []
+
+    def finish(request: httpx.Request) -> httpx.Response:
+        resumed.append(request.headers.get("range"))
+        return _served(payload, request, deliver=None)
+
+    _run(_kind_downloader(kind, finish, _outage()), descriptor, destination)
+    assert resumed == ["bytes=20-"]
+    assert destination.read_bytes() == payload
+
+
+@pytest.mark.parametrize("kind", ["archive", "model"])
+def test_a_missing_download_is_not_retried(tmp_path: Path, kind: str) -> None:
+    payload = b"missing"
+    destination = tmp_path / ("download.zip" if kind == "archive" else "model.bin")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(404, request=request)
+
+    downloader = _kind_downloader(kind, handler, _outage(0, 0, 0))
+    if kind == "model":
+        with pytest.raises(EngineInstallationError, match="non-retryable"):
+            _run(downloader, _kind_descriptor(kind, payload), destination)
+    else:
+        with pytest.raises(httpx.HTTPStatusError):
+            _run(downloader, _kind_descriptor(kind, payload), destination)
+    assert calls == 1
+    part_path, sidecar_path = _partial(destination)
+    assert not destination.exists()
+    assert not part_path.exists()
+    assert not sidecar_path.exists()
+
+
+@pytest.mark.parametrize("kind", ["archive", "model"])
+@pytest.mark.parametrize("status", [408, 429, 503])
+def test_a_transient_http_status_is_retried_until_the_bytes_match(
+    tmp_path: Path, kind: str, status: int
+) -> None:
+    payload = b"recovered-after-status"
+    destination = tmp_path / ("download.zip" if kind == "archive" else "model.bin")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(status, request=request)
+        return httpx.Response(200, content=payload, request=request)
+
+    _run(
+        _kind_downloader(kind, handler, _outage(0)),
+        _kind_descriptor(kind, payload),
+        destination,
+    )
+    assert calls == 2
+    assert destination.read_bytes() == payload
+
+
+def test_a_checksum_mismatch_is_not_retried(tmp_path: Path) -> None:
+    payload = b"abcdefghijklmnopqrstuvwxyz"
+    destination = tmp_path / "download.zip"
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, content=b"x" * len(payload), request=request)
+
+    with pytest.raises(EngineInstallationError, match="checksum"):
+        _run(
+            _artifact_downloader(handler, retry=_outage(0, 0, 0)),
+            _artifact(payload),
+            destination,
+        )
+    assert calls == 1
+    assert not destination.exists()
+
+
+class _FailingWriter:
+    """The partial's writer, failing every write with the given local error."""
+
+    def __init__(self, handle: BinaryIO, error: OSError) -> None:
+        self._handle = handle
+        self._error = error
+
+    def write(self, data: bytes) -> int:
+        raise self._error
+
+    def flush(self) -> None:
+        self._handle.flush()
+
+    def fileno(self) -> int:
+        return self._handle.fileno()
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (OSError(errno.ENOSPC, "No space left on device"), "installation_io_failed"),
+        (PermissionError(errno.EACCES, "Access is denied"), "installation_io_failed"),
+        (TimeoutError("local disk timed out"), "installation_timeout"),
+    ],
+)
+@pytest.mark.parametrize("kind", ["archive", "model"])
+def test_a_local_file_failure_ends_the_download_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, error: OSError, code: str
+) -> None:
+    from capture_runtime.provisioning.application.installation_service import (
+        installation_failure_code,
+    )
+
+    payload = bytes(range(40))
+    destination = tmp_path / ("download.zip" if kind == "archive" else "model.bin")
+    calls = 0
+    original = download_module._open_part
+
+    @contextmanager
+    def open_part(plan: object, position: int) -> Iterator[object]:
+        with original(plan, position) as handle:  # type: ignore[arg-type]
+            yield _FailingWriter(handle, error)
+
+    monkeypatch.setattr(download_module, "_open_part", open_part)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, content=payload, request=request)
+
+    with pytest.raises(OSError) as caught:
+        _run(
+            _kind_downloader(kind, handler, _outage(0, 0, 0)),
+            _kind_descriptor(kind, payload),
+            destination,
+        )
+
+    assert caught.value is error
+    assert installation_failure_code(caught.value) == code
+    assert calls == 1
+
+
+class _BareOSErrorBody(httpx.AsyncByteStream):
+    """A body that delivers some bytes, then fails as Windows can: a bare OSError."""
+
+    def __init__(self, chunk: bytes, *, on_close: bool = False) -> None:
+        self._chunk = chunk
+        self._on_close = on_close
+
+    async def __aiter__(self):
+        yield self._chunk
+        if not self._on_close:
+            raise OSError("connection aborted by the operating system")
+
+    async def aclose(self) -> None:
+        if self._on_close:
+            raise OSError("connection aborted while closing")
+
+
+@pytest.mark.parametrize("where", ["request", "body", "close"])
+@pytest.mark.parametrize("kind", ["archive", "model"])
+def test_an_os_error_of_the_http_layer_is_retried_as_a_transport_failure(
+    tmp_path: Path, kind: str, where: str
+) -> None:
+    payload = bytes(range(60))
+    destination = tmp_path / ("download.zip" if kind == "archive" else "model.bin")
+    ranges: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ranges.append(request.headers.get("range"))
+        if len(ranges) == 1:
+            if where == "request":
+                raise ConnectionAbortedError("connection aborted while sending")
+            if where == "body":
+                return httpx.Response(200, stream=_BareOSErrorBody(payload[:20]), request=request)
+            return httpx.Response(200, stream=_BareOSErrorBody(payload, on_close=True))
+        return _served(payload, request, deliver=None)
+
+    _run(
+        _kind_downloader(kind, handler, _outage(0)),
+        _kind_descriptor(kind, payload),
+        destination,
+    )
+
+    # A close that failed after the whole body needs no second request.
+    expected = {"request": [None, None], "body": [None, "bytes=20-"], "close": [None]}
+    assert ranges == expected[where]
+    assert destination.read_bytes() == payload
+
+
+@pytest.mark.parametrize("kind", ["archive", "model"])
+def test_a_cancelled_download_does_not_hash_a_present_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    content = b"m" * 50
+    descriptor = _kind_descriptor(kind, content)
+    destination = tmp_path / ("download.zip" if kind == "archive" else "model.bin")
+    first = asyncio.Event()
+
+    def stop_when_complete(copied: int) -> None:
+        if copied == len(content):
+            first.set()
+
+    downloader = _kind_downloader(
+        kind, lambda request: httpx.Response(200, content=content), _outage()
+    )
+    with pytest.raises(asyncio.CancelledError):
+        _run(downloader, descriptor, destination, progress=stop_when_complete, cancel_event=first)
+    part_path, sidecar_path = _partial(destination)
+    assert part_path.read_bytes() == content
+    record = sidecar_path.read_bytes()
+    hashed: list[Path] = []
+    original = download_module._file_size_and_sha256
+
+    def recording_hash(path: Path) -> tuple[int, str]:
+        hashed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(download_module, "_file_size_and_sha256", recording_hash)
+    cancelled = asyncio.Event()
+    cancelled.set()
+    with pytest.raises(asyncio.CancelledError):
+        _run(downloader, descriptor, destination, cancel_event=cancelled)
+
+    assert hashed == []
+    assert not destination.exists()
+    assert part_path.read_bytes() == content
+    assert sidecar_path.read_bytes() == record
+
+
+def test_cancelling_during_the_outage_wait_stops_the_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"partial-download-bytes-and-more"
+    destination = tmp_path / "download.zip"
+    descriptor = _artifact(payload)
+    cancel = asyncio.Event()
+    calls = 0
+    clients: list[httpx.AsyncClient] = []
+    original_pause = download_module._pause_for_network_outage
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, stream=_Interrupt(payload[:8]), request=request)
+
+    def client() -> httpx.AsyncClient:
+        created = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        clients.append(created)
+        return created
+
+    downloader = HttpArtifactDownloader(client, retry=_outage(30))
+
+    async def scenario() -> None:
+        waiting = asyncio.Event()
+
+        async def pause(seconds: float, cancel_event: asyncio.Event) -> None:
+            # The download task runs on until the wait suspends it, past the
+            # pause's own is_set() check, before the test can cancel.
+            waiting.set()
+            await original_pause(seconds, cancel_event)
+
+        monkeypatch.setattr(download_module, "_pause_for_network_outage", pause)
+        download = asyncio.create_task(
+            downloader.download(
+                descriptor,
+                destination,
+                cancel_event=cancel,
+                progress=lambda _copied: None,
+            )
+        )
+        await asyncio.wait_for(waiting.wait(), 5)
+        assert not download.done()
+        started = asyncio.get_running_loop().time()
+        cancel.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(download, 1)
+        assert asyncio.get_running_loop().time() - started < 1
+        assert asyncio.all_tasks() == {asyncio.current_task()}
+
+    asyncio.run(scenario())
+    assert calls == 1
+    assert len(clients) == 1 and clients[0].is_closed
+    part_path, sidecar_path = _partial(destination)
+    assert part_path.read_bytes() == payload[:8]
+    assert json.loads(sidecar_path.read_text(encoding="utf-8"))["parts"][0]["segments"][0][
+        "received"
+    ] == len(payload[:8])

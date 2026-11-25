@@ -2306,5 +2306,11 @@
     "match": "word",
     "replacement": "Copy the exact owner-approved images by hand (apps/capture-workbench-desktop/README.md#approving-images)",
     "allowed": []
+  },
+  {
+    "name": "direct-model-retries-exhausted",
+    "match": "substring",
+    "replacement": "installation-io (the oracle reason for installation_io_failed)",
+    "allowed": []
   }
 ]

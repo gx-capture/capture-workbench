@@ -15,7 +15,7 @@
 2. **需求 (`requirement`)**：`RuntimeRequirement` 實體描述需求識別碼、顯示名稱與就緒狀態。
 3. **引擎目錄 (`catalog`)**：`EngineCatalog` 與 `EngineRequirementDescriptor` 描述需求的檔案規格與校驗雜湊。
 
-一般安裝（`POST /v2/runtime/installations`）不接受結構化模型：它由結構化模型安裝選擇與安裝，請求寫 `structuring-model` 是驗證錯誤並指向模型安裝；查詢與結果仍用完整的需求識別碼。安裝作業的檔案錯誤分成逾時 `installation_timeout` 與其他 I/O 錯誤 `installation_io_failed`（先判斷逾時，因為逾時也是 I/O 錯誤）；0.10.x 存下、分不出是否逾時的舊檔案錯誤代碼讀成一般的 `installation_failed`，保留原本的訊息與可重試旗標，檔案不改寫。模型安裝只在另一次嘗試可能成功時標為可重試：選項不在發布目錄、目錄的 profile 位元組不符，或拉下的模型摘要或大小與目錄不符時不可重試。卸載時，另一個行程正在安裝或檔案仍被開啟回答 409 `requirement_in_use`，其他失敗回答 500 `uninstall_failed`，訊息不含路徑。422 `requirement_disabled`（訊息「Structuring model management is not available in this runtime's structuring mode.」）的條件依路由而定。一般安裝與卸載只在主機（`host`）與外部 Ollama（`external-ollama`）模式下，對 `structuring-runtime` 與 `structuring-model` 回答它；一般安裝的請求先經過驗證，寫 `structuring-model` 在任何模式都是 422 `validation_error`，所以一般安裝實際只對 `structuring-runtime` 回答 `requirement_disabled`。模型選項（`GET /v2/runtime/structuring-model-options`）與開始模型安裝（`POST /v2/runtime/structuring-model-installations`）在內建 Ollama（`ollama`）以外的每個模式（主機、外部 Ollama、假供應者 `fake`）都回答它；讀取或取消既有的模型安裝作業不看模式。假供應者模式下，一般安裝與卸載照常交給安裝器。
+一般安裝（`POST /v2/runtime/installations`）不接受結構化模型：它由結構化模型安裝選擇與安裝，請求寫 `structuring-model` 是驗證錯誤並指向模型安裝；查詢與結果仍用完整的需求識別碼。安裝作業的檔案錯誤分成逾時 `installation_timeout` 與其他 I/O 錯誤 `installation_io_failed`（先判斷逾時，因為逾時也是 I/O 錯誤）。下載連線失敗、讀取被中斷、網路逾時，或 HTTP 5xx、408、429，而整段網路中斷等待都沒有新進展時，同樣是 `installation_io_failed`，不是 `installation_unexpected`，也不使用 `direct_model_retries_exhausted`。0.10.x 存下、分不出是否逾時的舊檔案錯誤代碼讀成一般的 `installation_failed`，保留原本的訊息與可重試旗標，檔案不改寫。模型安裝只在另一次嘗試可能成功時標為可重試：選項不在發布目錄、目錄的 profile 位元組不符，或拉下的模型摘要或大小與目錄不符時不可重試。卸載時，另一個行程正在安裝或檔案仍被開啟回答 409 `requirement_in_use`，其他失敗回答 500 `uninstall_failed`，訊息不含路徑。422 `requirement_disabled`（訊息「Structuring model management is not available in this runtime's structuring mode.」）的條件依路由而定。一般安裝與卸載只在主機（`host`）與外部 Ollama（`external-ollama`）模式下，對 `structuring-runtime` 與 `structuring-model` 回答它；一般安裝的請求先經過驗證，寫 `structuring-model` 在任何模式都是 422 `validation_error`，所以一般安裝實際只對 `structuring-runtime` 回答 `requirement_disabled`。模型選項（`GET /v2/runtime/structuring-model-options`）與開始模型安裝（`POST /v2/runtime/structuring-model-installations`）在內建 Ollama（`ollama`）以外的每個模式（主機、外部 Ollama、假供應者 `fake`）都回答它；讀取或取消既有的模型安裝作業不看模式。假供應者模式下，一般安裝與卸載照常交給安裝器。
 
 ```mermaid
 classDiagram
@@ -108,3 +108,15 @@ sequenceDiagram
 ## 共用下載快取
 
 下載快取以 SHA-256 為鍵。快取未命中時，以 `<root>/.locks/<sha256>.lock` 的跨程序排他鎖序列化同一內容的下載，持鎖至發布與儲存完成；同程序的並行安裝也使用這把鎖。取得鎖後再次驗證快取，重用其他安裝完成的內容。等待可取消，沒有總逾時；持有程序終止後由作業系統釋放鎖，後續下載可續傳留下的部分檔案。鎖檔保留，閒置清理排除 `.locks`。
+
+## 下載的網路中斷
+
+引擎產物（整份 worker 封存，以及 `.zip.001` 這類分段）和直接模型檔共用 `NetworkOutageRetry`。要不要重試看失敗從哪裡來，不看例外型別。會重試的是 HTTP 層的失敗：送出請求與收到回應標頭、讀取本體、關閉回應時的連線失敗、讀取中斷與網路逾時，以及 HTTP 5xx、408 與 429。HTTP 層丟出的裸 `OSError`（Windows 可能這樣回報被中止的連線）在那個邊界就當成傳輸失敗，不靠錯誤號碼判斷。在 Windows 上實測，伺服器關閉連線時 httpx 回報 `RemoteProtocolError`，連線被重設時回報 `ReadError`；兩者都是傳輸失敗。大型產物分段下載前會先探測一個位元組的 Range：探測遇到傳輸失敗或暫時性狀態碼一樣交給這個重試，等待後再探測一次；其他錯誤狀態碼（例如 404）照原樣失敗，只送一次請求；只有 200，或不是所探測範圍的 206、416，才改用單一串流。其他 4xx、摘要或大小不符、取消都不重試。
+
+本機的工作失敗不重試，原本的錯誤立刻往上傳：配置與開啟部分檔、寫入、落盤、計算摘要。磁碟已滿或權限不足的失敗代碼是 `installation_io_failed`，本機逾時是 `installation_timeout`。存寫續傳紀錄失敗則不中止下載：紀錄只標成過期，留在磁碟上的舊紀錄記載的位元組比實際少，下一個檢查點再存一次。唯一立刻停下的紀錄失敗是倒回重下時刪不掉過期的續傳紀錄：舊紀錄此時記載的位元組比即將重寫的多，所以下載停下，部分檔與續傳紀錄都保留，之後的嘗試不會覆寫紀錄仍然記載的位元組。
+
+等待序列是 `NETWORK_OUTAGE_BACKOFF_SECONDS`：1、2、4、8、16、32 秒，合計 63 秒，大約一分鐘，用來撐過短暫斷線（例如切換 Wi-Fi）。只有沒有新進展的嘗試才沿著這個序列往下等。進展是指已存的位元組超過這次下載曾經存過的最多位元組：某次嘗試超過時，序列從頭再來，所以一直有進展的下載不會因為稍早的中斷而放棄；不理會 Range、每次從頭給一小段就斷線的伺服器只是把同樣的位元組重寫一遍，不算進展，等待照樣會用完。每次嘗試都從已經收到的位元組續傳，Range 與完整性檢查維持不變。取消若發生在等待期間，下載立刻停下，不把剩餘的秒數睡完；已取消的模型下載不會先計算磁碟上部分檔的摘要。
+
+63 秒只算等待，不含嘗試本身。每次嘗試都卡到 120 秒的讀取逾時時，七次嘗試大約 15 分鐘後才回報失敗。限制總經過時間是之後要決定的問題，不在這次修正內。
+
+重試用盡時安裝作業的失敗代碼是 `installation_io_failed`。部分檔與續傳紀錄留在磁碟上，使用者再試一次會從那些位元組接著下載。

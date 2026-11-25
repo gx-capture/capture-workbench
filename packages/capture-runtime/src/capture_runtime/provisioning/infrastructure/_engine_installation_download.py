@@ -6,10 +6,11 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import TracebackType
 from typing import BinaryIO, Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -731,8 +732,72 @@ def _monotonic(progress: Callable[[int], None]) -> Callable[[int], None]:
     return report
 
 
+class _TransportOSError(httpx.TransportError):
+    """An ``OSError`` the HTTP layer raised while sending, receiving, or closing.
+
+    Windows can report a dropped connection as a bare ``OSError`` that httpx
+    does not translate. Its origin, not its error number, makes it a transport
+    failure; the original error is the ``__cause__``.
+    """
+
+
+@contextmanager
+def _from_http_layer() -> Iterator[None]:
+    """Report an ``OSError`` raised by the HTTP layer as a transport failure.
+
+    Only code that talks to the server runs inside this; an ``OSError`` from the
+    partial file or its resume record must reach the installation unchanged.
+    """
+
+    try:
+        yield
+    except OSError as error:
+        raise _TransportOSError(str(error) or type(error).__name__) from error
+
+
+class _HttpStream(AbstractAsyncContextManager[httpx.Response]):
+    """One ``client.stream(...)`` whose request and close are HTTP-layer work."""
+
+    def __init__(self, opened: AbstractAsyncContextManager[httpx.Response]) -> None:
+        self._opened = opened
+
+    async def __aenter__(self) -> httpx.Response:
+        with _from_http_layer():
+            return await self._opened.__aenter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        try:
+            with _from_http_layer():
+                return await self._opened.__aexit__(exc_type, exc_value, traceback)
+        except httpx.TransportError:
+            if exc_value is None:
+                raise
+            # The failure that ended the exchange explains the download better
+            # than the close that followed it.
+            return False
+
+
+class _HttpBody:
+    """The response body's chunks; receiving each one is HTTP-layer work."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        self._chunks = response.aiter_bytes()
+
+    def __aiter__(self) -> _HttpBody:
+        return self
+
+    async def __anext__(self) -> bytes:
+        with _from_http_layer():
+            return await self._chunks.__anext__()
+
+
 def _plain_get(client: httpx.AsyncClient, url: str) -> _Opener:
-    return lambda headers: client.stream("GET", url, headers=headers)
+    return lambda headers: _HttpStream(client.stream("GET", url, headers=headers))
 
 
 def _require_length(response: httpx.Response, expected: int, wording: _Wording) -> None:
@@ -782,7 +847,7 @@ async def _receive(
     with _open_part(plan, part.offset + segment.start + segment.received) as writer:
         try:
             # Unbuffered, so every byte the network delivered reaches the partial.
-            async for chunk in response.aiter_bytes():
+            async for chunk in _HttpBody(response):
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
                 if segment.received + len(chunk) > segment.length:
@@ -896,7 +961,7 @@ async def _fill_segment(
 ) -> None:
     start = segment.start + segment.received
     headers = {"Range": f"bytes={start}-{segment.end}"}
-    async with client.stream("GET", url, headers=headers) as response:
+    async with _HttpStream(client.stream("GET", url, headers=headers)) as response:
         # Status failures are transient: keep the bytes already flushed. A 200,
         # a 416, or a 206 whose Content-Range is not this segment is unusable.
         if response.status_code != 206:
@@ -970,6 +1035,129 @@ def _verify_hashed_file(path: Path, size: int, sha256: str, wording: _Wording) -
         raise _CorruptDownload(wording.checksum)
 
 
+# Waits after attempts that stored no new bytes. The sum is 63 seconds: long
+# enough for a Wi-Fi switch, short enough that a dead network still fails.
+NETWORK_OUTAGE_BACKOFF_SECONDS: tuple[float, ...] = (1, 2, 4, 8, 16, 32)
+
+
+def _transient_http_status(status_code: int) -> bool:
+    return status_code in {408, 429} or 500 <= status_code <= 599
+
+
+class NetworkOutageExceeded(OSError):
+    """No new bytes arrived for the whole outage wait.
+
+    An ``OSError`` that is not a ``TimeoutError``, so the installation reports
+    ``installation_io_failed``. A bare transport error is not an ``OSError``
+    and would be reported as ``installation_unexpected``.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkOutageRetry:
+    """Retry a download while the network is briefly down.
+
+    Retried are transport failures (including an ``OSError`` the HTTP layer
+    raised, see ``_TransportOSError``) and HTTP 5xx, 408 and 429. A failure of
+    local work, such as writing the partial file or its resume record, ends the
+    download at once with the original error.
+
+    ``backoff_seconds`` are the waits after attempts that stored no new bytes,
+    in order. An attempt that took the stored bytes past the most this run has
+    held starts that sequence again, so a download that keeps moving is not
+    abandoned for earlier drops, and one that rewinds and refills the same
+    bytes is. An empty sequence does not retry: the failure propagates.
+    """
+
+    backoff_seconds: tuple[float, ...] = NETWORK_OUTAGE_BACKOFF_SECONDS
+
+    def __post_init__(self) -> None:
+        # One step stays under a minute and the schedule under two, so a caller
+        # cannot turn the outage wait into an unbounded stall.
+        waits = self.backoff_seconds
+        if (
+            len(waits) > 8
+            or sum(waits) > 120
+            or any(
+                isinstance(wait, bool)
+                or not isinstance(wait, (int, float))
+                or wait < 0
+                or wait > 60
+                for wait in waits
+            )
+        ):
+            raise ValueError("network outage backoff must be a short bounded wait")
+
+    async def run[T](
+        self,
+        attempt: Callable[[], Awaitable[T]],
+        *,
+        received: Callable[[], int],
+        cancel_event: asyncio.Event,
+    ) -> T:
+        """Run ``attempt`` until it finishes or the no-progress wait is used up."""
+
+        attempts_without_new_bytes = 0
+        # A server that ignores Range rewinds the partial; only bytes beyond the
+        # most ever held are progress, or alternating short bodies never end.
+        most_received = received()
+        while True:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            try:
+                return await attempt()
+            except httpx.HTTPStatusError as error:
+                if (
+                    not _transient_http_status(error.response.status_code)
+                    or not self.backoff_seconds
+                ):
+                    raise
+                failure: BaseException = error
+            except httpx.TransportError as error:
+                if not self.backoff_seconds:
+                    raise
+                failure = error
+            now_received = received()
+            if now_received > most_received:
+                most_received = now_received
+                attempts_without_new_bytes = 0
+            else:
+                attempts_without_new_bytes += 1
+                if attempts_without_new_bytes > len(self.backoff_seconds):
+                    raise NetworkOutageExceeded(
+                        "installation download made no progress through the network outage wait"
+                    ) from failure
+            step = 0 if attempts_without_new_bytes == 0 else attempts_without_new_bytes - 1
+            await _pause_for_network_outage(self.backoff_seconds[step], cancel_event)
+
+
+async def _pause_for_network_outage(seconds: float, cancel_event: asyncio.Event) -> None:
+    """Wait out one backoff step, or stop at once when the download is cancelled."""
+
+    if cancel_event.is_set():
+        raise asyncio.CancelledError
+    if seconds <= 0:
+        return
+    pause = asyncio.create_task(asyncio.sleep(seconds))
+    stopped = asyncio.create_task(cancel_event.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            {pause, stopped},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        pause.cancel()
+        stopped.cancel()
+        await asyncio.gather(pause, stopped, return_exceptions=True)
+        raise
+    for task in (pause, stopped):
+        if task not in done:
+            task.cancel()
+    await asyncio.gather(pause, stopped, return_exceptions=True)
+    if cancel_event.is_set():
+        raise asyncio.CancelledError
+
+
 class ArtifactDownloader(Protocol):
     async def download(
         self,
@@ -999,12 +1187,14 @@ class HttpArtifactDownloader:
         *,
         parallel_min_bytes: int = PARALLEL_DOWNLOAD_MIN_BYTES,
         parallel_segments: int = PARALLEL_DOWNLOAD_SEGMENTS,
+        retry: NetworkOutageRetry | None = None,
     ) -> None:
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(timeout=120, follow_redirects=True)
         )
         self._parallel_min_bytes = parallel_min_bytes
         self._parallel_segments = parallel_segments
+        self._retry = retry if retry is not None else NetworkOutageRetry()
 
     async def download(
         self,
@@ -1016,6 +1206,9 @@ class HttpArtifactDownloader:
     ) -> None:
         """Keep `<destination>.part` until the catalog byte count and SHA-256 match."""
 
+        # Before the plan opens: a cancelled download must not hash a present partial.
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
         plan = _Plan.open(
             destination,
             sha256=descriptor.sha256,
@@ -1027,14 +1220,16 @@ class HttpArtifactDownloader:
         try:
             streamed = False
             if not plan.fully_present():
-                async with self._client_factory() as client:
-                    streamed = await self._fetch(
-                        client,
+                streamed = await self._retry.run(
+                    lambda: self._transfer(
                         descriptor,
                         plan,
                         cancel_event=cancel_event,
                         progress=report,
-                    )
+                    ),
+                    received=plan.received_total,
+                    cancel_event=cancel_event,
+                )
             if not streamed:
                 await _file_operation(
                     _verify_hashed_file,
@@ -1054,6 +1249,25 @@ class HttpArtifactDownloader:
         except _CorruptDownload:
             plan.discard()
             raise
+
+    async def _transfer(
+        self,
+        descriptor: EngineArtifactDescriptor,
+        plan: _Plan,
+        *,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> bool:
+        """Fetch what the sidecar still lacks. True when the stream digest was checked."""
+
+        async with self._client_factory() as client:
+            return await self._fetch(
+                client,
+                descriptor,
+                plan,
+                cancel_event=cancel_event,
+                progress=progress,
+            )
 
     async def _fetch(
         self,
@@ -1168,15 +1382,19 @@ def _discard(path: Path) -> None:
 
 
 async def _supports_byte_ranges(client: httpx.AsyncClient, url: str, size: int) -> bool:
-    """Probe one byte; any failure falls back to a single sequential stream."""
+    """Probe one byte; only an answer without that byte range selects a single stream.
 
-    try:
-        async with client.stream("GET", url, headers={"Range": "bytes=0-0"}) as response:
-            if response.status_code != 206:
-                return False
+    A transport failure or an HTTP error status propagates, so the outage retry
+    asks again after its wait instead of fixing a large download to one stream,
+    and a missing artifact fails as itself.
+    """
+
+    async with _HttpStream(client.stream("GET", url, headers={"Range": "bytes=0-0"})) as response:
+        if response.status_code == 206:
             content_range: str | None = response.headers.get("content-range")
             return content_range == f"bytes 0-0/{size}"
-    except httpx.HTTPError:
+        if response.status_code != 416:
+            response.raise_for_status()
         return False
 
 
@@ -1303,11 +1521,13 @@ async def _open_direct_model(
     validate_direct_model_url(descriptor, current, initial=True)
     limit = _facade_max_direct_model_redirects()
     for redirect_count in range(limit + 1):
-        async with client.stream(
-            "GET",
-            current,
-            follow_redirects=False,
-            headers={"Accept-Encoding": "identity", **headers},
+        async with _HttpStream(
+            client.stream(
+                "GET",
+                current,
+                follow_redirects=False,
+                headers={"Accept-Encoding": "identity", **headers},
+            )
         ) as response:
             if not 300 <= response.status_code < 400:
                 yield response
@@ -1333,20 +1553,12 @@ class HttpModelFileDownloader:
         self,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         *,
-        retry_delays: tuple[float, ...] = (0, 1, 2),
+        retry: NetworkOutageRetry | None = None,
     ) -> None:
-        if not 1 <= len(retry_delays) <= 5 or any(
-            isinstance(delay, bool)
-            or not isinstance(delay, (int, float))
-            or delay < 0
-            or delay > 30
-            for delay in retry_delays
-        ):
-            raise ValueError("direct model retry schedule must be bounded")
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(timeout=120, follow_redirects=False)
         )
-        self._retry_delays = retry_delays
+        self._retry = retry if retry is not None else NetworkOutageRetry()
 
     async def download(
         self,
@@ -1356,60 +1568,14 @@ class HttpModelFileDownloader:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        """Retry from `<destination>.part` instead of deleting it between attempts."""
+        """Resume `<destination>.part` through the network-outage wait, then commit it."""
 
         if descriptor.bytes > _facade_max_single_model_file_bytes():
             raise EngineInstallationError("direct model file exceeds the 4 GiB single-file limit")
+        # Before the plan opens: a cancelled download must not hash a present partial.
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
         report = _monotonic(progress)
-        last_error: BaseException | None = None
-        for delay in self._retry_delays:
-            last_error = None
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            if delay:
-                await asyncio.sleep(delay)
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            try:
-                await self._download_once(
-                    descriptor,
-                    destination,
-                    cancel_event=cancel_event,
-                    progress=report,
-                )
-                return
-            except httpx.HTTPStatusError as error:
-                last_error = error
-                if error.response.status_code < 500 and error.response.status_code not in {
-                    408,
-                    429,
-                }:
-                    raise EngineInstallationError(
-                        "direct model source returned a non-retryable response"
-                    ) from error
-            except httpx.InvalidURL as error:
-                raise EngineInstallationError(
-                    "direct model redirect Location is invalid"
-                ) from error
-            except httpx.TransportError as error:
-                last_error = error
-            except OSError as error:
-                # Windows HTTP/file IO can surface a connection abort as a bare
-                # OSError. Treat it like the other bounded transport failures;
-                # integrity checks still run after a complete retry succeeds.
-                last_error = error
-        raise EngineInstallationError("direct model download exhausted bounded retries") from (
-            last_error
-        )
-
-    async def _download_once(
-        self,
-        descriptor: EngineModelFileDescriptor,
-        destination: Path,
-        *,
-        cancel_event: asyncio.Event,
-        progress: Callable[[int], None],
-    ) -> None:
         plan = _Plan.open(
             destination,
             sha256=descriptor.sha256,
@@ -1418,7 +1584,7 @@ class HttpModelFileDownloader:
         )
         if not plan.is_stream():
             plan.begin_stream()
-        progress(plan.received_total())
+        report(plan.received_total())
         try:
             if plan.fully_present():
                 await _file_operation(
@@ -1429,18 +1595,16 @@ class HttpModelFileDownloader:
                     _DIRECT_MODEL,
                 )
             else:
-                async with self._client_factory() as client:
-                    if "authorization" in client.headers:
-                        raise EngineInstallationError(
-                            "direct model client must not send authorization material"
-                        )
-                    await _stream_verified(
-                        lambda headers: _open_direct_model(client, descriptor, headers),
+                await self._retry.run(
+                    lambda: self._transfer(
+                        descriptor,
                         plan,
                         cancel_event=cancel_event,
-                        progress=progress,
-                        wording=_DIRECT_MODEL,
-                    )
+                        progress=report,
+                    ),
+                    received=plan.received_total,
+                    cancel_event=cancel_event,
+                )
             await plan.save()
             if cancel_event.is_set():
                 raise asyncio.CancelledError
@@ -1452,6 +1616,38 @@ class HttpModelFileDownloader:
         except _CorruptDownload:
             plan.discard()
             raise
+
+    async def _transfer(
+        self,
+        descriptor: EngineModelFileDescriptor,
+        plan: _Plan,
+        *,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> None:
+        async with self._client_factory() as client:
+            if "authorization" in client.headers:
+                raise EngineInstallationError(
+                    "direct model client must not send authorization material"
+                )
+            try:
+                await _stream_verified(
+                    lambda headers: _open_direct_model(client, descriptor, headers),
+                    plan,
+                    cancel_event=cancel_event,
+                    progress=progress,
+                    wording=_DIRECT_MODEL,
+                )
+            except httpx.HTTPStatusError as error:
+                if not _transient_http_status(error.response.status_code):
+                    raise EngineInstallationError(
+                        "direct model source returned a non-retryable response"
+                    ) from error
+                raise
+            except httpx.InvalidURL as error:
+                raise EngineInstallationError(
+                    "direct model redirect Location is invalid"
+                ) from error
 
 
 __all__ = [
@@ -1473,3 +1669,4 @@ HttpArtifactDownloader.__module__ = (
 HttpModelFileDownloader.__module__ = (
     "capture_runtime.provisioning.infrastructure.engine_installation"
 )
+NetworkOutageRetry.__module__ = "capture_runtime.provisioning.infrastructure.engine_installation"
