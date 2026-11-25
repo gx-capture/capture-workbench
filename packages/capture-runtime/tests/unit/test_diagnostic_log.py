@@ -8,6 +8,7 @@ from typing import cast
 from capture_runtime.contracts import CaptureSourceKind, CaptureStatus
 from capture_runtime.diagnostic_log import (
     configure_diagnostic_log,
+    record_cancelled_capture_wait_expired,
     record_capture_ended,
     record_worker_failure,
 )
@@ -73,6 +74,8 @@ def test_invalid_values_are_replaced(tmp_path: Path) -> None:
             stage=private,
             elapsed_ms=cast(int, private),
         )
+        record_cancelled_capture_wait_expired(timeout_ms=cast(int, private), pending_count=2**63)
+        record_cancelled_capture_wait_expired(timeout_ms=-1, pending_count=0)
     finally:
         handler.close()
     text = Path(handler.baseFilename).read_text(encoding="utf-8")
@@ -83,6 +86,7 @@ def test_invalid_values_are_replaced(tmp_path: Path) -> None:
         "cause=other stages=other>other elapsedMs=other"
     ) in text
     assert "capture-ended kind=other outcome=other code=other stage=other elapsedMs=other" in text
+    assert text.count("cancelled-capture-wait-expired timeoutMs=other pendingCount=other") == 2
 
 
 def test_rotation_caps_file_count_and_size(tmp_path: Path) -> None:

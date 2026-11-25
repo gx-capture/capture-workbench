@@ -65,7 +65,11 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.contracts import StartCapture as StartCaptureRequest
-from capture_runtime.diagnostic_log import capture_elapsed_ms, record_worker_failure
+from capture_runtime.diagnostic_log import (
+    capture_elapsed_ms,
+    record_cancelled_capture_wait_expired,
+    record_worker_failure,
+)
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
@@ -104,6 +108,7 @@ from capture_runtime.worker_process import complete_worker_cleanup
 _LOGGER = logging.getLogger(__name__)
 
 MAX_EVENT_SEGMENTS = 1_000
+CANCELLED_CAPTURE_WAIT_TIMEOUT_SECONDS = 15
 # Advertised in the readiness capabilities: the event stream sends a heartbeat
 # this often, and a client treats a capture without news for the stall timeout
 # as stalled.
@@ -502,6 +507,29 @@ class StreamingCaptureService:
 
         task.add_done_callback(finished)
 
+    async def _wait_for_cancelled_captures(self, cancellation: asyncio.Event) -> None:
+        if cancellation.is_set():
+            return
+        current_task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + CANCELLED_CAPTURE_WAIT_TIMEOUT_SECONDS
+        while cancelled_tasks := {
+            task
+            for capture_id, task in self._tasks.items()
+            if task is not current_task
+            if not task.done()
+            if (requested := self._cancellations.get(capture_id)) is not None and requested.is_set()
+        }:
+            # Like delete, wait for the task to finish its worker cleanup
+            # without propagating cancellation in either direction.
+            _, pending = await asyncio.wait(cancelled_tasks, timeout=deadline - loop.time())
+            if pending:
+                record_cancelled_capture_wait_expired(
+                    timeout_ms=int(CANCELLED_CAPTURE_WAIT_TIMEOUT_SECONDS * 1_000),
+                    pending_count=len(pending),
+                )
+                return
+
     async def _process(self, capture_id: str, cancellation: asyncio.Event) -> None:
         raw_written = False
         try:
@@ -541,6 +569,9 @@ class StreamingCaptureService:
                     cancellation,
                 )
             elif operation.kind is CaptureSourceKind.RECORDING and processor is not None:
+                await self._wait_for_cancelled_captures(cancellation)
+                if cancellation.is_set():
+                    raise asyncio.CancelledError
                 extraction = CaptureExtractionOutcome(
                     raw=await processor.process(
                         capture_id=capture_id,
@@ -829,6 +860,9 @@ class StreamingCaptureService:
                 (completed_pages, total_pages),
             )
 
+        await self._wait_for_cancelled_captures(cancellation)
+        if cancellation.is_set():
+            raise asyncio.CancelledError
         if request.identify_speakers:
             extraction = await extractor.extract(
                 content,

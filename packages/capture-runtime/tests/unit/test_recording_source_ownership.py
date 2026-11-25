@@ -12,10 +12,11 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from capture_runtime.capture.api.streaming import register_streaming_routes
+from capture_runtime.capture.application import streaming_capture_service
 from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
 from capture_runtime.capture.domain.size_policy import DOCUMENT_MAX_UPLOAD_BYTES, SourceSizePolicy
 from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractor
-from capture_runtime.capture.infrastructure.source_sniffing import sniff_source
+from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource, sniff_source
 from capture_runtime.capture.infrastructure.streaming_repository import (
     StreamingRecordNotFoundError,
     StreamingRepository,
@@ -27,6 +28,7 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.dependencies import RuntimeDependencies
+from capture_runtime.diagnostic_log import configure_diagnostic_log
 from capture_runtime.routes.common import ApiProblem
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     FakeCaptureStructuringProvider,
@@ -37,8 +39,6 @@ from tests.unit.test_speaker_extraction import AUDIO
 
 
 class HeldExtractor:
-    sniff = staticmethod(sniff_source)
-
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.finish = asyncio.Event()
@@ -46,6 +46,9 @@ class HeldExtractor:
         self.stopped = asyncio.Event()
         self.allow_stop = asyncio.Event()
         self.order: list[str] = []
+
+    def sniff(self, content: bytes) -> SniffedSource:
+        return sniff_source(content)
 
     async def extract(self, source: Path, *args: Any, **kwargs: Any) -> Any:
         self.started.set()
@@ -72,6 +75,25 @@ class RetiringExtractor(HeldExtractor):
         self.retiring.set()
         await asyncio.wait_for(self.allow_retire.wait(), timeout=3)
         self.order.append("warm-worker-retired")
+
+
+class SuccessiveExtractor(HeldExtractor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.next_prepared = asyncio.Event()
+        self.next_started = asyncio.Event()
+
+    def sniff(self, content: bytes) -> SniffedSource:
+        if self.started.is_set():
+            self.next_prepared.set()
+        return sniff_source(content)
+
+    async def extract(self, source: Path, *args: Any, **kwargs: Any) -> Any:
+        if not self.started.is_set():
+            return await super().extract(source, *args, **kwargs)
+        self.order.append("next-worker-started")
+        self.next_started.set()
+        raise ValueError("Synthetic extraction failure")
 
 
 class Harness:
@@ -179,6 +201,160 @@ def test_delete_and_cancel_wait_for_worker_once(tmp_path: Path) -> None:
         assert not errors
         assert not h.service._tasks
         await h.service.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("predecessor", ["cancelled", "timeout", "running"])
+def test_extraction_waits_only_for_cancelled_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, predecessor: str
+) -> None:
+    timeout = 0.05
+    if predecessor == "timeout":
+        monkeypatch.setattr(
+            streaming_capture_service, "CANCELLED_CAPTURE_WAIT_TIMEOUT_SECONDS", timeout
+        )
+
+    async def scenario() -> None:
+        extractor = SuccessiveExtractor()
+        h = Harness(tmp_path, extractor)
+        try:
+            async with asyncio.timeout(2), h.client() as client:
+                await extractor.started.wait()
+                if predecessor != "running":
+                    response = await client.post(f"/v2/captures/{h.capture_id}/cancel")
+                    assert response.status_code == 200
+                    assert response.json()["status"] == "cancelled"
+                    assert not extractor.stopped.is_set()
+                    await extractor.stopping.wait()
+                h.service.start_capture_use_case.execute(
+                    StartCapture(
+                        client_request_id="next-capture",
+                        ingestion_id=h.ingestion_id,
+                        identify_speakers=True,
+                        structuring_mode=StructuringMode.RUNTIME,
+                    )
+                )
+                if predecessor == "cancelled":
+                    await extractor.next_prepared.wait()
+                    assert not extractor.next_started.is_set()
+                    extractor.allow_stop.set()
+                    await extractor.next_started.wait()
+                    assert extractor.order == ["worker-stopped", "next-worker-started"]
+                else:
+                    await extractor.next_started.wait()
+                    assert not extractor.stopped.is_set()
+        finally:
+            extractor.allow_stop.set()
+            await h.service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    wait_events = [
+        line.split(" ", 1)[1]
+        for line in log.splitlines()
+        if " cancelled-capture-wait-expired " in line
+    ]
+    if predecessor == "timeout":
+        assert wait_events == ["cancelled-capture-wait-expired timeoutMs=50 pendingCount=1"]
+    else:
+        assert wait_events == []
+
+
+def test_cancelled_capture_skips_wait_and_extraction(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        class CancellingExtractor(HeldExtractor):
+            def sniff(self, content: bytes) -> SniffedSource:
+                h.service.cancel_capture_use_case.execute(h.capture_id)
+                # Exercise the recorded signal even if preparation consumes task cancellation.
+                h.task.uncancel()
+                return super().sniff(content)
+
+        extractor = CancellingExtractor()
+        h = Harness(tmp_path, extractor)
+        try:
+            _, pending = await asyncio.wait({h.task}, timeout=2)
+            assert not pending
+            assert h.service.get_capture(h.capture_id).status is CaptureStatus.CANCELLED
+            assert not extractor.started.is_set()
+        finally:
+            extractor.allow_stop.set()
+            await h.service.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("successor", ["cancelled", "progressive-recording"])
+def test_cancelled_predecessor_keeps_successor_from_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, successor: str
+) -> None:
+    async def scenario() -> None:
+        extractor = SuccessiveExtractor()
+        h = Harness(tmp_path, extractor)
+        waiting = asyncio.Event()
+        wait_for_cancelled_captures = h.service._wait_for_cancelled_captures
+
+        async def observe_wait(cancellation: asyncio.Event) -> None:
+            waiting.set()
+            await wait_for_cancelled_captures(cancellation)
+
+        class RecordingProcessor:
+            async def process(self, **kwargs: Any) -> Any:
+                extractor.order.append("recording-processor-started")
+                extractor.next_started.set()
+                raise ValueError("Synthetic extraction failure")
+
+        progressive = successor == "progressive-recording"
+        if progressive:
+            monkeypatch.setattr(h.service, "_processor", RecordingProcessor())
+        try:
+            async with asyncio.timeout(2), h.client() as client:
+                await extractor.started.wait()
+                response = await client.post(f"/v2/captures/{h.capture_id}/cancel")
+                assert response.status_code == 200
+                await extractor.stopping.wait()
+                monkeypatch.setattr(h.service, "_wait_for_cancelled_captures", observe_wait)
+                operation = h.service.start_capture_use_case.execute(
+                    StartCapture(
+                        client_request_id="waiting-capture",
+                        ingestion_id=h.ingestion_id,
+                        identify_speakers=not progressive,
+                        structuring_mode=StructuringMode.RUNTIME,
+                    )
+                )
+                capture_id = operation.capture_id
+                task = h.service._tasks[capture_id]
+                await waiting.wait()
+                assert not extractor.next_started.is_set()
+
+                if progressive:
+                    extractor.allow_stop.set()
+                    await extractor.next_started.wait()
+                    assert extractor.order == ["worker-stopped", "recording-processor-started"]
+                else:
+                    response = await client.post(f"/v2/captures/{capture_id}/cancel")
+                    assert response.status_code == 200
+                    assert response.json()["status"] == "cancelled"
+                    await asyncio.wait({task})
+                    assert h.service.get_capture(capture_id).status is CaptureStatus.CANCELLED
+                    assert capture_id not in h.service._tasks
+                    assert capture_id not in h.service._cancellations
+                    assert capture_id not in h.repository._running_captures
+                    assert not h.task.done()
+                    assert not extractor.stopped.is_set()
+
+                    extractor.allow_stop.set()
+                    await asyncio.wait({h.task})
+                    assert extractor.order == ["worker-stopped"]
+                    assert not extractor.next_started.is_set()
+        finally:
+            extractor.allow_stop.set()
+            await h.service.shutdown()
 
     asyncio.run(scenario())
 
