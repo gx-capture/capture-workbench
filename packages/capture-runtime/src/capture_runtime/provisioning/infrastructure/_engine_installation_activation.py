@@ -31,25 +31,39 @@ class ActivationFilesystemError(OSError):
 
 
 def installed_engine_snapshot(worker_root: Path, model_root: Path) -> InstalledFileSnapshot | None:
+    """Size, mtime and ctime of every installed file, or None for a link or an unreadable tree.
+
+    Every requirements read compares this snapshot with the verified one, so it walks with
+    os.scandir: on Windows the directory listing already carries each file's size and times,
+    so no file is opened again. The tuples are the ones Path.stat gave, so verification
+    records written before stay valid.
+    """
+
     files: list[tuple[str, int, int, int]] = []
     try:
         for role, root in (("worker", worker_root), ("model", model_root)):
             if not root.is_dir() or root.is_symlink():
                 return None
-            for path in root.rglob("*"):
-                if path.is_symlink():
-                    return None
-                if not path.is_file():
-                    continue
-                metadata = path.stat()
-                files.append(
-                    (
-                        f"{role}/{path.relative_to(root).as_posix()}",
-                        metadata.st_size,
-                        metadata.st_mtime_ns,
-                        metadata.st_ctime_ns,
-                    )
-                )
+            pending = [(os.fspath(root), "")]
+            while pending:
+                directory, prefix = pending.pop()
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if entry.is_symlink():
+                            return None
+                        relative = f"{prefix}{entry.name}"
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append((entry.path, f"{relative}/"))
+                        elif entry.is_file(follow_symlinks=False):
+                            metadata = entry.stat(follow_symlinks=False)
+                            files.append(
+                                (
+                                    f"{role}/{relative}",
+                                    metadata.st_size,
+                                    metadata.st_mtime_ns,
+                                    metadata.st_ctime_ns,
+                                )
+                            )
     except (OSError, RuntimeError):
         return None
     return tuple(sorted(files))
