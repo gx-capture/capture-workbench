@@ -114,6 +114,14 @@ def record_capture_ended(
     )
 
 
+def record_cancelled_capture_wait_expired(*, timeout_ms: int, pending_count: int) -> None:
+    _write(
+        "cancelled-capture-wait-expired",
+        timeoutMs=_integer(timeout_ms, minimum=0),
+        pendingCount=_integer(pending_count, minimum=1),
+    )
+
+
 def capture_elapsed_ms(created_at: datetime, ended_at: datetime) -> int:
     return max(0, (ended_at - created_at) // _MILLISECOND)
 
@@ -126,8 +134,8 @@ def _matching(value: object, pattern: re.Pattern[str]) -> str:
     return value if isinstance(value, str) and pattern.fullmatch(value) else "other"
 
 
-def _integer(value: object) -> str:
-    return str(value) if type(value) is int and -(2**63) <= value < 2**63 else "other"
+def _integer(value: object, *, minimum: int = -(2**63)) -> str:
+    return str(value) if type(value) is int and minimum <= value < 2**63 else "other"
 
 
 def _worker_stages(stages: object) -> str:
