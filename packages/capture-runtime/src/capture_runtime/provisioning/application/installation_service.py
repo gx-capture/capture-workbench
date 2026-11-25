@@ -52,12 +52,13 @@ def installation_failure_code(error: BaseException) -> str:
     if isinstance(error, TimeoutError):
         return "installation_timeout"
     if isinstance(error, OSError):
+        # A download that made no progress through its network-outage wait is an
+        # OSError on purpose. The transport error itself is not an OSError, so
+        # leaving it unwrapped would be reported as installation_unexpected.
         return "installation_io_failed"
     if not isinstance(error, EngineInstallationError):
         return "installation_unexpected"
     message = str(error).casefold()
-    if "direct model download exhausted bounded retries" in message:
-        return "direct_model_retries_exhausted"
     if "direct model" in message and "checksum" in message:
         return "direct_model_checksum"
     if ("engine artifact" in message or "engine archive" in message) and (

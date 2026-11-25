@@ -220,12 +220,6 @@ async def _test_engine_installation_failure_preserves_safe_runtime_message(tmp_p
 def test_installation_failure_code_is_finite_and_path_free() -> None:
     assert (
         installation_failure_code(
-            EngineInstallationError("direct model download exhausted bounded retries")
-        )
-        == "direct_model_retries_exhausted"
-    )
-    assert (
-        installation_failure_code(
             EngineInstallationError("direct model file checksum does not match catalog")
         )
         == "direct_model_checksum"
