@@ -9,6 +9,7 @@ event stream writes exact SSE frames.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from capture_runtime.config import RuntimeSettings
 from capture_runtime.contracts import CaptureEvent, CaptureEventType, CaptureSourceKind
 from capture_runtime.dependencies import RuntimeDependencies
 from tests.conftest import TOKEN
+from tests.integration.test_structuring_session import _open_request, _seed_host_capture
 
 OTHER_TOKEN = "capture-other-token-zyxwvutsrqponmlkjihgfedcba-654321"
 
@@ -96,6 +98,24 @@ def test_two_apps_keep_their_own_capture_services_tokens_and_limits(
         assert accepted.json()["nextOffset"] == 3
 
         assert first.get(f"/v2/ingestions/{first_id}").json()["receivedBytes"] == 0
+
+        # A structuring session opened in one app does not exist in the other.
+        first_capture = _seed_host_capture(first)
+        second_capture = _seed_host_capture(second)
+        session = first.post(
+            f"/v2/captures/{first_capture}/structure/session",
+            json=_open_request(),
+            headers={"X-Idempotency-Key": "isolation-session"},
+        )
+        assert session.status_code == 201, session.text
+        missing = second.get(f"/v2/captures/{first_capture}/structure/session")
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "structuring_session_not_found"
+        assert second.get(f"/v2/captures/{second_capture}/structure/session").status_code == 404
+        read = first.get(f"/v2/captures/{first_capture}/structure/session")
+        assert read.status_code == 200, read.text
+        assert read.json()["sessionId"] == session.json()["sessionId"]
+
         crossed = first.get(
             f"/v2/ingestions/{first_id}",
             headers={"Authorization": f"Bearer {OTHER_TOKEN}"},
@@ -136,27 +156,88 @@ def test_capture_routes_reject_foreign_host_origin_and_missing_bearer(
     assert unauthorized.headers["www-authenticate"] == "Bearer"
 
 
+def _put_chunk_in_messages(
+    client: TestClient, ingestion_id: str, content_range: str, parts: list[bytes]
+) -> tuple[int, dict[str, Any]]:
+    """PUT a chunk whose body reaches the app as one ASGI message per part.
+
+    TestClient joins a streamed body into one message, so the app is called
+    directly on the client's event loop.
+    """
+    body = b"".join(parts)
+    path = f"/v2/ingestions/{ingestion_id}/chunks/0"
+    headers = {
+        "host": client.base_url.netloc.decode("ascii"),
+        "authorization": client.headers["authorization"],
+        "content-range": content_range,
+        "digest": f"sha-256={hashlib.sha256(body).hexdigest()}",
+        "x-idempotency-key": f"chunk-{ingestion_id}",
+    }
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "PUT",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(name.encode(), value.encode()) for name, value in headers.items()],
+        "client": ("testclient", 50000),
+        "server": ("127.0.0.1", client.base_url.port),
+        "state": {},
+    }
+    messages = [
+        {"type": "http.request", "body": part, "more_body": index < len(parts) - 1}
+        for index, part in enumerate(parts)
+    ]
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        if messages:
+            return messages.pop(0)
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    async def call() -> None:
+        await client.app(scope, receive, send)
+
+    assert client.portal is not None
+    client.portal.call(call)
+    status = next(message["status"] for message in sent if message["type"] == "http.response.start")
+    payload = b"".join(
+        message.get("body", b"") for message in sent if message["type"] == "http.response.body"
+    )
+    return status, json.loads(payload)
+
+
 def test_chunk_body_outside_its_declared_span_appends_nothing(client: TestClient) -> None:
     opened = _open_ingestion(client, "chunk-bounds-open", 6)
     assert opened.status_code == 201, opened.text
     ingestion_id = opened.json()["ingestionId"]
     client.app.state.streaming_capture_service.max_chunk_bytes = 4
 
-    # The declared span fits the limit; the streamed body does not.
-    overflowing = _put_chunk(client, ingestion_id, "bytes 0-2/6", b"abcde")
-    assert overflowing.status_code == 413
-    assert overflowing.json()["error"]["code"] == "chunk_too_large"
+    # The declared span fits the limit and so does each message; their sum does not.
+    status, overflowing = _put_chunk_in_messages(
+        client, ingestion_id, "bytes 0-2/6", [b"ab", b"cde"]
+    )
+    assert status == 413
+    assert overflowing["error"]["code"] == "chunk_too_large"
 
-    short = _put_chunk(client, ingestion_id, "bytes 0-2/6", b"ab")
-    assert short.status_code == 422
-    assert short.json()["error"]["code"] == "chunk_length_mismatch"
+    status, short = _put_chunk_in_messages(client, ingestion_id, "bytes 0-2/6", [b"a", b"b"])
+    assert status == 422
+    assert short["error"]["code"] == "chunk_length_mismatch"
 
     untouched = client.get(f"/v2/ingestions/{ingestion_id}").json()
     assert untouched["receivedBytes"] == 0
     assert untouched["nextOffset"] == 0
-    accepted = _put_chunk(client, ingestion_id, "bytes 0-2/6", b"abc")
-    assert accepted.status_code == 200, accepted.text
-    assert accepted.json()["nextOffset"] == 3
+    # The whole body is read, not only its first message.
+    status, accepted = _put_chunk_in_messages(client, ingestion_id, "bytes 0-2/6", [b"ab", b"c"])
+    assert status == 200, accepted
+    assert accepted["nextOffset"] == 3
 
 
 def _event(sequence: int, event_type: CaptureEventType, stage: str) -> CaptureEvent:
