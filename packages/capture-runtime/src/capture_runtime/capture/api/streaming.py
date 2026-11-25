@@ -13,6 +13,7 @@ from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from capture_runtime.capture.application.streaming_capture_service import (
+    StreamingCaptureService,
     StructuringProviderUnavailableError,
 )
 from capture_runtime.capture.domain.size_policy import (
@@ -45,6 +46,10 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.routes.common import ApiProblem
+from capture_runtime.structuring.application.structuring_session_service import (
+    StructuringSessionService,
+)
+from capture_runtime.structuring.application.use_cases import GetStructuringSession
 from capture_runtime.structuring.domain.session.models import RetiredStructuringProfileError
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.structuring_session_repository import (
@@ -61,17 +66,15 @@ _DIGEST = re.compile(r"^sha-256=([0-9a-f]{64})$")
 
 def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependencies) -> None:
     service = dependencies.streaming_capture_service
+    _register_ingestion_routes(router, service)
+    _register_capture_operation_routes(router, service)
+    _register_structuring_routes(router, service, dependencies.structuring_session_service)
+    _register_capture_result_and_cleanup_routes(router, service)
+
+
+def _register_ingestion_routes(router: APIRouter, service: StreamingCaptureService) -> None:
     open_ingestion_use_case = service.open_ingestion_use_case
-    append_chunk_use_case = service.append_chunk_use_case
     finalize_ingestion_use_case = service.finalize_ingestion_use_case
-    start_capture_use_case = service.start_capture_use_case
-    cancel_capture_use_case = service.cancel_capture_use_case
-    events_use_case = service.events_use_case
-    commit_host_result_use_case = service.commit_host_result_use_case
-    structuring_session_service = dependencies.structuring_session_service
-    open_session = structuring_session_service.open_use_case
-    submit_batch = structuring_session_service.submit_use_case
-    get_session = structuring_session_service.get_use_case
 
     @router.post(
         "/ingestions",
@@ -102,6 +105,38 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             return service.get_ingestion(ingestion_id)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+
+    _register_ingestion_chunk_route(router, service)
+
+    @router.post("/ingestions/{ingestion_id}/finalize", response_model=Ingestion)
+    async def finalize_ingestion(
+        ingestion_id: str,
+        request: FinalizeIngestion,
+    ) -> Ingestion:
+        try:
+            return finalize_ingestion_use_case.execute(ingestion_id, request)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(
+                409,
+                "ingestion_finalize_rejected",
+                _safe_message(str(error)),
+            ) from error
+
+    @router.delete("/ingestions/{ingestion_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_ingestion(ingestion_id: str) -> Response:
+        try:
+            await service.delete_ingestion(ingestion_id)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "ingestion_delete_rejected", _safe_message(str(error))) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _register_ingestion_chunk_route(router: APIRouter, service: StreamingCaptureService) -> None:
+    append_chunk_use_case = service.append_chunk_use_case
 
     @router.put(
         "/ingestions/{ingestion_id}/chunks/{chunk_index}",
@@ -169,31 +204,10 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 _safe_message(str(error)),
             ) from error
 
-    @router.post("/ingestions/{ingestion_id}/finalize", response_model=Ingestion)
-    async def finalize_ingestion(
-        ingestion_id: str,
-        request: FinalizeIngestion,
-    ) -> Ingestion:
-        try:
-            return finalize_ingestion_use_case.execute(ingestion_id, request)
-        except StreamingRecordNotFoundError as error:
-            raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
-        except StreamingTransitionError as error:
-            raise ApiProblem(
-                409,
-                "ingestion_finalize_rejected",
-                _safe_message(str(error)),
-            ) from error
 
-    @router.delete("/ingestions/{ingestion_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def delete_ingestion(ingestion_id: str) -> Response:
-        try:
-            await service.delete_ingestion(ingestion_id)
-        except StreamingRecordNotFoundError as error:
-            raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
-        except StreamingTransitionError as error:
-            raise ApiProblem(409, "ingestion_delete_rejected", _safe_message(str(error))) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+def _register_capture_operation_routes(router: APIRouter, service: StreamingCaptureService) -> None:
+    start_capture_use_case = service.start_capture_use_case
+    cancel_capture_use_case = service.cancel_capture_use_case
 
     @router.post(
         "/captures",
@@ -226,6 +240,22 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
+
+    _register_capture_event_route(router, service)
+    _register_capture_projection_routes(router, service)
+
+    @router.post("/captures/{capture_id}/cancel", response_model=CaptureOperation)
+    async def cancel_capture(capture_id: str) -> CaptureOperation:
+        try:
+            return cancel_capture_use_case.execute(capture_id)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+
+def _register_capture_event_route(router: APIRouter, service: StreamingCaptureService) -> None:
+    events_use_case = service.events_use_case
 
     @router.get("/captures/{capture_id}/events")
     async def capture_events(
@@ -293,6 +323,10 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+
+def _register_capture_projection_routes(
+    router: APIRouter, service: StreamingCaptureService
+) -> None:
     @router.get("/captures/{capture_id}/partial", response_model=PartialCapture)
     async def capture_partial(capture_id: str) -> Response:
         try:
@@ -334,15 +368,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post("/captures/{capture_id}/cancel", response_model=CaptureOperation)
-    async def cancel_capture(capture_id: str) -> CaptureOperation:
-        try:
-            return cancel_capture_use_case.execute(capture_id)
-        except StreamingRecordNotFoundError as error:
-            raise ApiProblem(
-                404, "capture_not_found", "Streaming capture was not found."
-            ) from error
 
+def _register_structuring_routes(
+    router: APIRouter,
+    service: StreamingCaptureService,
+    structuring_session_service: StructuringSessionService,
+) -> None:
     @router.post("/captures/{capture_id}/structure", response_model=CaptureDocument)
     async def structure_capture(capture_id: str) -> CaptureDocument:
         try:
@@ -370,6 +401,16 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
+
+    _register_structuring_session_routes(router, structuring_session_service)
+    _register_host_structuring_routes(router, service)
+
+
+def _register_structuring_session_routes(
+    router: APIRouter, structuring_session_service: StructuringSessionService
+) -> None:
+    open_session = structuring_session_service.open_use_case
+    get_session = structuring_session_service.get_use_case
 
     @router.post(
         "/captures/{capture_id}/structure/session",
@@ -420,6 +461,16 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 404, "structuring_session_not_found", "Structuring session was not found."
             ) from error
+
+    _register_structuring_batch_routes(router, structuring_session_service, get_session)
+
+
+def _register_structuring_batch_routes(
+    router: APIRouter,
+    structuring_session_service: StructuringSessionService,
+    get_session: GetStructuringSession,
+) -> None:
+    submit_batch = structuring_session_service.submit_use_case
 
     @router.get(
         "/captures/{capture_id}/structure/session/batches/{batch_index}",
@@ -505,6 +556,10 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
+
+def _register_host_structuring_routes(router: APIRouter, service: StreamingCaptureService) -> None:
+    commit_host_result_use_case = service.commit_host_result_use_case
+
     @router.post("/captures/{capture_id}/structure/commit", response_model=CaptureOperation)
     async def commit_host_structure(
         capture_id: str,
@@ -569,6 +624,10 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
+
+def _register_capture_result_and_cleanup_routes(
+    router: APIRouter, service: StreamingCaptureService
+) -> None:
     @router.get("/captures/{capture_id}/result", response_model=CaptureResult)
     async def capture_result(capture_id: str) -> CaptureResult:
         try:
