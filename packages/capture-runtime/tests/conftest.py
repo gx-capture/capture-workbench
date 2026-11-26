@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,6 +22,28 @@ def _no_shared_engine_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     # Tests must exercise real download paths and never write to the machine
     # cache; test_engine_download_cache covers the cache explicitly.
     monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", "off")
+
+
+@pytest.fixture
+def isolated_server_logging(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    with monkeypatch.context() as logging_state:
+        # dictConfig shuts down registered handlers, including pytest's capture
+        # handlers. Let it close only handlers created within this test.
+        logging_state.setattr(logging, "_handlers", WeakValueDictionary())
+        logging_state.setattr(logging, "_handlerList", [])
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi"):
+            logging.getLogger(name)
+        for name, logger in logging.Logger.manager.loggerDict.items():
+            if not isinstance(logger, logging.Logger):
+                continue
+            logging_state.setattr(logger, "disabled", logger.disabled)
+            if name == "uvicorn" or name.startswith("uvicorn."):
+                logging_state.setattr(logger, "handlers", logger.handlers.copy())
+                logging_state.setattr(logger, "level", logger.level)
+                logging_state.setattr(logger, "propagate", logger.propagate)
+        yield
+    # Restoring levels directly also requires invalidating cached level checks.
+    logging.getLogger().setLevel(logging.getLogger().level)
 
 
 @pytest.fixture

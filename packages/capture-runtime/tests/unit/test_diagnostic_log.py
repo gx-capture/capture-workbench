@@ -2,9 +2,17 @@
 
 import logging
 import re
+from collections.abc import Callable
+from contextlib import nullcontext
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import cast
 
+import pytest
+import uvicorn
+
+from capture_runtime.__main__ import run_server
+from capture_runtime.config import RuntimeSettings
 from capture_runtime.contracts import CaptureSourceKind, CaptureStatus
 from capture_runtime.diagnostic_log import (
     configure_diagnostic_log,
@@ -25,6 +33,43 @@ def _worker_failure(cause: BaseException | None = None) -> None:
         stages=("speech-model-load-cpu-failed-unknown",),
         elapsed_ms=310,
     )
+
+
+@pytest.mark.usefixtures("isolated_server_logging")
+@pytest.mark.parametrize("server_raises", [False, True])
+def test_server_records_diagnostics_and_closes_log(
+    settings_factory: Callable[..., RuntimeSettings],
+    monkeypatch: pytest.MonkeyPatch,
+    server_raises: bool,
+) -> None:
+    settings = settings_factory()
+    logger = logging.getLogger("capture_runtime.diagnostics")
+    handlers: list[logging.Handler] = []
+
+    def run(server: uvicorn.Server) -> None:
+        # uvicorn.run exits with a startup failure unless the server started.
+        server.started = True
+        _worker_failure()
+        handlers.extend(logger.handlers)
+        if server_raises:
+            raise RuntimeError("server run failed")
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    with pytest.raises(RuntimeError, match="server run failed") if server_raises else nullcontext():
+        run_server(settings)
+
+    log = settings.app_data_dir / "logs" / "runtime-diagnostics.log"
+    start_line, worker_line = log.read_text(encoding="utf-8").splitlines()
+    assert " runtime-start version=" in start_line
+    assert worker_line.split(" ", 1)[1] == (
+        "worker-failure requirement=speech-recognition code=speech_recognition_worker_failed "
+        "class=exit-nonzero exit=7 cause=none stages=speech-model-load-cpu-failed-unknown "
+        "elapsedMs=310"
+    )
+    (handler,) = handlers
+    assert isinstance(handler, RotatingFileHandler)
+    assert handler.stream is None
+    assert handler not in logger.handlers
 
 
 def test_worker_failure_is_one_allowlisted_line(tmp_path: Path) -> None:

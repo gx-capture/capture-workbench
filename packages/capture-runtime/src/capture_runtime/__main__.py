@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import logging.config
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
 
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG
 
 from capture_runtime._frozen_extraction_residue import start_stale_extraction_sweep
 from capture_runtime.app import create_app
@@ -36,6 +38,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_server(settings: RuntimeSettings) -> None:
+    # Configuring logging closes every existing handler, and a closed diagnostic
+    # handler leaves its logger. So the server's logging is configured here, before
+    # the diagnostic log is attached, and uvicorn is told not to configure it again.
+    logging.config.dictConfig(LOGGING_CONFIG)
+    diagnostic_handler = configure_diagnostic_log(settings.app_data_dir)
+    try:
+        uvicorn.run(
+            create_app(settings),
+            host=settings.host,
+            port=settings.port,
+            log_config=None,
+            log_level="info",
+            access_log=False,
+            proxy_headers=False,
+        )
+    finally:
+        if diagnostic_handler is not None:
+            diagnostic_handler.close()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     arguments = build_parser().parse_args(argv)
     settings = RuntimeSettings.from_env()
@@ -61,19 +84,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         remove_retired_ocr_installation(settings.app_data_dir)
         remove_inactive_model_unit_versions(settings.app_data_dir)
         start_stale_extraction_sweep()
-        diagnostic_handler = configure_diagnostic_log(settings.app_data_dir)
-        try:
-            uvicorn.run(
-                create_app(settings),
-                host=settings.host,
-                port=settings.port,
-                log_level="info",
-                access_log=False,
-                proxy_headers=False,
-            )
-        finally:
-            if diagnostic_handler is not None:
-                diagnostic_handler.close()
+        run_server(settings)
 
 
 if __name__ == "__main__":
