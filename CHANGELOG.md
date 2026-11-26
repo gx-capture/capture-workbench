@@ -21,6 +21,16 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### The diagnostic log records while the runtime serves
+
+In 0.11.0 the runtime's diagnostic log
+(`<app data>/logs/runtime-diagnostics.log`) received only the `runtime-start`
+line: the server's logging setup closed the log's handler right after it was
+attached. A worker failure or a capture's end left no line, so a failed
+capture could not be traced afterwards. The log is now attached after the
+server has configured logging, and records worker failures, capture ends and
+expired waits for cancelled captures for as long as the runtime runs.
+
 ## 0.11.0
 
 Capture now calls OCR text recognition and uses `recording` for audio and

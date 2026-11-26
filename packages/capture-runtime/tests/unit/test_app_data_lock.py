@@ -192,6 +192,7 @@ def test_main_exits_without_sweeps_or_app_creation_when_locked(
     assert str(app_data_dir) not in captured.err
 
 
+@pytest.mark.usefixtures("isolated_server_logging")
 def test_main_holds_lock_across_sweep_and_server_run_and_releases_on_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -227,6 +228,7 @@ def test_main_holds_lock_across_sweep_and_server_run_and_releases_on_exit(
         pass
 
 
+@pytest.mark.usefixtures("isolated_server_logging")
 def test_main_retries_retired_ocr_cleanup_and_preserves_other_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -295,6 +297,7 @@ def test_retired_ocr_cleanup_does_not_follow_links(tmp_path: Path, linked_parent
 
 
 @pytest.mark.parametrize("state_kind", ["valid", "missing", "invalid", "unsafe-version"])
+@pytest.mark.usefixtures("isolated_server_logging")
 def test_main_cleans_only_inactive_installed_model_versions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state_kind: str
 ) -> None:
