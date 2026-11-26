@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -10,6 +11,7 @@ import {
   parseWindowsSamples,
   preflightScenario,
   renderMarkdownReport,
+  resolveEngineDirectory,
   summarizeObservation,
   summarizeResults,
   type GpuAdapter,
@@ -50,6 +52,27 @@ const ocrCapture: ReportedCapture = {
   input: 'pdf', status: 'awaiting_structuring', engine: ocr, device: 'directml', fallbackWarnings: [], stages: [],
 };
 const ocrCompute = { mode: 'gpu', adapterClass: 'dedicated' };
+
+test('engine directory uses the host app data or the runtime data layout', () => {
+  assert.equal(resolveEngineDirectory('host-data'), join(process.cwd(), 'host-data', 'runtime', 'engines'));
+  assert.equal(resolveEngineDirectory(undefined, 'runtime-data'), join(process.cwd(), 'runtime-data', 'engines'));
+  assert.equal(resolveEngineDirectory(), undefined);
+  assert.throws(() => resolveEngineDirectory('host-data', 'runtime-data'), /--observe-app-data and --observe-runtime-data cannot be used together/u);
+  assert.throws(() => resolveEngineDirectory(''), /--observe-app-data must name a directory/u);
+  assert.throws(() => resolveEngineDirectory(undefined, ' '), /--observe-runtime-data must name a directory/u);
+});
+
+test('engine directory resolves forward slashes and trailing separators', () => {
+  assert.equal(resolveEngineDirectory(undefined, 'data/runtime/'), join(process.cwd(), 'data', 'runtime', 'engines'));
+});
+
+test('observation counts CPU process samples by named worker', () => {
+  const rows = [baseline, worker('runtime-tree'), worker(speech), worker(speech, '41:639307296010000000'), worker(speaker, '42:639307296010000000'), poll];
+  const observation = summarizeObservation({ ...parseWindowsSamples(rows.join('\n')), adapters, nvidia: [] });
+  assert.deepEqual(observation.sampleCountsByWorker, { [speech]: 2, [speaker]: 1 });
+  const unnamed = summarizeObservation({ ...parseWindowsSamples([baseline, worker('runtime-tree'), poll].join('\n')), adapters, nvidia: [] });
+  assert.deepEqual(unnamed.sampleCountsByWorker, {});
+});
 
 test('preflight requires discrete DirectML hardware and the NVIDIA driver only for CUDA speech packs', () => {
   assert.match(preflightScenario(ocrScenario, [adapters[0]], true) ?? '', /no discrete GPU/u);
