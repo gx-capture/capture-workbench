@@ -193,6 +193,15 @@ failures. Elapsed milliseconds are measured from capture creation to the
 failure or terminal transition. Tokens, IDs of individual captures and sources,
 file names, paths, URLs, and source content are excluded.
 
+A `worker-failure` line ends with the worker's own error when it was an
+operating system error: `workerErrorType` is `OSError` or one of its built-in
+subclasses, and `osErrorNumber` is the operating system's error number (on
+Windows the Win32 error code when the error carries one, otherwise `errno`).
+The worker writes them on stderr as `capture-worker-error:<type>[:<number>]`;
+the runtime drops a value it cannot validate, and never records the error's
+message. Both are `none` for other errors and for workers that predate the
+marker.
+
 ## Speaker diarization worker
 
 `capture-engine-diarization` is a separately packaged worker that answers "who

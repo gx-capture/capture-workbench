@@ -769,6 +769,147 @@ def test_progressive_worker_exit_records_diagnostics(
     assert "fixture-secret-token" not in log
 
 
+@pytest.mark.parametrize(
+    ("marker", "logged"),
+    [
+        (
+            b"capture-worker-error:OSError:1455\r\n",
+            "workerErrorType=OSError osErrorNumber=1455",
+        ),
+        # A worker built before the marker existed.
+        (b"", "workerErrorType=none osErrorNumber=none"),
+    ],
+)
+def test_a_failed_session_logs_the_workers_os_error_without_changing_the_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: bytes, logged: str
+) -> None:
+    private_path = r"C:\Users\secret-user\models\aligner\model.safetensors"
+
+    class Decoder:
+        duration_ms = 1_000
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def windows(self):
+            yield from ()
+
+    class EngineManager:
+        async def resolve_active_engine(self, _requirement_id):
+            return _engine(tmp_path)
+
+    class Process:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
+            self.returncode = None
+
+        def write(self, frame: bytes) -> None:
+            if frame[:1] != SessionFrameType.FINISH.value.encode():
+                return
+            self.stderr.feed_data(
+                b"capture-worker-stage:speech-transcription-call-start\n"
+                b"capture-worker-stage:speech-transcription-call-complete\n"
+                + f"[WinError 1455] The paging file is too small: '{private_path}'\n".encode()
+                + marker
+            )
+            self.stderr.feed_eof()
+            self.stdout.feed_data(
+                _session_frame(
+                    SessionFrameType.ERROR,
+                    json.dumps(
+                        {
+                            "code": "session_failed",
+                            "message": "Speech recognition session failed at OSError after "
+                            "stage speech-transcription-call-complete.",
+                            "retryable": True,
+                        }
+                    ).encode(),
+                )
+            )
+
+        async def drain(self) -> None:
+            pass
+
+        async def wait(self) -> int:
+            self.returncode = 1
+            return 1
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+    async def spawn(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder", Decoder
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        policy = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=clock, retention_hours=4, policy=policy
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = ProgressiveCaptureProcessor(
+            clock=clock,
+            config=ExtractionRuntimeConfig(
+                temp_dir=tmp_path / "temp",
+                max_pdf_pages=10,
+                max_image_pixels=100_000,
+                ocr_render_scale=2,
+                max_audio_duration_ms=60_000,
+                speech_prefer_gpu=True,
+            ),
+            engine_manager=EngineManager(),
+        )
+        service = StreamingCaptureService(
+            repository, clock=clock, policy=policy, processor=processor
+        )
+        operation = service.start_capture_use_case.execute(
+            StartCapture(
+                client_request_id="progressive-session-os-error",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+            )
+        )
+        try:
+            await service._tasks[operation.capture_id]
+            failed = service.get_capture(operation.capture_id)
+            assert failed.error is not None
+            # What the host receives does not depend on the marker.
+            assert failed.error.model_dump() == {
+                "code": "session_failed",
+                "message": "Speech recognition session failed at stages "
+                "speech-transcription-call-start>speech-transcription-call-complete.",
+                "stage": "extraction",
+                "retryable": True,
+            }
+        finally:
+            await service.shutdown()
+
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        asyncio.run(scenario())
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert log.count(" worker-failure ") == 1
+    assert (
+        "worker-failure requirement=speech-recognition code=session_failed class=worker "
+        "exit=none cause=none "
+        "stages=speech-transcription-call-start>speech-transcription-call-complete "
+        f"elapsedMs=0 {logged}\n"
+    ) in log
+    assert "secret-user" not in log
+    assert "paging file" not in log
+
+
 def _session_frame(frame_type: SessionFrameType, payload: bytes = b"") -> bytes:
     return struct.pack(">BI", ord(frame_type.value), len(payload)) + payload
 

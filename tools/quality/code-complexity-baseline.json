@@ -1171,13 +1171,6 @@
   {
     "tool": "ruff",
     "rule": "PLR0913",
-    "file": "packages/capture-runtime/src/capture_runtime/diagnostic_log.py",
-    "symbol": "record_worker_failure",
-    "value": 7
-  },
-  {
-    "tool": "ruff",
-    "rule": "PLR0913",
     "file": "packages/capture-runtime/src/capture_runtime/diarization/application/use_cases.py",
     "symbol": "DiarizationClient.diarize",
     "value": 7
