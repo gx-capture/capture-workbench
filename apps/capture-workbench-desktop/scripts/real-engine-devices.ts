@@ -4,6 +4,20 @@
 // with the reported one (capture provenance, OCR readiness) and the observed
 // one (GPU engine and CPU samples of the runtime's own processes).
 
+import { resolve } from 'node:path';
+
+export function resolveEngineDirectory(appData?: string, runtimeData?: string): string | undefined {
+  if (appData !== undefined && runtimeData !== undefined) {
+    throw new Error('--observe-app-data and --observe-runtime-data cannot be used together.');
+  }
+  // An empty value (an unset shell variable) would otherwise resolve to the current directory.
+  if (appData !== undefined && !appData.trim()) throw new Error('--observe-app-data must name a directory.');
+  if (runtimeData !== undefined && !runtimeData.trim()) throw new Error('--observe-runtime-data must name a directory.');
+  if (appData !== undefined) return resolve(appData, 'runtime', 'engines');
+  if (runtimeData !== undefined) return resolve(runtimeData, 'engines');
+  return undefined;
+}
+
 export type AdapterClass = 'dedicated' | 'integrated' | 'software';
 
 export interface GpuAdapter {
@@ -326,6 +340,8 @@ function busySecondsByAdapter(samples: readonly GpuBusySample[], baselineTime: s
 
 export interface DeviceObservation {
   readonly sampleCount: number;
+  /** CPU process samples on complete ticks, grouped by named engine worker. */
+  readonly sampleCountsByWorker: Readonly<Record<string, number>>;
   readonly ownedAdapterUse: readonly AdapterUse[];
   readonly ownedCpuSeconds: number;
   readonly maxTotalCpuPercent: number;
@@ -335,6 +351,14 @@ export interface DeviceObservation {
   readonly observedDevice: ObservedDevice | null;
   readonly matchingProcessObserved: boolean;
   readonly conflictingAdapters: boolean;
+}
+
+function countWorkerSamples(samples: readonly WorkerSample[]): Readonly<Record<string, number>> {
+  const counts = new Map<string, number>();
+  for (const { worker } of samples) {
+    if (worker && worker !== 'runtime-tree') counts.set(worker, (counts.get(worker) ?? 0) + 1);
+  }
+  return Object.fromEntries(counts);
 }
 
 export function summarizeObservation(input: {
@@ -412,6 +436,7 @@ export function summarizeObservation(input: {
   const memory = input.nvidia.map((sample) => sample.memoryUsedMiB);
   return {
     sampleCount,
+    sampleCountsByWorker: countWorkerSamples(workers),
     ownedAdapterUse,
     ownedCpuSeconds: input.worker !== undefined ? workerSeconds : cpuSeconds.length > 1
       ? Math.round((Math.max(...cpuSeconds) - cpuSeconds[0]) * 10) / 10

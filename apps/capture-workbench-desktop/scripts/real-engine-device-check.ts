@@ -26,9 +26,10 @@
  *   --observe <process name> --observe-into <directory> only samples the
  *   devices of that process's trees (for example capture-workbench-dev-host.exe
  *   during the localhost real-engine journeys) until the printed session stop file exists.
- *   With --observe-app-data <app data directory> each sample names the engine
- *   worker it belongs to (text-recognition, speech-recognition,
- *   speaker-diarization), as the scenarios' samples do.
+ *   With --observe-app-data <host app data directory>, look for workers under
+ *   runtime/engines. With --observe-runtime-data <runtime data directory>
+ *   (the value of CAPTURE_APP_DATA_DIR), look under engines. Use either option
+ *   with --observe to name the engine worker in each attributed sample.
  *
  * A local run keeps its tree (`pnpm run kept-run-trees -- --list`).
  * `--run-tree` reuses the shared installs, except for the fresh CPU pack.
@@ -59,6 +60,7 @@ import {
   parseWindowsSamples,
   preflightScenario,
   renderMarkdownReport,
+  resolveEngineDirectory,
   summarizeObservation,
   summarizeResults,
   type CaptureInput,
@@ -138,10 +140,12 @@ async function main(): Promise<void> {
       observe: { type: 'string' },
       'observe-into': { type: 'string' },
       'observe-app-data': { type: 'string' },
+      'observe-runtime-data': { type: 'string' },
     },
     allowPositionals: false,
   });
   if (process.platform !== 'win32') throw new Error('The real-engine device check runs on Windows only.');
+  const engineLocation = observationEngineLocation(values.observe, values['observe-app-data'], values['observe-runtime-data']);
   const all = deviceScenarios();
   if (values.list) {
     for (const scenario of all) process.stdout.write(`${scenario.id}\t${scenario.summary}\n`);
@@ -150,8 +154,7 @@ async function main(): Promise<void> {
   const adapters = discoverAdapters();
   if (values.observe) {
     if (!values['observe-into']) throw new Error('--observe needs --observe-into <directory>.');
-    const appData = values['observe-app-data'];
-    await observeProcesses(values.observe, resolve(values['observe-into']), adapters, appData ? resolve(appData) : undefined);
+    await observeProcesses(values.observe, resolve(values['observe-into']), adapters, engineLocation);
     return;
   }
   const driverPresent = existsSync(join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'nvcuda.dll'));
@@ -272,7 +275,7 @@ async function runScenario(
         if (source === undefined) throw new Error(`No ${input} input was given for ${scenario.id}.`);
         const directory = join(evidenceDirectory, input);
         await mkdir(directory);
-        const sampler = startSamplers({ pid: runtimePid, appData }, directory, options.nvidiaPresent);
+        const sampler = startSamplers({ pid: runtimePid }, directory, options.nvidiaPresent, resolveEngineDirectory(appData));
         let complete: boolean;
         try {
           const baseline = await waitForSample(directory);
@@ -588,9 +591,10 @@ while ($true) {
 `;
 
 function startSamplers(
-  root: { readonly pid: number; readonly appData: string } | { readonly processName: string; readonly appData?: string },
+  root: { readonly pid: number } | { readonly processName: string },
   evidenceDirectory: string,
   nvidiaPresent: boolean,
+  engineDirectory: string | undefined,
 ): Samplers {
   const scriptPath = join(evidenceDirectory, 'device-sampler.ps1');
   writeFileSync(scriptPath, windowsSamplerScript, 'utf8');
@@ -599,7 +603,7 @@ function startSamplers(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
         ...('pid' in root ? ['-RootPid', String(root.pid)] : ['-RootName', root.processName]),
-        ...(root.appData ? ['-EngineRoot', join(root.appData, 'runtime', 'engines')] : []),
+        ...(engineDirectory ? ['-EngineRoot', engineDirectory] : []),
         '-Out', join(evidenceDirectory, 'windows-devices.csv'),
         ...(nvidiaPresent ? ['-NvidiaOut', join(evidenceDirectory, 'nvidia.csv')] : []),
         '-IntervalSeconds', String(sampleIntervalSeconds)],
@@ -618,23 +622,49 @@ function startSamplers(
   };
 }
 
+interface ObservationEngineLocation {
+  readonly option: '--observe-app-data' | '--observe-runtime-data';
+  readonly directory: string;
+}
+
+function observationEngineLocation(
+  processName: string | undefined,
+  appData: string | undefined,
+  runtimeData: string | undefined,
+): ObservationEngineLocation | undefined {
+  const directory = resolveEngineDirectory(appData, runtimeData);
+  if (directory === undefined) return undefined;
+  const option = appData !== undefined ? '--observe-app-data' : '--observe-runtime-data';
+  if (!processName) throw new Error(`${option} needs --observe <process name>.`);
+  return { option, directory };
+}
+
+async function warnIfEngineDirectoryMissing(location: ObservationEngineLocation | undefined): Promise<void> {
+  if (!location) return;
+  const metadata = await stat(location.directory).catch(() => undefined);
+  if (!metadata?.isDirectory()) {
+    process.stderr.write(`Warning: ${location.option} could not find the engine directory "${location.directory}". Samples stay runtime-tree until engines are installed there.\n`);
+  }
+}
+
 /**
  * Samples the devices used by every process tree rooted at a process of this
  * name (for example the dev host during the localhost smoke) until the file
  * `stop` appears in the directory, then writes observation.json there. With
- * the app data the trees run on, a sample of an engine worker names it.
+ * the engine directory, a sample of an engine worker names it.
  */
 async function observeProcesses(
   processName: string,
   parent: string,
   adapters: readonly GpuAdapter[],
-  appData?: string,
+  engineLocation: ObservationEngineLocation | undefined,
 ): Promise<void> {
+  await warnIfEngineDirectoryMissing(engineLocation);
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(parent, 'session-'));
   const stopFile = join(directory, 'stop');
   const nvidiaPresent = spawnSync('nvidia-smi', ['-L'], { windowsHide: true, stdio: 'ignore' }).status === 0;
-  const samplers = startSamplers(appData ? { processName, appData } : { processName }, directory, nvidiaPresent);
+  const samplers = startSamplers({ processName }, directory, nvidiaPresent, engineLocation?.directory);
   // The adapters of this session, for reading the samples of a part of it later.
   await writeFile(join(directory, 'adapters.json'), `${JSON.stringify(adapters, null, 2)}\n`, 'utf8');
   process.stdout.write(`Sampling the devices of ${processName} into ${directory}; create ${stopFile} to stop.\n`);
