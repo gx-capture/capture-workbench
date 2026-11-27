@@ -17,6 +17,7 @@ from capture_runtime.speech.infrastructure.speech_session import (
     encode_error,
     encode_heartbeat,
 )
+from capture_runtime.workers.server import report_worker_error
 
 READ_CHUNK_BYTES = 64 * 1024
 HEARTBEAT_INTERVAL_SECONDS = 5.0
@@ -38,7 +39,9 @@ def serve_session(
     input_stream = stdin or sys.stdin.buffer
     output_stream = stdout or sys.stdout.buffer
     decoder = SessionFrameDecoder()
-    protocol = SpeechSessionProtocol(backend, failure_context=failure_context)
+    protocol = SpeechSessionProtocol(
+        backend, failure_context=failure_context, failure_reporter=report_worker_error
+    )
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="capture-session")
     try:
         while True:

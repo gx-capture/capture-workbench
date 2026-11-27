@@ -31,6 +31,19 @@ capture could not be traced afterwards. The log is now attached after the
 server has configured logging, and records worker failures, capture ends and
 expired waits for cancelled captures for as long as the runtime runs.
 
+### The diagnostic log names a worker's operating system error
+
+When an engine worker fails with an `OSError`, its `worker-failure` line now
+ends with `workerErrorType` (the error's built-in type, such as `OSError`) and
+`osErrorNumber` (the operating system's error number: on Windows the Win32
+error code when the error carries one, otherwise `errno`). A failure such as
+Windows' "the paging file is too small" (1455) is then recorded instead of
+inferred. The worker writes both values on stderr beside its response, and
+the runtime keeps only an allowlisted type name and an integer, never the
+error's message. Capture failures and the public contract are unchanged.
+Workers built before this release write neither value, and their lines show
+`none` for both.
+
 ## 0.11.0
 
 Capture now calls OCR text recognition and uses `recording` for audio and

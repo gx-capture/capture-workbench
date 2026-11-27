@@ -10,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
+import capture_runtime
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode
+from capture_runtime.diagnostic_log import configure_diagnostic_log, record_worker_failure
 from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerProtocolError, WorkerResponse
@@ -1280,6 +1282,97 @@ os._exit(1)
         assert owner.active_process_count == 0
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("error", "worker_error_type", "os_error_number", "logged"),
+    [
+        ("windows-error", "OSError", 1455, "workerErrorType=OSError osErrorNumber=1455"),
+        ("errno-only", "FileNotFoundError", 2, "workerErrorType=FileNotFoundError osErrorNumber=2"),
+        ("not-os-error", None, None, "workerErrorType=none osErrorNumber=none"),
+    ],
+)
+def test_a_workers_os_error_reaches_the_diagnostic_log_by_type_and_number_only(
+    tmp_path: Path,
+    error: str,
+    worker_error_type: str | None,
+    os_error_number: int | None,
+    logged: str,
+) -> None:
+    # The child imports this checkout's package, whatever the interpreter has installed.
+    source_root = Path(capture_runtime.__file__).parents[1]
+    private = r"C:\Users\secret-user\models\aligner\model.safetensors"
+    worker = tmp_path / "os_error_worker.py"
+    worker.write_text(
+        f"""
+import sys
+
+sys.path.insert(0, {str(source_root)!r})
+from capture_runtime.workers.server import serve
+
+PRIVATE = {private!r}
+
+
+class LoaderError(OSError):
+    # A Windows error as the C runtime raises it, on any platform.
+    winerror = 1455
+
+
+ERRORS = {{
+    "windows-error": lambda: LoaderError(12, "The paging file is too small", PRIVATE),
+    "errno-only": lambda: FileNotFoundError(2, "No such file or directory", PRIVATE),
+    "not-os-error": lambda: RuntimeError(PRIVATE),
+}}
+
+
+def handle(request, _cancellation, _progress):
+    raise ERRORS[request.payload["error"]]()
+
+
+serve(handle)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    owner = WorkerProcess()
+
+    async def run() -> WorkerExecutionError:
+        with pytest.raises(WorkerExecutionError) as raised:
+            await owner.request(worker, "run", {"error": error}, timeout_seconds=30)
+        return raised.value
+
+    failure = asyncio.run(run())
+
+    # The failure the runtime turns into a capture failure is the same as before.
+    assert str(failure) == (
+        "worker_failed: Worker operation failed. at stage worker-process-response-error"
+    )
+    diagnostics = failure.diagnostics
+    assert (diagnostics.failure_class, diagnostics.exit_code) == ("response-error", 1)
+    assert (diagnostics.worker_error_type, diagnostics.os_error_number) == (
+        worker_error_type,
+        os_error_number,
+    )
+    handler = configure_diagnostic_log(tmp_path / "app-data")
+    assert handler is not None
+    try:
+        record_worker_failure(
+            requirement="speech-recognition",
+            code="speech_recognition_worker_failed",
+            diagnostics=diagnostics,
+            cause=failure,
+            elapsed_ms=1,
+        )
+    finally:
+        handler.close()
+    log = Path(handler.baseFilename).read_text(encoding="utf-8")
+    assert (
+        "worker-failure requirement=speech-recognition code=speech_recognition_worker_failed "
+        "class=response-error exit=1 cause=WorkerExecutionError "
+        f"stages=worker-process-response-error elapsedMs=1 {logged}\n"
+    ) in log
+    for text in (private, "secret-user", "safetensors", "paging file", "No such file"):
+        assert text not in log
+        assert text not in str(failure)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows worker-tree release boundary")

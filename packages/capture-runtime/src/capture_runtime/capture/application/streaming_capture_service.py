@@ -671,10 +671,8 @@ class StreamingCaptureService:
                         else SPEECH_RECOGNITION_REQUIREMENT_ID
                     ),
                     code=error.code,
-                    failure_class=diagnostics.failure_class,
-                    exit_code=diagnostics.exit_code,
+                    diagnostics=diagnostics,
                     cause=error.__cause__,
-                    stages=diagnostics.stage_sequence,
                     elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
                 )
             self._fail(
@@ -971,10 +969,8 @@ class StreamingCaptureService:
         record_worker_failure(
             requirement=SPEECH_RECOGNITION_REQUIREMENT_ID,
             code=error.code,
-            failure_class=diagnostics.failure_class,
-            exit_code=diagnostics.exit_code,
+            diagnostics=diagnostics,
             cause=error.__cause__,
-            stages=diagnostics.stage_sequence,
             elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
         )
 
@@ -985,10 +981,8 @@ class StreamingCaptureService:
         record_worker_failure(
             requirement=TEXT_RECOGNITION_REQUIREMENT_ID,
             code=code,
-            failure_class=diagnostics.failure_class,
-            exit_code=diagnostics.exit_code,
+            diagnostics=diagnostics,
             cause=error.__cause__,
-            stages=diagnostics.stage_sequence,
             elapsed_ms=capture_elapsed_ms(operation.created_at, self._clock.now()),
         )
 

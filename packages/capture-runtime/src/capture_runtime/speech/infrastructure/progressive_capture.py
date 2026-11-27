@@ -74,6 +74,7 @@ from capture_runtime.worker_process import (
 from capture_runtime.worker_stage_policy import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WORKER_STAGE_PATTERN,
+    parse_worker_error_marker,
     sanitize_worker_stage_sequence,
 )
 
@@ -799,10 +800,15 @@ class _SessionWorker:
             # Pipe EOF may arrive before the subprocess transport reports exit.
             with suppress(TimeoutError):
                 await asyncio.wait_for(self.process.wait(), timeout=0.2)
+        os_error = parse_worker_error_marker(
+            self._stderr_tail.decode("utf-8", errors="replace") if self._stderr_tail else ""
+        )
         return WorkerFailureDiagnostics(
             stage_sequence=stages,
             failure_class=failure_class,
             exit_code=self.process.returncode,
+            worker_error_type=os_error.error_type,
+            os_error_number=os_error.os_error_number,
         )
 
     async def _worker_stage_sequence(self) -> tuple[str, ...]:

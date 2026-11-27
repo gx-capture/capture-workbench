@@ -6,6 +6,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -20,17 +21,26 @@ from capture_runtime.diagnostic_log import (
     record_capture_ended,
     record_worker_failure,
 )
-from capture_runtime.worker_process import WorkerFailureClass
+from capture_runtime.worker_process import WorkerFailureDiagnostics
 
 
-def _worker_failure(cause: BaseException | None = None) -> None:
+def _worker_failure(
+    cause: BaseException | None = None,
+    *,
+    worker_error_type: str | None = None,
+    os_error_number: int | None = None,
+) -> None:
     record_worker_failure(
         requirement="speech-recognition",
         code="speech_recognition_worker_failed",
-        failure_class="exit-nonzero",
-        exit_code=7,
+        diagnostics=WorkerFailureDiagnostics(
+            stage_sequence=("speech-model-load-cpu-failed-unknown",),
+            failure_class="exit-nonzero",
+            exit_code=7,
+            worker_error_type=worker_error_type,
+            os_error_number=os_error_number,
+        ),
         cause=cause,
-        stages=("speech-model-load-cpu-failed-unknown",),
         elapsed_ms=310,
     )
 
@@ -64,7 +74,7 @@ def test_server_records_diagnostics_and_closes_log(
     assert worker_line.split(" ", 1)[1] == (
         "worker-failure requirement=speech-recognition code=speech_recognition_worker_failed "
         "class=exit-nonzero exit=7 cause=none stages=speech-model-load-cpu-failed-unknown "
-        "elapsedMs=310"
+        "elapsedMs=310 workerErrorType=none osErrorNumber=none"
     )
     (handler,) = handlers
     assert isinstance(handler, RotatingFileHandler)
@@ -93,6 +103,8 @@ def test_worker_failure_is_one_allowlisted_line(tmp_path: Path) -> None:
         "cause=RuntimeError",
         "stages=speech-model-load-cpu-failed-unknown",
         "elapsedMs=310",
+        "workerErrorType=none",
+        "osErrorNumber=none",
     ]
     for private in (r"C:\Users\example", "private.wav", "Bearer", "fixture-secret-token"):
         assert private not in text
@@ -103,13 +115,19 @@ def test_invalid_values_are_replaced(tmp_path: Path) -> None:
     assert handler is not None
     private = "https://example.invalid/private.wav"
     try:
+        # Diagnostics validate their own values; the log does not rely on that.
+        unvalidated = SimpleNamespace(
+            failure_class=private,
+            exit_code=private,
+            stage_sequence=("unknown-private-stage", private),
+            worker_error_type=private,
+            os_error_number=2**32,
+        )
         record_worker_failure(
             requirement=private,
             code=private,
-            failure_class=cast(WorkerFailureClass, private),
-            exit_code=cast(int, private),
+            diagnostics=cast(WorkerFailureDiagnostics, unvalidated),
             cause=type(private, (Exception,), {})(),
-            stages=("unknown-private-stage", private),
             elapsed_ms=True,
         )
         record_capture_ended(
@@ -128,10 +146,32 @@ def test_invalid_values_are_replaced(tmp_path: Path) -> None:
     assert "unknown-private-stage" not in text
     assert (
         "worker-failure requirement=other code=other class=other exit=other "
-        "cause=other stages=other>other elapsedMs=other"
+        "cause=other stages=other>other elapsedMs=other "
+        "workerErrorType=other osErrorNumber=other"
     ) in text
     assert "capture-ended kind=other outcome=other code=other stage=other elapsedMs=other" in text
     assert text.count("cancelled-capture-wait-expired timeoutMs=other pendingCount=other") == 2
+
+
+def test_worker_os_error_is_logged_by_type_and_number(tmp_path: Path) -> None:
+    handler = configure_diagnostic_log(tmp_path)
+    assert handler is not None
+    try:
+        _worker_failure(
+            RuntimeError(r"C:\Users\example\model.safetensors"),
+            worker_error_type="OSError",
+            os_error_number=1455,
+        )
+    finally:
+        handler.close()
+    text = Path(handler.baseFilename).read_text(encoding="utf-8")
+    (line,) = [line for line in text.splitlines() if " worker-failure " in line]
+    assert line.endswith(
+        " cause=RuntimeError stages=speech-model-load-cpu-failed-unknown elapsedMs=310"
+        " workerErrorType=OSError osErrorNumber=1455"
+    )
+    assert "example" not in text
+    assert "safetensors" not in text
 
 
 def test_rotation_caps_file_count_and_size(tmp_path: Path) -> None:

@@ -109,10 +109,14 @@ class SpeechSessionProtocol:
         *,
         max_credits: int = MAX_SESSION_CREDITS,
         failure_context: Callable[[], str] | None = None,
+        failure_reporter: Callable[[BaseException], None] | None = None,
     ) -> None:
         self.backend = backend
         self.max_credits = max_credits
         self.failure_context = failure_context
+        # Reports the error that failed the session to the runtime's diagnostic
+        # log, outside the error frame, whose message hosts receive.
+        self.failure_reporter = failure_reporter
         self._started = False
         self._terminal = False
         self._credits = 0
@@ -153,6 +157,8 @@ class SpeechSessionProtocol:
             return [self._error(error.code, str(error), retryable=error.retryable)]
         except Exception as error:
             self._terminal = True
+            if self.failure_reporter is not None:
+                self.failure_reporter(error)
             context = self.failure_context() if self.failure_context is not None else ""
             detail = f" after stage {context}" if _safe_stage(context) else ""
             return [

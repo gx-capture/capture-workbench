@@ -12,8 +12,13 @@ from typing import get_args, override
 
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import CaptureRequirementId, CaptureSourceKind, CaptureStatus
-from capture_runtime.worker_process import WorkerFailureClass
-from capture_runtime.worker_stage_policy import MAX_WORKER_DIAGNOSTIC_STAGES, sanitize_worker_stage
+from capture_runtime.worker_process import WorkerFailureClass, WorkerFailureDiagnostics
+from capture_runtime.worker_stage_policy import (
+    MAX_OS_ERROR_NUMBER,
+    MAX_WORKER_DIAGNOSTIC_STAGES,
+    WORKER_OS_ERROR_TYPES,
+    sanitize_worker_stage,
+)
 
 _LOGGER = logging.getLogger("capture_runtime.diagnostics")
 _LOGGER.setLevel(logging.INFO)
@@ -76,22 +81,32 @@ def record_worker_failure(
     *,
     requirement: str,
     code: str,
-    failure_class: WorkerFailureClass,
-    exit_code: int | None,
+    diagnostics: WorkerFailureDiagnostics,
     cause: BaseException | None,
-    stages: tuple[str, ...],
     elapsed_ms: int,
 ) -> None:
+    """One line per worker failure; the worker's own error is named by type and number only."""
+
+    error_type = diagnostics.worker_error_type
+    error_number = diagnostics.os_error_number
     _write(
         "worker-failure",
         requirement=_allowed(requirement, _REQUIREMENTS),
         code=_matching(code, _CODE),
         **{
-            "class": _allowed(failure_class, _FAILURE_CLASSES),
-            "exit": "none" if exit_code is None else _integer(exit_code),
+            "class": _allowed(diagnostics.failure_class, _FAILURE_CLASSES),
+            "exit": "none" if diagnostics.exit_code is None else _integer(diagnostics.exit_code),
             "cause": "none" if cause is None else _matching(type(cause).__name__, _EXCEPTION_TYPE),
-            "stages": _worker_stages(stages),
+            "stages": _worker_stages(diagnostics.stage_sequence),
             "elapsedMs": _integer(elapsed_ms),
+            "workerErrorType": (
+                "none" if error_type is None else _allowed(error_type, WORKER_OS_ERROR_TYPES)
+            ),
+            "osErrorNumber": (
+                "none"
+                if error_number is None
+                else _integer(error_number, minimum=0, maximum=MAX_OS_ERROR_NUMBER)
+            ),
         },
     )
 
@@ -134,8 +149,8 @@ def _matching(value: object, pattern: re.Pattern[str]) -> str:
     return value if isinstance(value, str) and pattern.fullmatch(value) else "other"
 
 
-def _integer(value: object, *, minimum: int = -(2**63)) -> str:
-    return str(value) if type(value) is int and minimum <= value < 2**63 else "other"
+def _integer(value: object, *, minimum: int = -(2**63), maximum: int = 2**63 - 1) -> str:
+    return str(value) if type(value) is int and minimum <= value <= maximum else "other"
 
 
 def _worker_stages(stages: object) -> str:

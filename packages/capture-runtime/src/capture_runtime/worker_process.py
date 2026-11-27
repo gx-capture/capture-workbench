@@ -30,6 +30,9 @@ from capture_runtime.worker_stage_policy import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WORKER_STAGE_PATTERN,
     bound_worker_stage_sequence,
+    parse_worker_error_marker,
+    sanitize_os_error_number,
+    sanitize_worker_error_type,
 )
 from capture_runtime.worker_stage_policy import (
     sanitize_worker_stage as _sanitize_worker_stage,
@@ -87,8 +90,15 @@ class WorkerFailureDiagnostics:
     stage_sequence: tuple[str, ...]
     failure_class: WorkerFailureClass
     exit_code: int | None = None
+    # From the worker's error marker; a value that does not validate is dropped.
+    worker_error_type: str | None = None
+    os_error_number: int | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "worker_error_type", sanitize_worker_error_type(self.worker_error_type)
+        )
+        object.__setattr__(self, "os_error_number", sanitize_os_error_number(self.os_error_number))
         if not isinstance(self.stage_sequence, tuple):
             raise ValueError("worker diagnostic stages must be a tuple")
         stages = _sanitize_stage_sequence(self.stage_sequence, reject_unknown=True)
@@ -858,10 +868,13 @@ def _worker_diagnostics(
     fallback_stage: str | None = None,
     exit_code: int | None = None,
 ) -> WorkerFailureDiagnostics:
+    os_error = parse_worker_error_marker(stderr)
     return WorkerFailureDiagnostics(
         stage_sequence=_diagnostic_stage_sequence(stderr, fallback_stage),
         failure_class=failure_class,
         exit_code=exit_code,
+        worker_error_type=os_error.error_type,
+        os_error_number=os_error.os_error_number,
     )
 
 

@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from functools import partial
 from typing import Any
 
@@ -20,6 +21,7 @@ from capture_runtime.worker_contracts import (
     WorkerRequest,
     WorkerResponse,
 )
+from capture_runtime.worker_stage_policy import worker_error_marker
 
 WorkerProgressReporter = Callable[[dict[str, Any]], None]
 WorkerHandler = Callable[[WorkerRequest, threading.Event, WorkerProgressReporter], dict[str, Any]]
@@ -63,6 +65,20 @@ def permille_reporter(progress: WorkerProgressReporter) -> Callable[[int, int], 
             progress({"permille": value})
 
     return report
+
+
+def report_worker_error(error: BaseException) -> None:
+    """Name an OSError's type and error number on stderr for the runtime's diagnostic log.
+
+    The response keeps its fixed message; the runtime reads this marker beside it.
+    """
+
+    # A report that cannot be made must not replace the failure being answered.
+    with suppress(Exception):
+        marker = worker_error_marker(error)
+        if marker is not None:
+            sys.stderr.write(f"\n{marker}\n")
+            sys.stderr.flush()
 
 
 def _failure(request_id: str, code: str, message: str, *, retryable: bool) -> None:
@@ -160,7 +176,8 @@ def serve(
     if prepare is not None:
         try:
             prepare(request)
-        except Exception:
+        except Exception as error:
+            report_worker_error(error)
             _failure(
                 request.request_id,
                 "worker_failed",
@@ -208,7 +225,8 @@ def serve(
             retryable=True,
         )
         code = 0
-    except Exception:
+    except Exception as error:
+        report_worker_error(error)
         _failure(
             request.request_id,
             "worker_failed",
@@ -307,7 +325,8 @@ def _serve_persistent(handler: WorkerHandler, prepare: WorkerPreparer | None) ->
         if prepare is not None and not prepared:
             try:
                 prepare(request)
-            except Exception:
+            except Exception as error:
+                report_worker_error(error)
                 _failure(
                     request.request_id,
                     "worker_failed",
@@ -331,7 +350,8 @@ def _serve_persistent(handler: WorkerHandler, prepare: WorkerPreparer | None) ->
                 retryable=True,
             )
             os._exit(0)
-        except Exception:
+        except Exception as error:
+            report_worker_error(error)
             _failure(
                 request.request_id,
                 "worker_failed",
@@ -343,4 +363,4 @@ def _serve_persistent(handler: WorkerHandler, prepare: WorkerPreparer | None) ->
         _write(WorkerResponse(request.request_id, True, result, None))
 
 
-__all__ = ["permille_reporter", "serve"]
+__all__ = ["permille_reporter", "report_worker_error", "serve"]

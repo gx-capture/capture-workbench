@@ -1,5 +1,6 @@
-"""Private semantic policy for worker stage markers.
+"""Private semantic policy for the diagnostic markers a worker writes to stderr.
 
+These are the stage markers and the error marker of an operating system error.
 This module is intentionally pure stdlib. Worker entrypoints import it before
 optional engine dependencies, while runtime consumers use the same policy as
 defense in depth before retaining a stage in diagnostics or an error message.
@@ -10,7 +11,7 @@ byte drift by the runtime generation gate.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Final, NamedTuple
 
 from ._generated_worker_stage_policy import (
     EXACT_STAGES as _EXACT_STAGES,
@@ -48,6 +49,95 @@ WORKER_STAGE_NAME_PATTERN: Final = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _FAMILY_PATTERNS: Final = tuple(re.compile(pattern) for pattern in _FAMILY_PATTERN_SOURCES)
 _NATIVE_REASON_PRIORITY: Final = tuple((int(code), label) for code, label in (item.split(":", 1) for item in "126:dependency-missing 127:symbol-missing 193:bad-image 1114:initialization-failed 8:resource-exhausted 14:resource-exhausted 1455:resource-exhausted 5:blocked 577:blocked 14001:side-by-side".split()))  # fmt: skip  # noqa: E501
 _NATIVE_COMPONENT_ALIASES: Final = dict(item.split("=", 1) for item in "onnxruntime=onnxruntime onnxruntime-directml=directml directml=directml cv2=opencv opencv=opencv opencv-python=opencv numpy=numpy pandas=pandas shapely=shapely pyclipper=pyclipper pil=pillow pillow=pillow pydantic-core=pydantic-core -pydantic-core=pydantic-core rpds=rpds rpds-py=rpds tokenizers=tokenizers chardet=chardet charset-normalizer=charset-normalizer aiohttp=aiohttp multidict=multidict yarl=yarl frozenlist=frozenlist propcache=propcache vc-runtime=vc-runtime vcruntime=vc-runtime python=python-runtime python-runtime=python-runtime paddlex=paddlex paddle=paddleocr paddleocr=paddleocr unknown=unknown".split())  # fmt: skip  # noqa: E501
+
+
+WORKER_ERROR_MARKER_PREFIX: Final = "capture-worker-error:"
+_WORKER_ERROR_MARKER_PATTERN: Final = re.compile(r"(?m)^capture-worker-error:([^\r\n]*)\r?$")
+# OSError and its built-in subclasses. A worker reports another subclass as its
+# nearest built-in base, so no name a worker's dependencies choose reaches the log.
+WORKER_OS_ERROR_TYPES: Final = frozenset(
+    {
+        "OSError",
+        "BlockingIOError",
+        "ChildProcessError",
+        "ConnectionError",
+        "BrokenPipeError",
+        "ConnectionAbortedError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "FileExistsError",
+        "FileNotFoundError",
+        "InterruptedError",
+        "IsADirectoryError",
+        "NotADirectoryError",
+        "PermissionError",
+        "ProcessLookupError",
+        "TimeoutError",
+    }
+)
+# A Windows error code is a DWORD; an errno is a small positive integer.
+MAX_OS_ERROR_NUMBER: Final = 0xFFFF_FFFF
+_OS_ERROR_NUMBER_PATTERN: Final = re.compile(r"[0-9]{1,10}")
+
+
+class WorkerOsError(NamedTuple):
+    """What a worker's error marker says: an allowlisted type name and an error number."""
+
+    error_type: str | None
+    os_error_number: int | None
+
+
+def sanitize_worker_error_type(value: object) -> str | None:
+    return value if isinstance(value, str) and value in WORKER_OS_ERROR_TYPES else None
+
+
+def sanitize_os_error_number(value: object) -> int | None:
+    return _bounded_count(value, MAX_OS_ERROR_NUMBER)
+
+
+def os_error_number(error: OSError) -> int | None:
+    """The operating system's number for an error: Windows' ``winerror`` when set, else errno."""
+
+    for value in (getattr(error, "winerror", None), error.errno):
+        number = sanitize_os_error_number(value)
+        if number is not None:
+            return number
+    return None
+
+
+def worker_error_marker(error: object) -> str | None:
+    """The stderr line naming an OSError by type and number, or ``None`` for other errors.
+
+    Only these two travel. An OSError's message and file names carry paths.
+    """
+
+    if not isinstance(error, OSError):
+        return None
+    error_type = next(
+        base.__name__
+        for base in type(error).__mro__
+        if base.__module__ == "builtins" and base.__name__ in WORKER_OS_ERROR_TYPES
+    )
+    number = os_error_number(error)
+    return f"{WORKER_ERROR_MARKER_PREFIX}{error_type}" + ("" if number is None else f":{number}")
+
+
+def parse_worker_error_marker(stderr: str) -> WorkerOsError:
+    """The last error marker in a worker's stderr; a value that does not validate is dropped.
+
+    A worker without the marker, an older one among them, yields neither value.
+    """
+
+    markers = _WORKER_ERROR_MARKER_PATTERN.findall(stderr)
+    if not markers:
+        return WorkerOsError(None, None)
+    error_type, _, number = markers[-1].partition(":")
+    return WorkerOsError(
+        sanitize_worker_error_type(error_type),
+        sanitize_os_error_number(int(number))
+        if _OS_ERROR_NUMBER_PATTERN.fullmatch(number)
+        else None,
+    )
 
 
 def stage_builder_names() -> frozenset[str]:
@@ -339,9 +429,18 @@ def speech_model_load_stage(device: str, phase: str, error: object | None = None
 
 
 __all__ = [
+    "MAX_OS_ERROR_NUMBER",
     "MAX_WORKER_DIAGNOSTIC_STAGE_LENGTH",
     "MAX_WORKER_DIAGNOSTIC_STAGES",
+    "WORKER_ERROR_MARKER_PREFIX",
+    "WORKER_OS_ERROR_TYPES",
     "WORKER_STAGE_PATTERN",
+    "WorkerOsError",
+    "os_error_number",
+    "parse_worker_error_marker",
+    "sanitize_os_error_number",
+    "sanitize_worker_error_type",
+    "worker_error_marker",
     "ocr_import_failure_stage",
     "ocr_import_stage",
     "ocr_probe_missing_stage",
