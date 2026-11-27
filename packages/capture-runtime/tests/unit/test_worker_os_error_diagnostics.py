@@ -53,7 +53,7 @@ def test_an_os_error_with_a_windows_error_reports_type_and_that_number(
 
     report_worker_error(error)
 
-    assert capsys.readouterr().err == "capture-worker-error:OSError:1455\n"
+    assert capsys.readouterr().err == "\ncapture-worker-error:OSError:1455\n"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Python sets winerror only on Windows")
@@ -70,7 +70,7 @@ def test_an_os_error_with_only_errno_reports_type_and_errno(
 ) -> None:
     report_worker_error(FileNotFoundError(2, "No such file or directory", _PRIVATE))
 
-    assert capsys.readouterr().err == "capture-worker-error:FileNotFoundError:2\n"
+    assert capsys.readouterr().err == "\ncapture-worker-error:FileNotFoundError:2\n"
 
 
 def test_an_os_error_without_a_number_reports_its_type_only() -> None:
@@ -99,6 +99,34 @@ def test_a_report_that_cannot_be_written_is_dropped(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sys, "stderr", None)
 
     report_worker_error(_WindowsError(12, "The paging file is too small", _PRIVATE))
+
+
+def test_report_worker_error_surrounds_the_marker_with_newlines(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    error = _WindowsError(12, "The paging file is too small", _PRIVATE)
+
+    report_worker_error(error)
+
+    err = capsys.readouterr().err
+    assert err.startswith("\n")
+    assert err.endswith("\n")
+    assert err[1:-1] == worker_error_marker(error)
+
+
+def test_a_carriage_return_line_followed_by_a_reported_error_still_parses(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sys.stderr.write("progress 50%\r")
+    report_worker_error(_WindowsError(12, "The paging file is too small", _PRIVATE))
+
+    assert parse_worker_error_marker(capsys.readouterr().err) == WorkerOsError("OSError", 1455)
+
+
+def test_a_marker_appended_directly_after_carriage_return_parses_to_nothing() -> None:
+    stderr = "progress 50%\rcapture-worker-error:OSError:1455\n"
+
+    assert parse_worker_error_marker(stderr) == WorkerOsError(None, None)
 
 
 class _FailingBackend:
@@ -153,7 +181,7 @@ def test_a_session_worker_reports_the_os_error_and_keeps_its_failure_frame(
         "speech-transcription-call-complete.",
         "retryable": True,
     }
-    assert capsys.readouterr().err == "capture-worker-error:OSError:1455\n"
+    assert capsys.readouterr().err == "\ncapture-worker-error:OSError:1455\n"
 
 
 @pytest.mark.parametrize(

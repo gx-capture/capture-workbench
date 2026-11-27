@@ -77,7 +77,7 @@ def report_worker_error(error: BaseException) -> None:
     with suppress(Exception):
         marker = worker_error_marker(error)
         if marker is not None:
-            sys.stderr.write(f"{marker}\n")
+            sys.stderr.write(f"\n{marker}\n")
             sys.stderr.flush()
 
 
